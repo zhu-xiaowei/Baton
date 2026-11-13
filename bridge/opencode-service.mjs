@@ -70,6 +70,7 @@ export const service = {
 const execs = new Map(); // session id → Baton's execution
 const asked = new Map(); // request id → permission or form
 const pending = new Map(); // open request id → session id
+const shown = new Map(); // request id → onControlResolved of the subscribe that showed it
 let sse = null;
 let idleTimer = null;
 
@@ -112,6 +113,13 @@ function end(id, exec, result) {
   if (!execs.size) idleTimer = setTimeout(() => { sse?.ctrl.abort(); sse = null; }, IDLE_MS).unref();
 }
 
+// A request is gone: the page that subscribed to it is told, like a reply event would.
+function settle(requestId, notify = true) {
+  pending.delete(requestId);
+  if (notify) shown.get(requestId)?.(requestId);
+  shown.delete(requestId);
+}
+
 function newExec(callbacks) {
   const exec = { callbacks, blocks: new Map(), steps: new Map(), inbox: new Map(), texts: new Map(), turns: new Set(), commands: [], open: null };
   exec.framer = new StreamFramer((f) => {
@@ -139,7 +147,7 @@ function dispatch(ev) {
   const sid = d.sessionID || d.form?.sessionID;
   const control = ev.type === 'permission.asked' ? controlRequest(d) : ev.type === 'form.created' ? controlRequest(d.form, true) : null;
   const replied = /^(permission\.replied|form\.(replied|cancelled))$/.test(ev.type);
-  if (replied) pending.delete(d.requestID || d.id || d.form?.id);
+  if (replied) settle(d.requestID || d.id || d.form?.id);
   // A subagent's request belongs to the Baton turn of its root.
   let exec = execs.get(sid);
   for (let id = sid; !exec && (control || replied) && (id = sessionOf(id)?.parent_id);) exec = execs.get(id);
@@ -269,7 +277,7 @@ export const interaction = defineInteractionAdapter({
   replyControl(id, requestId, { decision, answers = {}, scope }) {
     const req = asked.get(requestId);
     asked.delete(requestId);
-    pending.delete(requestId);
+    settle(requestId, false);
     const base = `/api/session/${req?.sessionID || id}`; // a subagent's own session
     const reply = async () => {
       if (req?.fields) {
@@ -305,15 +313,17 @@ export const interaction = defineInteractionAdapter({
     if (execs.has(id) || !serviceInfo()) return;
     for (const sid of [id, ...busyChildren(id)]) {
       const [perms, forms] = await interaction.reconcile(sid);
-      for (const p of perms) callbacks.onControlRequest(controlRequest(p));
-      for (const form of forms) callbacks.onControlRequest(controlRequest(form, true));
+      for (const [p, form] of [...perms.map((p) => [p]), ...forms.map((f) => [f, true])]) {
+        shown.set(p.id, callbacks.onControlResolved);
+        callbacks.onControlRequest(controlRequest(p, form));
+      }
     }
   },
   // The service's open requests of a session; ones answered elsewhere leave `pending`.
   async reconcile(id) {
     const lists = await Promise.all(['permission', 'form'].map((kind) => request('GET', `/api/session/${id}/${kind}`).then((r) => r?.data || [], () => [])));
     const open = new Set(lists.flat().map((p) => p.id));
-    for (const [rid, sid] of pending) if (sid === id && !open.has(rid)) pending.delete(rid);
+    for (const [rid, sid] of pending) if (sid === id && !open.has(rid)) settle(rid);
     return lists;
   },
   async listCommands({ cwd }) {
