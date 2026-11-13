@@ -140,7 +140,8 @@ Done:
   script runs as it is. An exception in the RPC event handler ends the turn, not the Bridge.
 - Catalog: `$PI_CODING_AGENT_DIR/sessions/**.jsonl` (default `~/.pi/agent`); project from the header `cwd`; title
   `session_info.name` > first user text. History follows `parentId` from the last entry; an entry that does not
-  continue the previous one bumps the epoch (`historyReset`). One `edit` call with N edits = N Edit cards (`<id>#i`).
+  continue the previous one bumps the epoch (`historyReset`). Entry ids are read from the line head, or by
+  parsing the line when the id is not the second key (`custom`, `custom_message`). One `edit` call with N edits = N Edit cards (`<id>#i`).
 - Status: the Bridge installs `<agent dir>/extensions/baton-bridge-status.js` when its watcher starts (content
   compared, atomic rename; removed on device removal). Every pi process writes
   `~/.baton-bridge/pi-status/<sid>.<pid>.json` (`idle/running/waiting`; `waiting` = `ui_prompt_start` →
@@ -155,7 +156,7 @@ Done:
 - Dialogs: `baton:permission` confirm → `kind:'tool'` (session grant `bash:<prog [sub]>` / tool name, kept in
   `~/.baton-bridge/pi-grants.json`, read by the extension on every call); `ask_user` (Baton's tool; `multiple:true`
   rides on `input('baton:multiselect')` and answers a JSON array) and user-extension select/confirm/input → `ask`.
-  A bash command with any shell syntax beyond plain words, or behind a wrapper (`timeout`, `env`, `sudo`, …), gets
+  A bash command with any shell syntax beyond plain words, or behind a wrapper (`timeout`, `env`, `sudo`, …) or a flag (`rm -rf`), gets
   no grant and is asked every time. One edit call with several edits is approved on one joined diff.
 - Writer conflict: a status record of another live pid on the Session → `pi_active_writer` (only `mode:'tui'` may
   be terminated). Delete and rename refuse while busy or held; rename appends a `session_info` entry on the last entry

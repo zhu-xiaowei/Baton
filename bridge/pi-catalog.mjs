@@ -13,6 +13,14 @@ export const PI_SESSIONS = path.join(PI_AGENT_DIR, 'sessions');
 export const PI_STATUS_DIR = path.join(BRIDGE_HOME, 'pi-status');
 const HEAD = /^\{"type":"([a-z_]+)"(?:,"id":"([^"]+)")?(?:,"parentId":(?:"([^"]+)"|null))?/;
 const USER_HEAD = /"message":\{"role":"user"/;
+// [type, id, parentId] of an entry line. Most entries start {type, id, parentId}; others (custom,
+// custom_message) put the id later, so only those lines are parsed.
+function entryHead(buf, s, e) {
+  const head = buf.latin1Slice(s, Math.min(e, s + 256));
+  const [, type, id, parent] = HEAD.exec(head) || [];
+  if (id || !type || type === 'session') return [type, id || '', parent || '', head];
+  try { const x = JSON.parse(buf.utf8Slice(s, e)); return [type, x.id || '', x.parentId || '', head]; } catch { return [type, '', '', head]; }
+}
 const INTERRUPT = '[Request interrupted by user]';
 // extract.mjs's nativeOrderKey (that module loads sharp).
 const nativeOrderKey = (line, f = 0) => `O2#${String(line).padStart(12, '0')}#${String(f).padStart(4, '0')}`;
@@ -104,8 +112,7 @@ export async function withImages(row) {
 }
 
 function scanLine(state, buf, s, e) {
-  const head = buf.latin1Slice(s, Math.min(e, s + 256));
-  const [, type, id] = HEAD.exec(head) || [];
+  const [type, id, , head] = entryHead(buf, s, e);
   if (id) state.leaf = id; // the parent of an entry the Bridge appends
   const wanted = type === 'session' || type === 'session_info' || type === 'model_change'
     || (type === 'message' && !state.first && USER_HEAD.test(head));
@@ -199,12 +206,12 @@ class PiHistory {
     this.clear();
     this.index = new LineIndex(file, {
       onLine: (buf, s, e, line) => {
-        const m = HEAD.exec(buf.latin1Slice(s, Math.min(e, s + 160)));
-        this.ids[line] = m?.[2] || '';
-        this.parents[line] = m?.[3] || '';
-        if (m?.[1] === 'session_info') this.nameLine = line;
+        const [type, id, parent] = entryHead(buf, s, e);
+        this.ids[line] = id;
+        this.parents[line] = parent;
+        if (type === 'session_info') this.nameLine = line;
         // A page may hold the result of an edit call on a line it does not read.
-        if (m?.[1] === 'message' && buf.subarray(s, e).includes('"name":"edit"')) {
+        if (type === 'message' && buf.subarray(s, e).includes('"name":"edit"')) {
           try { piRows(JSON.parse(buf.utf8Slice(s, e)), this.edits); } catch {}
         }
         this.dirty = true;

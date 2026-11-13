@@ -13,8 +13,9 @@ function lastEntryId(file) {
 		const buf = Buffer.alloc(Math.min(size, 1 << 20));
 		const fd = fs.openSync(file, "r");
 		try { fs.readSync(fd, buf, 0, buf.length, size - buf.length); } finally { fs.closeSync(fd); }
-		const ids = [...buf.toString("utf8").matchAll(/^\{"type":"[a-z_]+","id":"([^"]+)"/gm)];
-		return ids.at(-1)?.[1] ?? null;
+		// The last complete entry, parsed: custom entries put their id after other fields.
+		const x = JSON.parse(buf.toString("utf8").trimEnd().split("\n").at(-1));
+		return x.type === "session" ? null : x.id ?? null;
 	} catch { return null; }
 }
 
