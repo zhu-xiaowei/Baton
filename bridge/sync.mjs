@@ -7,7 +7,7 @@ import {
   runtimeAdapters,
 } from './runtime-registry.mjs';
 import { heldForAgents, pendingInteractionDetail, poolAwaitsAgents, poolOwns } from './ws.mjs';
-import { rebuildAgentCounts } from './agent-counts.mjs';
+import { rebuildAgentCounts, trackAgentSession } from './agent-counts.mjs';
 
 const INITIAL_SYNC_WINDOW_MS = 86400_000;
 
@@ -270,6 +270,7 @@ export async function checkStopped(config) {
 
   const updates = [];
   const statusDeltas = [];
+  const agentCountUpdates = [];
   const statusContexts = new Map();
 
   for (const s of active.sessions) {
@@ -290,17 +291,20 @@ export async function checkStopped(config) {
       nativeSessionId: identity.nativeSessionId,
     }, statusContexts.get(adapter.runtime));
     if (!result) continue;
-    if (adapter.runtime === 'claude') heldForAgents.set(identity.sessionId, !!result.session.backgroundAgents);
-    updates.push(result.session, ...(result.extraSessions || []));
-    statusDeltas.push(result.statusDelta);
+    if (adapter.runtime === 'claude' && result.session) heldForAgents.set(identity.sessionId, !!result.session.backgroundAgents);
+    if (result.session) statusDeltas.push(result.statusDelta);
+    updates.push(...[result.session || [], ...(result.extraSessions || [])].flat());
+    agentCountUpdates.push(...(result.agentCountUpdates || []));
   }
 
   if (updates.length > 0) {
-    await post('/api/bridge/sync-sessions', {
+    const res = await post('/api/bridge/sync-sessions', {
       deviceName: config.deviceName,
       os: process.platform,
       sessions: updates.map(publicSession),
       statusDeltas,
+      ...(agentCountUpdates.length ? { agentCountUpdates } : {}),
     });
+    if (res?.ok) for (const session of updates) if (session.parentSessionId) trackAgentSession(session);
   }
 }

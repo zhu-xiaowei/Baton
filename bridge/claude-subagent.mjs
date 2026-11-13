@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { CLAUDE_PROJECTS } from './config.mjs';
 import { countJsonlLines } from './extract.mjs';
-import { getSessionMetadata } from './session.mjs';
+import { claudeSessionStartedAt, getSessionMetadata } from './session.mjs';
 
 const MARKER = ':subagent:';
 const taskScans = new Map(); // spawner transcript → { ino, offset, ended: taskId → bool }
@@ -75,7 +75,11 @@ function spawnerFile(filePath, meta) {
 }
 
 // Scans only bytes appended since the last call, up to the last complete line.
-export function claudeSubagentEnded(filePath, meta = {}) {
+// A subagent lives in its root session's CC process, so one last written before
+// every live process of that session started died with an earlier process.
+export function claudeSubagentEnded(filePath, meta = {}, mtimeMs, startedAt = claudeSessionStartedAt) {
+  const started = startedAt(path.basename(path.dirname(path.dirname(filePath))));
+  try { if (started > (mtimeMs ?? fs.statSync(filePath).mtimeMs)) return true; } catch {}
   const file = spawnerFile(filePath, meta);
   const taskId = path.basename(filePath, '.jsonl').replace(/^agent-/, '');
   let stat;
@@ -154,7 +158,7 @@ export function discoverClaudeSubagents(projectDir, parentSession, options = {})
       size: stat.size,
       preview: meta.description || metadata.preview || agentId,
       model: metadata.model || parentSession.model,
-      status: status !== 'completed' && claudeSubagentEnded(filePath, meta)
+      status: status !== 'completed' && claudeSubagentEnded(filePath, meta, stat.mtimeMs)
         ? 'completed'
         : status,
       isAgent: true,

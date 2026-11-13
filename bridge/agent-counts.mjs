@@ -2,7 +2,7 @@ import { storageSessionId } from './session-identity.mjs';
 
 const parentChildren = new Map();
 const childParents = new Map();
-const childStatuses = new Map();
+const childSessions = new Map();
 const parentProjects = new Map();
 const rootStatuses = new Map();
 
@@ -42,14 +42,14 @@ function normalizedStatus(status) {
   return status === 'running' || status === 'needs_input' ? status : 'completed';
 }
 
-function summaryForRoot(rootSessionId) {
+export function summaryForRoot(rootSessionId) {
   let agentCount = 0;
   let runningAgentCount = 0;
   let needsInputAgentCount = 0;
   for (const childSessionId of childParents.keys()) {
     if (rootFor(childSessionId) !== rootSessionId) continue;
     agentCount++;
-    const status = childStatuses.get(childSessionId);
+    const status = childSessions.get(childSessionId)?.status;
     if (status === 'running') runningAgentCount++;
     else if (status === 'needs_input') needsInputAgentCount++;
   }
@@ -77,7 +77,7 @@ function countUpdate(rootSessionId, fallbackProject = '') {
 export function rebuildAgentCounts(sessions) {
   parentChildren.clear();
   childParents.clear();
-  childStatuses.clear();
+  childSessions.clear();
   parentProjects.clear();
   rootStatuses.clear();
 
@@ -93,7 +93,7 @@ export function rebuildAgentCounts(sessions) {
     const childSessionId = sessionStorageId(session);
     childrenFor(parentSessionId).add(childSessionId);
     childParents.set(childSessionId, parentSessionId);
-    childStatuses.set(childSessionId, normalizedStatus(session.status));
+    childSessions.set(childSessionId, { ...session, status: normalizedStatus(session.status) });
   }
   for (const session of sessions) {
     const sessionId = sessionStorageId(session);
@@ -105,6 +105,10 @@ export function rebuildAgentCounts(sessions) {
     }
   }
   return sessions;
+}
+
+export function activeChildSessions(rootSessionId) {
+  return [...childSessions.values()].filter((c) => c.status !== 'completed' && rootFor(sessionStorageId(c)) === rootSessionId);
 }
 
 export function trackAgentSession(session) {
@@ -126,12 +130,12 @@ export function trackAgentSession(session) {
     if (children && !children.size) parentChildren.delete(previousParent);
   }
   childParents.delete(sessionId);
-  childStatuses.delete(sessionId);
+  childSessions.delete(sessionId);
 
   if (nextParent) {
     childrenFor(nextParent).add(sessionId);
     childParents.set(sessionId, nextParent);
-    childStatuses.set(sessionId, normalizedStatus(session.status));
+    childSessions.set(sessionId, { ...session, status: normalizedStatus(session.status) });
   }
 
   const nextRoot = nextParent ? rootFor(sessionId) : '';
