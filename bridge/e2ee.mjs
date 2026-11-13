@@ -117,51 +117,37 @@ export async function appKeys(k, since = 0) {
 // K travels sealed under `t`, which only the QR code carries, bound to its pairing code.
 const b64url = (bytes) => toBase64(bytes).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 const hex = (bytes) => Array.from(bytes, (v) => v.toString(16).padStart(2, '0')).join('');
-const pairKey = async (t, usage) => derive(await subtle().importKey('raw', t, 'HKDF', false, ['deriveKey']), 'pair',
-  { name: 'AES-GCM', length: 256 }, [usage]);
+const hkdfKey = async (raw) => subtle().importKey('raw', raw, 'HKDF', false, ['deriveKey']);
+const gcm = (k, name, usage) => derive(k, name, { name: 'AES-GCM', length: 256 }, [usage]);
 
 export async function accountOf(raw) {
   const k = await importAccountKey(raw);
   return { accountId: hex(await bits(k, 'account', 64)), joinSecret: b64url(await bits(k, 'join')) };
 }
 
-export async function sealPair(t, raw, code) {
+// One 32-byte key sealed with AES-GCM: nonce ‖ ciphertext ‖ tag, base64.
+async function sealKey(key, plain, aad) {
   const nonce = crypto.getRandomValues(new Uint8Array(12));
-  const body = new Uint8Array(await subtle().encrypt({ name: 'AES-GCM', iv: nonce, additionalData: encoder.encode(code) },
-    await pairKey(t, 'encrypt'), raw));
+  const body = new Uint8Array(await subtle().encrypt({ name: 'AES-GCM', iv: nonce, additionalData: encoder.encode(aad) }, key, plain));
   const out = new Uint8Array(12 + body.length);
   out.set(nonce);
   out.set(body, 12);
   return toBase64(out);
 }
 
-export async function openPair(t, sealed, code) {
+async function openKey(key, sealed, aad) {
   try {
     const bytes = fromBase64(sealed);
-    return new Uint8Array(await subtle().decrypt({ name: 'AES-GCM', iv: bytes.subarray(0, 12), additionalData: encoder.encode(code) },
-      await pairKey(t, 'decrypt'), bytes.subarray(12)));
+    return new Uint8Array(await subtle().decrypt({ name: 'AES-GCM', iv: bytes.subarray(0, 12), additionalData: encoder.encode(aad) },
+      key, bytes.subarray(12)));
   } catch { return null; }
 }
+
+export const sealPair = async (t, raw, code) => sealKey(await gcm(await hkdfKey(t), 'pair', 'encrypt'), raw, code);
+export const openPair = async (t, sealed, code) => openKey(await gcm(await hkdfKey(t), 'pair', 'decrypt'), sealed, code);
 
 // Key rotation (design §8): the App that removes a device seals K' under the old K, keyed by the old
 // fingerprint; every device still holding the old K opens it from /devices. `k` is the CryptoKey.
 export const fingerprint = async (k) => hex(await bits(k, 'fp', 64));
-
-export async function sealRotation(k, rawNext, fp) {
-  const key = await derive(k, 'rotate', { name: 'AES-GCM', length: 256 }, ['encrypt']);
-  const nonce = crypto.getRandomValues(new Uint8Array(12));
-  const body = new Uint8Array(await subtle().encrypt({ name: 'AES-GCM', iv: nonce, additionalData: encoder.encode(fp) }, key, rawNext));
-  const out = new Uint8Array(12 + body.length);
-  out.set(nonce);
-  out.set(body, 12);
-  return toBase64(out);
-}
-
-export async function openRotation(k, sealed, fp) {
-  try {
-    const key = await derive(k, 'rotate', { name: 'AES-GCM', length: 256 }, ['decrypt']);
-    const bytes = fromBase64(sealed);
-    return new Uint8Array(await subtle().decrypt({ name: 'AES-GCM', iv: bytes.subarray(0, 12), additionalData: encoder.encode(fp) },
-      key, bytes.subarray(12)));
-  } catch { return null; }
-}
+export const sealRotation = async (k, rawNext, fp) => sealKey(await gcm(k, 'rotate', 'encrypt'), rawNext, fp);
+export const openRotation = async (k, sealed, fp) => openKey(await gcm(k, 'rotate', 'decrypt'), sealed, fp);

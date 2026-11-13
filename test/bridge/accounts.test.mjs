@@ -6,23 +6,23 @@ import * as browser from '../../bridge/e2ee.mjs';
 import * as node from '../../bridge/e2ee-node.mjs';
 import { fromPhrase, toPhrase } from '../../web/js/v2/recovery.js';
 
-test('a computer joins with K sealed by an App under the QR code secret, and checks the account', async () => {
+test('a computer joins with K sealed by an App under the QR code secret, and checks the account key', async () => {
   const k = randomBytes(32);
-  const { accountId } = await browser.accountOf(k);
   assert.deepEqual(node.accountOf(k), await browser.accountOf(k));
-  for (const claimed of [accountId, 'f'.repeat(16)]) {
+  const head = node.fingerprint(k);
+  for (const claimed of [head, 'f'.repeat(16)]) {
     const printed = [];
     let polls = 0;
     const fetchImpl = async (url) => {
       const link = () => new URL(printed.find((line) => line.includes('#j=')).replace('#', '?')).searchParams;
       const reply = url.endsWith('/start') ? { code: 'code-1', poll: 'poll-1', expiresIn: 600 }
         : ++polls === 1 ? { pending: true }
-          : { token: 'bt_x', accountId: claimed, approvedBy: 'iPhone',
+          : { token: 'bt_x', head: claimed, approvedBy: 'iPhone',
             sealed: await browser.sealPair(Buffer.from(link().get('t'), 'base64url'), k, link().get('j')) };
       return { ok: true, json: async () => reply };
     };
     const joining = join({ server: 'https://s/v1', deviceName: 'Mac' }, { print: (line) => printed.push(line), sleep: async () => {}, fetchImpl });
-    if (claimed !== accountId) { await assert.rejects(joining, /does not belong/); continue; }
+    if (claimed !== head) { await assert.rejects(joining, /does not belong/); continue; }
     const config = await joining;
     assert.equal(config.apiKey, 'bt_x');
     assert.ok(Buffer.from(config.accountKey, 'base64').equals(k) && config.accounts && printed.at(-1).includes('iPhone'));

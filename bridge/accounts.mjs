@@ -5,7 +5,7 @@ import { randomBytes } from 'crypto';
 import fs from 'fs';
 import qrcode from 'qrcode-terminal';
 import { CONFIG_PATH, saveConfig } from './config.mjs';
-import { accountOf, fingerprint, openPair, openRotation, sealPair } from './e2ee-node.mjs';
+import { fingerprint, openPair, openRotation, sealPair } from './e2ee-node.mjs';
 
 const POLL_MS = 2000;
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -45,7 +45,8 @@ export async function join(config, { print = console.log, sleep = pause, fetchIm
       }
       if (reply.pending) continue;
       const k = openPair(t, reply.sealed, code);
-      if (k?.length !== 32 || accountOf(k).accountId !== reply.accountId) {
+      // The server names the account's current key (`head`, a fingerprint): K must be that key.
+      if (k?.length !== 32 || (reply.head && fingerprint(k) !== reply.head)) {
         throw new Error('the server answered with a key that does not belong to the account; not joining');
       }
       print(`Joined, approved by ${reply.approvedBy}`);

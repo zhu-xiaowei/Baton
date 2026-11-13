@@ -63,7 +63,6 @@ class Table:
 @pytest.fixture
 def api(monkeypatch):
     monkeypatch.setattr(auth, '_table', Table())
-    monkeypatch.setattr(auth, '_cache', {})
     monkeypatch.setenv('OPEN_REGISTRATION', 'true')
     import bridge_ws
     monkeypatch.setattr(bridge_ws, '_init', lambda: None)
@@ -79,9 +78,9 @@ def api(monkeypatch):
 
 
 def test_two_accounts_never_reach_each_other(api):
-    a = api('/api/account/register', {'accountId': A, 'joinSecret': 'secret-of-a-000000000000', 'deviceName': 'iPhone'})['token']
-    b = api('/api/account/register', {'accountId': B, 'joinSecret': 'secret-of-b-000000000000', 'deviceName': 'Pixel'})['token']
-    api('/api/account/register', {'accountId': A, 'joinSecret': 'x' * 24, 'deviceName': 'x'}, status=409)
+    a = api('/api/account/register', {'accountId': A, 'joinSecret': 'secret-of-a-000000000000', 'fp': '0' * 16, 'deviceName': 'iPhone'})['token']
+    b = api('/api/account/register', {'accountId': B, 'joinSecret': 'secret-of-b-000000000000', 'fp': '0' * 16, 'deviceName': 'Pixel'})['token']
+    api('/api/account/register', {'accountId': A, 'joinSecret': 'x' * 24, 'fp': '0' * 16, 'deviceName': 'x'}, status=409)
     # Another phone joins A; the code works once.
     code = 'app-code-0000000000000'
     api('/api/pair/create', {'code': code, 'sealed': SEALED}, a)
@@ -111,12 +110,12 @@ def test_two_accounts_never_reach_each_other(api):
 
 def test_limits(api, monkeypatch):
     for n in range(5):
-        api('/api/account/register', {'accountId': f'{n:016x}', 'joinSecret': 's' * 24, 'deviceName': 'p'}, ip='9.9.9.9')
-    api('/api/account/register', {'accountId': 'f' * 16, 'joinSecret': 's' * 24, 'deviceName': 'p'}, ip='9.9.9.9', status=429)
+        api('/api/account/register', {'accountId': f'{n:016x}', 'joinSecret': 's' * 24, 'fp': '0' * 16, 'deviceName': 'p'}, ip='9.9.9.9')
+    api('/api/account/register', {'accountId': 'f' * 16, 'joinSecret': 's' * 24, 'fp': '0' * 16, 'deviceName': 'p'}, ip='9.9.9.9', status=429)
     for _ in range(5):
         api('/api/account/recover', {'joinSecret': 'n' * 24, 'deviceName': 'p'}, ip='8.8.8.8', status=403)
     api('/api/account/recover', {'joinSecret': 'n' * 24, 'deviceName': 'p'}, ip='8.8.8.8', status=429)
-    owner = api('/api/account/register', {'accountId': 'e' * 16, 'joinSecret': 's' * 24, 'deviceName': 'p'})['token']
+    owner = api('/api/account/register', {'accountId': 'e' * 16, 'joinSecret': 's' * 24, 'fp': '0' * 16, 'deviceName': 'p'})['token']
     monkeypatch.setattr('accounts.MAX_BRIDGES', 1)
     for status in (200, 409):
         start = api('/api/pair/start', {'deviceName': 'Mac'})
@@ -129,12 +128,12 @@ def test_limits(api, monkeypatch):
     assert 'bridge.mjs" pair' in client.get('/install').text
     monkeypatch.setenv('OPEN_REGISTRATION', 'false')
     assert client.get('/install').status_code == 404
-    api('/api/account/register', {'accountId': 'd' * 16, 'joinSecret': 's' * 24, 'deviceName': 'p'}, status=404)
+    api('/api/account/register', {'accountId': 'd' * 16, 'joinSecret': 's' * 24, 'fp': '0' * 16, 'deviceName': 'p'}, status=404)
 
 
 def test_logout_removal_rotation_and_deletion_stay_in_their_account(api):
-    a = api('/api/account/register', {'accountId': A, 'joinSecret': 'secret-of-a-000000000000', 'deviceName': 'iPhone'})['token']
-    b = api('/api/account/register', {'accountId': B, 'joinSecret': 'secret-of-b-000000000000', 'deviceName': 'Pixel'})['token']
+    a = api('/api/account/register', {'accountId': A, 'joinSecret': 'secret-of-a-000000000000', 'fp': '0' * 16, 'deviceName': 'iPhone'})['token']
+    b = api('/api/account/register', {'accountId': B, 'joinSecret': 'secret-of-b-000000000000', 'fp': '0' * 16, 'deviceName': 'Pixel'})['token']
     api('/api/pair/create', {'code': 'app-code-0000000000001', 'sealed': SEALED}, a)
     ipad = api('/api/pair/claim', {'code': 'app-code-0000000000001', 'deviceName': 'iPad'})['token']
     api('/api/tokens/revoke', {}, ipad)
@@ -142,15 +141,32 @@ def test_logout_removal_rotation_and_deletion_stay_in_their_account(api):
     start = api('/api/pair/start', {'deviceName': 'Mac'})
     api('/api/pair/approve', {'code': start['code'], 'sealed': SEALED}, a)
     mac = api('/api/pair/wait', {'code': start['code'], 'poll': start['poll']})['token']
-    api('/api/bridge/delete-device', {'deviceName': 'Mac'}, a)
+    # Removing a computer needs K' in the same request; the old joinSecret stops at once (no way back via recover).
+    api('/api/bridge/delete-device', {'deviceName': 'Mac'}, a, status=400)
+    rotation = {'joinSecret': 'secret-of-a-111111111111', 'fp': '0' * 16, 'next': '1' * 16, 'sealed': SEALED}
+    api('/api/bridge/delete-device', {'deviceName': 'Mac', 'rotation': rotation}, a)
     api('/api/bridge/devices', None, mac, status=401)
-    rotation = {'joinSecret': 'secret-of-a-111111111111', 'fp': '0' * 16, 'sealed': SEALED}
-    api('/api/account/rotate', rotation, a)
+    api('/api/account/recover', {'joinSecret': 'secret-of-a-000000000000', 'deviceName': 'x'}, status=403)
     assert api('/api/bridge/devices', None, a)['rotations'] == [{'fp': '0' * 16, 'sealed': SEALED}]
     assert api('/api/bridge/devices', None, b)['rotations'] == []
-    api('/api/account/recover', {'joinSecret': 'secret-of-a-000000000000', 'deviceName': 'x'}, status=403)
-    assert api('/api/account/recover', {'joinSecret': 'secret-of-a-111111111111', 'deviceName': 'x'})['accountId'] == A
+    # A second rotation from the replaced key fails instead of forking the chain.
+    api('/api/pair/create', {'code': 'app-code-0000000000002', 'sealed': SEALED}, a)
+    pixel = api('/api/pair/claim', {'code': 'app-code-0000000000002', 'deviceName': 'Pixel'})
+    assert pixel['head'] == '1' * 16
+    lost = [t['id'] for t in api('/api/bridge/devices', None, a)['apps'] if t['deviceName'] == 'Pixel'][0]
+    api('/api/tokens/revoke', {'id': lost, 'rotation': rotation}, a, status=409)
+    api('/api/tokens/revoke', {'id': lost, 'rotation': {**rotation, 'fp': '1' * 16, 'next': '2' * 16, 'joinSecret': 'secret-of-a-222222222222'}}, a)
+    api('/api/bridge/devices', None, pixel['token'], status=401)
+    assert api('/api/account/recover', {'joinSecret': 'secret-of-a-222222222222', 'deviceName': 'x'})['accountId'] == A
     api('/api/account/delete', {}, a)
-    api('/api/account/recover', {'joinSecret': 'secret-of-a-111111111111', 'deviceName': 'x'}, ip='6.6.6.6', status=403)
+    api('/api/account/recover', {'joinSecret': 'secret-of-a-222222222222', 'deviceName': 'x'}, ip='6.6.6.6', status=403)
     api('/api/bridge/devices', None, a, status=401)
     assert api('/api/bridge/devices', None, b)['apps'][0]['deviceName'] == 'Pixel'
+
+
+def test_rate_limits_trust_forwarded_addresses_only_from_cloudfront(api, monkeypatch):
+    monkeypatch.setenv('ORIGIN_SECRET', 'cdn-secret')
+    for n in range(6):  # a direct caller inventing addresses is still one caller
+        status = 200 if n < 5 else 429
+        api('/api/account/register', {'accountId': f'{n + 16:016x}', 'joinSecret': f'secret-{n}-0000000000000000', 'fp': '0' * 16,
+                                      'deviceName': 'p'}, ip=f'10.0.0.{n}, 5.5.5.5', status=status)

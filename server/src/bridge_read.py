@@ -6,6 +6,7 @@ Usage: app.include_router(read_router) in main.py
 from fastapi import APIRouter, Request, Query, Response
 from pydantic import BaseModel, Field
 import os
+from typing import Optional
 import re
 import devices
 
@@ -36,12 +37,15 @@ def _ws_url():
 
 class DeleteDeviceRequest(BaseModel):
     deviceName: str = Field(min_length=1)
+    rotation: Optional[dict] = None  # accounts.Rotation, required for a hosted account
 
 
 @read_router.post("/delete-device")
 async def delete_device(req: DeleteDeviceRequest, raw: Request):
     """Remove a device: its Bridge is told to uninstall itself and disconnected, then its row goes."""
     account_id = _account_id(raw)
+    from accounts import Rotation, removal, revoke_computer
+    removal(raw.state.auth, Rotation(**req.rotation) if req.rotation else None)
     endpoint = os.environ.get("WS_API_ENDPOINT", "")
     if endpoint:
         try:
@@ -50,7 +54,6 @@ async def delete_device(req: DeleteDeviceRequest, raw: Request):
         except Exception as e:
             print(f"removed bridge disconnect failed: {e}")
     devices.delete_device(account_id, req.deviceName)
-    from accounts import revoke_computer
     revoke_computer(account_id, req.deviceName)
     return {"ok": True}
 
@@ -77,9 +80,10 @@ async def get_devices(request: Request):
         "os": item.get("os", ""),
         "online": item["deviceName"] in online_devices,
     } for item in items if item.get("deviceName")]}
-    from accounts import list_tokens, rotations
-    result["apps"] = list_tokens(account_id)
-    result["rotations"] = rotations(account_id)
+    from accounts import _meta, list_tokens
+    meta = _meta(account_id)
+    result.update(apps=list_tokens(account_id), rotations=meta.get("rotations", []),
+                  hosted=bool(meta.get("joinSecretHash")), self=request.state.auth.get("tokenHash", "")[:12])
     if connections is not None:
         from direct_rpc_ws import rpc_info
         try:

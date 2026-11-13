@@ -93,29 +93,24 @@ export function bridgeKeys(k, since = 0, exhausted = () => {}) {
 // Synchronous twins of e2ee.mjs accountOf / sealPair / openPair.
 export const accountOf = (k) => ({ accountId: hkdf(k, 'account', 8).toString('hex'), joinSecret: hkdf(k, 'join').toString('base64url') });
 
-export function sealPair(t, k, code) {
+// One 32-byte key sealed with AES-GCM: nonce ‖ ciphertext ‖ tag, base64.
+function sealKey(key, plain, aad) {
   const nonce = randomBytes(12);
-  const cipher = createCipheriv('aes-256-gcm', hkdf(t, 'pair'), nonce).setAAD(Buffer.from(code));
-  return Buffer.concat([nonce, cipher.update(k), cipher.final(), cipher.getAuthTag()]).toString('base64');
+  const cipher = createCipheriv('aes-256-gcm', key, nonce).setAAD(Buffer.from(aad));
+  return Buffer.concat([nonce, cipher.update(plain), cipher.final(), cipher.getAuthTag()]).toString('base64');
 }
 
-export function openPair(t, sealed, code) {
+function openKey(key, sealed, aad) {
   try {
     const bytes = Buffer.from(sealed, 'base64');
-    const decipher = createDecipheriv('aes-256-gcm', hkdf(t, 'pair'), bytes.subarray(0, 12)).setAAD(Buffer.from(code));
+    const decipher = createDecipheriv('aes-256-gcm', key, bytes.subarray(0, 12)).setAAD(Buffer.from(aad));
     decipher.setAuthTag(bytes.subarray(-16));
     return Buffer.concat([decipher.update(bytes.subarray(12, -16)), decipher.final()]);
   } catch { return null; }
 }
 
+export const sealPair = (t, k, code) => sealKey(hkdf(t, 'pair'), k, code);
+export const openPair = (t, sealed, code) => openKey(hkdf(t, 'pair'), sealed, code);
 export const fingerprint = (k) => hkdf(k, 'fp', 8).toString('hex');
-
-// Synchronous twin of e2ee.mjs openRotation; `fp` is the old K's fingerprint.
-export function openRotation(k, sealed, fp) {
-  try {
-    const bytes = Buffer.from(sealed, 'base64');
-    const decipher = createDecipheriv('aes-256-gcm', hkdf(k, 'rotate'), bytes.subarray(0, 12)).setAAD(Buffer.from(fp));
-    decipher.setAuthTag(bytes.subarray(-16));
-    return Buffer.concat([decipher.update(bytes.subarray(12, -16)), decipher.final()]);
-  } catch { return null; }
-}
+// `fp`: the old K's fingerprint, under which K' was sealed.
+export const openRotation = (k, sealed, fp) => openKey(hkdf(k, 'rotate'), sealed, fp);

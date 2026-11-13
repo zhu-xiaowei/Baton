@@ -8,10 +8,8 @@ import boto3
 
 import api_key
 
-CACHE_SECONDS = 60
 SEEN_SECONDS = 3600
 
-_cache = {}
 _seen = {}
 _table = None
 
@@ -34,11 +32,9 @@ def resolve(credential):
         return None
     if not credential.startswith("bt_"):
         return {"accountId": api_key.account_id(credential), "kind": "key"} if api_key.is_current(credential) else None
+    # Read on every request, not cached: a revoked token must stop on every Lambda instance at once.
     digest = token_hash(credential)
-    cached = _cache.get(digest)
     now = time.time()
-    if cached and cached[0] > now:
-        return cached[1]
     table = _system()
     row = table.get_item(Key={"pk": f"TOKEN#{digest}", "sk": "-"}).get("Item")
     if not row or not table.get_item(Key={"pk": f"ACCOUNT#{row['accountId']}", "sk": "META"}).get("Item"):
@@ -53,9 +49,4 @@ def resolve(credential):
                 ExpressionAttributeValues={":now": int(now)})
         except Exception as error:
             print(f"lastSeen not written: {error}")
-    _cache[digest] = (now + CACHE_SECONDS, result)
     return result
-
-
-def forget(digest):
-    _cache.pop(digest, None)

@@ -19,6 +19,5 @@ def test_tokens_resolve_to_their_account_kind_and_role(monkeypatch):
     connect = lambda role: bridge_ws._handle_connect({'queryStringParameters': {'apiKey': 'bt_phone', 'role': role}}, 'c')
     assert connect('bridge') == {'statusCode': 403}
     assert auth.resolve('bt_phone') == {'accountId': 'a1', 'kind': 'app', 'deviceName': '', 'tokenHash': h}
-    del items[('ACCOUNT#a1', 'META')]
-    auth.forget(h)
+    del items[('ACCOUNT#a1', 'META')]  # read on every request: a deleted account stops at once
     assert auth.resolve('bt_phone') is None and auth.resolve('bt_other') is None

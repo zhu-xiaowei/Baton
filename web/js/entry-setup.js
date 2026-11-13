@@ -12,7 +12,8 @@ import { initMacosTabs, setNativeTabTitle } from './macos-tabs.js';
 import { initMobileNotifications, mountNotificationSettings } from './mobile-notifications.js';
 import { mountTextSizeSettings } from './text-size-settings.js';
 import { initPageZoomShortcuts } from './page-zoom.js';
-import { viaComputer } from './v2/pairing.js';
+import { removeApp, viaComputer } from './v2/pairing.js';
+import { devices } from './v2/direct-transport.js';
 import { toPhrase } from './v2/recovery.js';
 import { confirmDialog } from './components/confirm-dialog.js';
 import { fromBase64 } from '../../bridge/direct-rpc-protocol.mjs';
@@ -62,7 +63,55 @@ setNativeTabTitle('Settings');
 
   // A paired account's own actions (design §7, §9).
   var paired = state.KEY.indexOf('bt_') === 0;
-  document.querySelector('.account-actions').hidden = !paired;
+  // Only an account created by pairing has a recovery phrase, deletion and Apps to remove; a paired App
+  // of a self-hosted (API-key) account does not.
+  var listing = null;
+  if (paired) devices().then(function (body) { listing = body; document.querySelector('.account-actions').hidden = !body.hosted; }, function () {});
+
+  function esc(text) { var el = document.createElement('span'); el.textContent = text; return el.innerHTML; }
+
+  function renderApps() {
+    var apps = (listing && listing.apps || []).filter(function (app) { return app.kind === 'app'; });
+    document.getElementById('appsList').innerHTML = apps.map(function (app) {
+      var seen = app.lastSeen ? new Date(app.lastSeen * 1000).toLocaleString() : '';
+      return '<div class="agent-thread-row"><span class="agent-thread-copy"><span class="agent-thread-title"><strong>' + esc(app.deviceName)
+        + '</strong></span><span class="agent-thread-meta"><small>' + esc(seen) + '</small></span></span>'
+        + (app.id === listing.self ? '<span class="app-self">This device</span>'
+          : '<button class="app-remove" type="button" data-id="' + app.id + '" data-name="' + esc(app.deviceName) + '">Remove</button>')
+        + '</div>';
+    }).join('');
+  }
+
+  window.openAppsSheet = function () {
+    var sheet = document.getElementById('appsSheet');
+    renderApps();
+    sheet.style.display = 'flex';
+    void sheet.offsetWidth;
+    sheet.classList.add('open');
+    devices().then(function (body) { listing = body; renderApps(); }, function () {});
+  };
+
+  window.closeAppsSheet = function () {
+    var sheet = document.getElementById('appsSheet');
+    sheet.classList.remove('open');
+    setTimeout(function () { if (!sheet.classList.contains('open')) sheet.style.display = 'none'; }, 320);
+  };
+
+  // A lost phone or browser: its token stops and the account key is replaced, as for a computer.
+  document.getElementById('appsList').addEventListener('click', async function (event) {
+    var button = event.target.closest('.app-remove');
+    if (!button || !await confirmDialog('Remove ' + button.dataset.name + '?', [[false, 'Cancel'], [true, 'Remove', true]], false,
+      'It is signed out at once and cannot reach your computers again; to use it again, add it with a new code.')) return;
+    button.disabled = true;
+    try {
+      await removeApp(button.dataset.id);
+      listing = await devices();
+      renderApps();
+    } catch (e) {
+      button.disabled = false;
+      await confirmDialog('Could not remove it', [[true, 'OK', true]], true, e.message);
+    }
+  });
 
   window.showRecoveryPhrase = async function () {
     if (!await confirmDialog('Show recovery phrase?', [[false, 'Cancel'], [true, 'Show', true]], false,

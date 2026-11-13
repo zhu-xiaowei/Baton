@@ -132,7 +132,8 @@
             "API_KEY_NAME": { "Ref": "ApiKeyName" },
             "ACCOUNT_ID": { "Ref": "AccountId" },
             "OPEN_REGISTRATION": { "Ref": "OpenRegistration" },
-            "WEB_URL": { "Fn::Sub": "https://${CDN.DomainName}" }
+            "WEB_URL": { "Fn::Sub": "https://${CDN.DomainName}" },
+            "ORIGIN_SECRET": { "Fn::Select": [2, { "Fn::Split": ["/", { "Ref": "AWS::StackId" }]}] }
           }
         },
         "MemorySize": 1024,
@@ -744,6 +745,7 @@
               "Id": "api",
               "DomainName": { "Fn::Sub": "${RestApi}.execute-api.${AWS::Region}.amazonaws.com" },
               "OriginPath": "/v1",
+              "OriginCustomHeaders": [{ "HeaderName": "X-Baton-Origin", "HeaderValue": { "Fn::Select": [2, { "Fn::Split": ["/", { "Ref": "AWS::StackId" }]}] } }],
               "CustomOriginConfig": {
                 "OriginProtocolPolicy": "https-only",
                 "OriginKeepaliveTimeout": 60

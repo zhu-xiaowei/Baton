@@ -25,8 +25,9 @@ Token format: `bt_` + 32 random bytes base64url (46 chars). Stored only as `sha2
 - `resolve(credential) -> {accountId, kind, deviceName, tokenHash} | None`
   - deployment API key (constant-time compare, as `api_key.is_current`) → `{accountId: pinned/legacy id, kind: 'key'}`;
   - `bt_…` → `TOKEN#<hash>` row, then the account's `META` row must exist (deleted or expired accounts fail);
-  - results cached in-process 60 s (like `feat/device-credentials`' `resolve()`); `lastSeen` written at most hourly.
-- `forget(tokenHash)` drops cache entries on revoke/delete.
+  - read on every request, never cached: a revoke must hold on every Lambda instance at once (two GetItems,
+    a few ms); `lastSeen` written at most hourly per instance.
+  - a Bridge token connects only as its own computer (`device` must equal the token's name).
 
 Call sites switched to `auth.resolve` (all five that use `api_key.account_id` / `is_current` today):
 `bridge_read.py:_account_id`, `notifications.py:_account`, `bridge_ws.py:_handle_connect` (and
@@ -50,7 +51,7 @@ connections (`apigatewaymanagementapi.delete_connection`), so renewal stops.
 
 | pk | sk | Attributes | TTL |
 |---|---|---|---|
-| `ACCOUNT#<accountId>` | `META` | `joinSecretHash`, `createdAt` | — |
+| `ACCOUNT#<accountId>` | `META` | `joinSecretHash`, `head` (fingerprint of the current `K`), `rotations` (chain, ≤ 8), `createdAt` | — |
 | `ACCOUNT#<accountId>` | `TOKEN#<hash>` | `kind` (`app`/`bridge`), `deviceName`, `createdAt`, `lastSeen` | — |
 | `TOKEN#<hash>` | `-` | `accountId`, `kind`, `deviceName` | — |
 | `JOIN#<hash(joinSecret)>` | `-` | `accountId` (written at register, replaced at rotate, deleted with the account) | — |
@@ -67,7 +68,7 @@ devices queries `pk = ACCOUNT#<id>, begins_with(sk, 'TOKEN#')`.
 |---|---|---|---|
 | `POST /api/account/register` | none | `{accountId, joinSecret, deviceName}` → `{token}` (app) | called by the first App, which creates `K`; only with `OpenRegistration`; `accountId` must not exist (conditional put); `RATE#ip` ≤ 5 / hour; `accountId == HKDF(K)` is unverifiable by the server and need not be |
 | `POST /api/account/recover` | none | `{joinSecret, deviceName}` → `{token, accountId}` (app) | the account is found by `JOIN#<hash(joinSecret)>` (accountId is fixed at registration while K rotates, so it cannot be derived from the phrase); `RATE#ip` and `RATE#account` ≤ 5 / hour; the new App appears in the device list |
-| `POST /api/account/rotate` | app token | `{joinSecret}` (new) → `{}` | after a device removal (§8) |
+| `POST /api/bridge/delete-device` | app token or API key | `{deviceName, rotation?}` → `{}` | hosted accounts must send `rotation = {joinSecret', fp, next, sealed}`; applied first, conditional on `head = fp` (§8) |
 | `POST /api/account/delete` | app token | `{}` → `{}` | §9 |
 | `POST /api/pair/create` | app token or API key or bridge token | `{kind:'app', sealed}` → `{code, expiresIn}` | sealed = K under `t` (§5) |
 | `POST /api/pair/claim` | none | `{code, deviceName}` → `{token, accountId, sealed}` | atomic delete of the PAIR row (`ReturnValues: ALL_OLD`) |
@@ -75,7 +76,7 @@ devices queries `pk = ACCOUNT#<id>, begins_with(sk, 'TOKEN#')`.
 | `POST /api/pair/approve` | app token | `{code, sealed}` → `{}` | binds the PAIR row to the App's account; refuses when the account already has 3 Bridges (free tier, §10); API-key Apps may approve too (self-host) |
 | `POST /api/pair/wait` | none | `{code, poll}` → `{token, accountId, sealed}` or `{pending:true}` | long-poll up to 20 s; `poll` checked by hash; row deleted once read |
 | `GET /api/bridge/devices` | any | existing reply + `apps: [{id, deviceName, kind, lastSeen}]` | `id` = first 12 hex of the token hash |
-| `POST /api/tokens/revoke` | app token or API key | `{id}` → `{}` | deletes both token rows, closes its sockets, `forget()`; Bridge tokens also get `device_removed` (existing uninstall path) |
+| `POST /api/tokens/revoke` | app token or API key | `{}` (log out) or `{id, rotation?}` (another App) → `{}` | deletes both token rows and closes its sockets; removing another App rotates `K` like a computer |
 
 `/api/auth/start-token`, `/auth/exchange-token`, `/auth/install` stay for self-host Setup links (API key).
 
@@ -149,7 +150,10 @@ stores it non-extractable). Self-host (`config.accounts` unset): step 1 only —
 key have no token, and PR A's migration would undo a rotation; the API-key holder controls every device anyway (D1).
 1. `POST /api/tokens/revoke {id}` — the server deletes the token, closes its sockets, sends
    `device_removed` to a removed Bridge. From now on the removed device cannot reach the account.
-2. The App creates `K'` (random), computes `joinSecret'`, calls `POST /api/account/rotate`.
+2. Before the removal the App catches up with the chain (`/devices`), creates `K'`, and sends `rotation =
+   {joinSecret', fp(K), fp(K'), K' sealed under K}` in the removal request itself; the server swaps
+   `joinSecretHash` / `JOIN#` / `head` first (conditional on `head = fp(K)`, so two removals from one `K` cannot
+   fork the chain), then revokes. The old joinSecret never outlives the removal.
 3. It sends `account_key_rotate {k: K'}` sealed over its session to every online Bridge. A Bridge saves
    `K'` (`accountKeyAt` now), keeps `previousKey = K` for 7 days, and joins again with new keys.
 4. Other Apps and Bridges offline at that moment: on their next connection they hold the old `K`. A Bridge
@@ -178,8 +182,9 @@ landing.
    relay cleanup); existing shared rows are ignored (Apps re-register on every launch).
 3. Lambda log groups: `install.sh` sets 7-day retention (`aws logs put-retention-policy`) on both Lambda log
    groups after each deploy (a template `AWS::Logs::LogGroup` would collide with the existing groups).
-4. Limits (`RATE#` rows, atomic `ADD` with condition): register 5 / hour / IP, recover 5 / hour / IP and
-   / account, pair/start 10 / hour / IP; at most 3 Bridge tokens per account (`approve`); stage throttling (§2).
+4. Limits (`RATE#` rows, atomic `ADD` with condition; the client IP is `X-Forwarded-For[-2]` only when the
+   CloudFront origin secret header is present, else API Gateway's own `[-1]`): register 5 / hour / IP, recover 5 / hour / IP and
+   / account, pair/start 10 / hour / IP; at most 10 Bridge tokens per account (`approve`); stage throttling (§2).
 5. No empty accounts: an account is created by an App (§5), so there is no expiry; the resolver rejects
    tokens whose META row is gone (deleted account).
 6. Logged payloads: none (request bodies are never logged today; keep it so).

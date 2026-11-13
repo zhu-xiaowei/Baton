@@ -32,7 +32,7 @@ import { showCenteredModal, hideCenteredModal } from './components/modal-viewpor
 import { saveHomeTerminalView, savedHomeTerminal, saveTerminalView, shouldRestoreTerminal } from './terminal-view-state.js';
 import { homeProject } from './project/home.js';
 import { showToast } from './components/toast.js';
-import { rotateAccountKey } from './v2/pairing.js';
+import { removeComputer } from './v2/pairing.js';
 import { parsePreviewTarget } from './preview-link.js';
 import { openExternalLink, previewNativeAvailable } from './native-shell.js';
 import { CHECK_ICON_SVG, FOLDER_ICON_SVG, GIT_BRANCH_ICON_SVG, TERMINAL_ICON_SVG } from './components/icons.js';
@@ -1777,7 +1777,7 @@ async function submitDeviceDelete(btn) {
   var device = _deviceToDelete;
   setButtonLoading(btn, 'Removing');
   try {
-    await apiPost('/api/bridge/delete-device', { deviceName: device });
+    await removeComputer(device);
   } catch (e) {
     var err = document.getElementById('deleteError'); if (err) err.textContent = 'Remove failed: ' + e.message;
     setButtonLoading(btn);
@@ -1785,8 +1785,6 @@ async function submitDeviceDelete(btn) {
     return;
   }
   closeDeleteModal();
-  // The removed computer still knows K: a paired account replaces it (self-hosted ones only revoke).
-  if (state.KEY.startsWith('bt_')) rotateAccountKey().catch(function () {});
   localStorage.removeItem('apeek_home_cache');
   invalidatePagedList('projects:' + device);
   document.querySelectorAll('.device-card[data-name]').forEach(function (card) {

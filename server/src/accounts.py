@@ -9,6 +9,8 @@ import time
 
 from boto3.dynamodb.conditions import Key
 from botocore.exceptions import ClientError
+from typing import Optional
+
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
@@ -16,7 +18,6 @@ import auth
 
 router = APIRouter(prefix="/api")
 PAIR_SECONDS = 600
-# Pairing links open the App where it runs (CloudFront, which also serves its /data socket), not the API URL.
 MAX_BRIDGES = 10
 ACCOUNT = Field(pattern=r"^[0-9a-f]{16}$")
 SECRET = Field(pattern=r"^[\w-]{22,64}$")
@@ -47,11 +48,14 @@ def _conditional(write):
 
 
 def _ip(request):
-    # CloudFront appends the viewer to X-Forwarded-For, then API Gateway appends CloudFront.
+    # API Gateway appends the address it saw. Behind CloudFront that is CloudFront, which appended the
+    # viewer before it; only CloudFront knows the origin secret, so a direct caller cannot pose as it.
     hops = [hop.strip() for hop in request.headers.get("x-forwarded-for", "").split(",") if hop.strip()]
     if not hops:
         return request.client.host if request.client else "-"
-    return hops[-2] if len(hops) > 1 and "x-amz-cf-id" in request.headers else hops[-1]
+    secret = os.environ.get("ORIGIN_SECRET", "")
+    via_cdn = bool(secret) and hmac.compare_digest(request.headers.get("x-baton-origin", ""), secret)
+    return hops[-2] if via_cdn and len(hops) > 1 else hops[-1]
 
 
 def _rate(scope, limit, window=3600):
@@ -98,14 +102,21 @@ def _take(code, condition, values):
 
 
 def list_tokens(account):
-    rows = _table().query(KeyConditionExpression=Key("pk").eq(f"ACCOUNT#{account}") & Key("sk").begins_with("TOKEN#"))
     return [{"id": row["sk"][6:18], "deviceName": row.get("deviceName", ""), "kind": row["kind"],
-             "lastSeen": int(row.get("lastSeen", row.get("createdAt", 0)))} for row in rows.get("Items", [])]
+             "lastSeen": int(row.get("lastSeen", row.get("createdAt", 0)))} for row in _token_rows(account)]
+
+
+def _meta(account):
+    return _table().get_item(Key={"pk": f"ACCOUNT#{account}", "sk": "META"}, ConsistentRead=True).get("Item") or {}
+
+
+FINGERPRINT = Field(pattern=r"^[0-9a-f]{16}$")
 
 
 class Account(BaseModel):
     accountId: str = ACCOUNT
     joinSecret: str = SECRET
+    fp: str = FINGERPRINT  # the current K's fingerprint (`head`): pairing and rotation check it
     deviceName: str = NAME
 
 
@@ -115,7 +126,7 @@ def register(body: Account, request: Request):
         raise HTTPException(404, "Registration is closed on this server.")
     _rate(f"register#{_ip(request)}", 5)
     if _conditional(lambda: _table().put_item(Item={
-            "pk": f"ACCOUNT#{body.accountId}", "sk": "META", "joinSecretHash": _sha(body.joinSecret),
+            "pk": f"ACCOUNT#{body.accountId}", "sk": "META", "joinSecretHash": _sha(body.joinSecret), "head": body.fp,
             "createdAt": int(time.time())}, ConditionExpression="attribute_not_exists(pk)")) is False:
         raise HTTPException(409, "Account exists.")
     _join_index(body.accountId, _sha(body.joinSecret))
@@ -172,7 +183,7 @@ class Claim(BaseModel):
 def pair_claim(body: Claim):
     row = _take(body.code, "kind = :app", {":app": "app"})
     return {"token": _issue(row["accountId"], "app", body.deviceName), "accountId": row["accountId"],
-            "sealed": row["sealed"]}
+            "sealed": row["sealed"], "head": _meta(row["accountId"]).get("head", "")}
 
 
 class Start(BaseModel):
@@ -234,7 +245,7 @@ def pair_wait(body: Wait):
         return {"pending": True}
     row = _take(body.code, "pollHash = :poll AND attribute_exists(accountId)", {":poll": _sha(body.poll)})
     return {"token": _issue(row["accountId"], "bridge", row["deviceName"]), "accountId": row["accountId"],
-            "sealed": row["sealed"], "approvedBy": row["approvedBy"]}
+            "sealed": row["sealed"], "approvedBy": row["approvedBy"], "head": _meta(row["accountId"]).get("head", "")}
 
 
 # ---- Removal, rotation, deletion (design §8, §9) ----
@@ -272,8 +283,49 @@ def _token_rows(account):
 def _revoke(account, digest):
     _table().delete_item(Key={"pk": f"TOKEN#{digest}", "sk": "-"})
     _table().delete_item(Key={"pk": f"ACCOUNT#{account}", "sk": f"TOKEN#{digest}"})
-    auth.forget(digest)
     _close(account, token_hash=digest)
+
+
+class Rotation(BaseModel):
+    joinSecret: str = SECRET
+    fp: str = FINGERPRINT    # the K being replaced (must be the account's head)
+    next: str = FINGERPRINT  # K'
+    sealed: str = SEALED     # K' sealed under K
+
+
+def _rotate(account, rotation):
+    """K' for the devices that stay, sealed under the K the removed device also holds (design §8). Done in
+    the same request as the removal, so no window leaves the old joinSecret valid; `head` makes two
+    rotations from one K fail instead of forking."""
+    chain = [entry for entry in _meta(account).get("rotations", []) if entry["fp"] != rotation.fp][-(MAX_ROTATIONS - 1):]
+    old = _conditional(lambda: _table().update_item(
+        Key={"pk": f"ACCOUNT#{account}", "sk": "META"}, ReturnValues="UPDATED_OLD",
+        UpdateExpression="SET joinSecretHash = :hash, head = :next, rotations = :chain",
+        ConditionExpression="head = :fp",
+        ExpressionAttributeValues={":hash": _sha(rotation.joinSecret), ":next": rotation.next, ":fp": rotation.fp,
+                                   ":chain": chain + [{"fp": rotation.fp, "sealed": rotation.sealed}]}))
+    if old is False:
+        raise HTTPException(409, "The account key changed meanwhile; try again.")
+    _join_index(account, _sha(rotation.joinSecret))
+    _table().delete_item(Key={"pk": f"JOIN#{old['Attributes']['joinSecretHash']}", "sk": "-"})
+    import bridge_ws
+    bridge_ws._init()
+    for item in bridge_ws._query_connections(account, "bridge"):
+        try:
+            bridge_ws._post_to_connection(os.environ.get("WS_API_ENDPOINT", ""), item["connectionId"], {"action": "account_rotated"})
+        except Exception:
+            pass
+
+
+def removal(caller, rotation):
+    """Before a device leaves: a hosted account replaces K; a self-hosted one (API key) only revokes."""
+    if caller["kind"] == "bridge":
+        raise HTTPException(403, "Remove devices from an App.")
+    if not _meta(caller["accountId"]).get("joinSecretHash"):
+        return
+    if not rotation:
+        raise HTTPException(400, "Removing a device needs a new account key.")
+    _rotate(caller["accountId"], rotation)
 
 
 def revoke_computer(account, name):
@@ -283,51 +335,24 @@ def revoke_computer(account, name):
             _revoke(account, row["sk"][6:])
 
 
+class Revoke(BaseModel):
+    id: str = Field("", pattern=r"^([0-9a-f]{12})?$")
+    rotation: Optional[Rotation] = None
+
+
 @router.post("/tokens/revoke")
-def revoke_self(request: Request):
-    """Log out: this device's token stops working everywhere."""
+def revoke(body: Revoke, request: Request):
+    """Without `id`: log out (this device's token). With `id`: remove another App of the account (lost phone)."""
     caller = request.state.auth
-    if caller.get("tokenHash"):
-        _revoke(caller["accountId"], caller["tokenHash"])
-    return {"ok": True}
-
-
-def rotations(account):
-    meta = _table().get_item(Key={"pk": f"ACCOUNT#{account}", "sk": "META"}).get("Item") or {}
-    return meta.get("rotations", [])
-
-
-class Rotate(BaseModel):
-    joinSecret: str = SECRET
-    fp: str = Field(pattern=r"^[0-9a-f]{16}$")
-    sealed: str = SEALED
-
-
-@router.post("/account/rotate")
-def rotate(body: Rotate, request: Request):
-    """After a removal: K' sealed under the old K for the devices that still hold it; new joinSecret."""
-    caller = request.state.auth
-    if caller["kind"] != "app":
-        raise HTTPException(403, "Only an App rotates the account key.")
-    account = caller["accountId"]
-    chain = [entry for entry in rotations(account) if entry["fp"] != body.fp][-(MAX_ROTATIONS - 1):]
-    old = _conditional(lambda: _table().update_item(
-            Key={"pk": f"ACCOUNT#{account}", "sk": "META"}, ReturnValues="UPDATED_OLD",
-            UpdateExpression="SET joinSecretHash = :hash, rotations = :chain",
-            ConditionExpression="attribute_exists(joinSecretHash)",
-            ExpressionAttributeValues={":hash": _sha(body.joinSecret),
-                                       ":chain": chain + [{"fp": body.fp, "sealed": body.sealed}]}))
-    if old is False:
-        raise HTTPException(409, "This account has no recovery secret to rotate (self-hosted).")
-    _join_index(account, _sha(body.joinSecret))
-    _table().delete_item(Key={"pk": f"JOIN#{old['Attributes']['joinSecretHash']}", "sk": "-"})
-    import bridge_ws
-    bridge_ws._init()
-    for item in bridge_ws._query_connections(account, "bridge"):
-        try:
-            bridge_ws._post_to_connection(os.environ.get("WS_API_ENDPOINT", ""), item["connectionId"], {"action": "account_rotated"})
-        except Exception:
-            pass
+    if not body.id:
+        if caller.get("tokenHash"):
+            _revoke(caller["accountId"], caller["tokenHash"])
+        return {"ok": True}
+    row = next((row for row in _token_rows(caller["accountId"]) if row["sk"][6:18] == body.id and row["kind"] == "app"), None)
+    if not row or row["sk"][6:] == caller.get("tokenHash"):
+        raise HTTPException(404, "No such App in this account.")
+    removal(caller, body.rotation)
+    _revoke(caller["accountId"], row["sk"][6:])
     return {"ok": True}
 
 
@@ -337,6 +362,8 @@ def delete_account(request: Request):
     if caller["kind"] != "app":
         raise HTTPException(403, "Delete the account from an App.")
     account = caller["accountId"]
+    if not _meta(account).get("joinSecretHash"):
+        raise HTTPException(409, "A self-hosted account cannot be deleted from the App.")
     _close(account, notice="account_deleted")
     import devices
     for item in devices.list_devices(account):
@@ -352,6 +379,5 @@ def delete_account(request: Request):
                     table.delete_item(Key={"pk": f"JOIN#{row['joinSecretHash']}", "sk": "-"})
                 if pk.startswith("ACCOUNT#") and row["sk"].startswith("TOKEN#"):
                     table.delete_item(Key={"pk": row["sk"], "sk": "-"})
-                    auth.forget(row["sk"][6:])
                 table.delete_item(Key={"pk": row["pk"], "sk": row["sk"]})
     return {"ok": True}

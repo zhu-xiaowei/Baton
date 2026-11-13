@@ -215,6 +215,9 @@ def _handle_connect(event, connection_id):
     # A device token connects only in its own role: a phone cannot pose as a Bridge, nor a Bridge as an App.
     if resolved["kind"] != "key" and (resolved["kind"] == "bridge") != role.startswith("bridge"):
         return {"statusCode": 403}
+    # A computer's token is that computer: it cannot connect as another one (and pass the account's limit).
+    if resolved["kind"] == "bridge" and device and device != resolved["deviceName"]:
+        return {"statusCode": 403}
     bridge_id = qs.get("bridgeId") if role == "bridge" else None
     if bridge_id is not None and not re.fullmatch(r"[a-f0-9]{32}", bridge_id):
         return {"statusCode": 400}

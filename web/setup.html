@@ -88,6 +88,9 @@
   .account-actions .setting-row + .setting-row { border-top: 1px solid var(--border); margin-top: 14px; padding-top: 14px; }
   .account-actions .chev { color: var(--text-muted); font-size: 22px; line-height: 1; }
   .delete-account strong { color: var(--danger); }
+  #appsList .agent-thread-row { cursor: default; align-items: center; }
+  .app-remove { flex: 0 0 auto; padding: 4px 10px; border: 1px solid var(--border); border-radius: 6px; background: transparent; color: var(--danger); font-size: 12px; cursor: pointer; }
+  .app-self { flex: 0 0 auto; color: var(--text-muted); font-size: 12px; }
   .version-value { color: var(--text-secondary); font-size: 13px; }
   .setting-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px; cursor: pointer; }
   div.setting-row { cursor: default; }
@@ -181,8 +184,17 @@
 </div>
 
 <div class="section account-actions" hidden>
+  <a class="setting-row" href="#" onclick="openAppsSheet(); return false"><strong>Apps</strong><span class="chev" aria-hidden="true">›</span></a>
   <a class="setting-row" href="#" onclick="showRecoveryPhrase(); return false"><strong>Recovery phrase</strong><span class="chev" aria-hidden="true">›</span></a>
   <a class="setting-row delete-account" href="#" onclick="deleteAccount(); return false"><strong>Delete account</strong></a>
+</div>
+
+<!-- Phones, browsers and desktop Apps of the account; same sheet as the session's Subagents. -->
+<div id="appsSheet" class="modal-overlay agent-threads-overlay" style="display:none" onclick="if(event.target===this)closeAppsSheet()">
+  <div class="modal-box agent-threads-box" role="dialog" aria-modal="true" aria-label="Apps">
+    <div class="agent-threads-header"><div class="modal-title">Apps</div></div>
+    <div id="appsList" class="agent-threads-list"></div>
+  </div>
 </div>
 
 <!-- Logout -->
