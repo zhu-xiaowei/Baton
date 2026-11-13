@@ -188,6 +188,30 @@ Done:
   Delete (Session or project) refuses Sessions Baton or another process holds, then removes the Session folders
   (children too) and DSH's projcache entry. Rename appends dsh's own user `session/title` frame under the Session lock and updates its list cache (refused while in use; not on Windows).
 
+### Multi-harness H1: OpenCode ≥ 2.2 (`bridge/opencode-*.mjs`)
+- Loaded whenever `~/.local/share/opencode/opencode.db` exists (one `OPTIONAL_RUNTIMES` line). A 1.x DB without
+  `session_v2` stays registered but lists nothing, starts no watcher and offers no create/send (delete is a no-op).
+  Catalog (`kind:'rows'`) and history read that DB read-only: `PRAGMA data_version`, then rows whose
+  max(time_updated, busy, idle, suspended, archived) moved; history lines are `RowIndex` positions; rows of the
+  turn after the last `idle` row (and running `!cmd` rows) are unstable. One row per block, like Claude's JSONL
+  (`<msgId>#b:<toolId|t0|r0>`, results `<msgId>#r:<toolId>`), live and in history; a tool row goes out at `tool.called`. Baton prompts carry
+  `metadata.baton.turnId` → nativeId `live:user:<turnId>`; files Baton attached are not shown twice.
+- The watcher (`fs.watch` on db/-wal, busy + pending) reports root status changes (external turns get
+  `localIdleSec`) and pushes rows other clients wrote; rows of a Baton turn come from the service events.
+  Busy that neither Baton, the service (`/api/session/active`) nor a non-service opencode process on that
+  session runs is an orphaned claim → Done.
+- Interaction goes through the user's own background service (`~/.local/state/opencode/service.json`); Baton
+  runs `opencode service start` only to send (it resumes suspended sessions), never to read. One `/api/event` SSE
+  per Baton turn, closed 120 s after the last ends. Sends never set `delivery` (OpenCode steers them into a running
+  turn). New sessions get `shell`/`edit: ask` rules and no title. Allow → `once`; "for this session" adds the
+  request's `save` patterns to the session's own rules; deny always carries a message (a bare reject cancels the
+  turn); forms map per field key (multiselect → array). A subagent's request joins its root's Baton turn and is
+  answered on the subagent's session (subscribe also fetches busy subagents' requests); one record per open request; every way it goes away (reply, reconcile with the service on subscribe / commit) settles it and tells the page. `heldElsewhere`: busy in the DB but not active in the service
+  → a live non-service opencode process with the id in its argv or the session cwd. Rename/delete use the service,
+  else `opencode api … --standalone`. `/name` is posted as a command first (404 → sent as text; its user row gets
+  the turnId live only); the command list is `/api/command`, asked again once if a cold directory lists nothing; without the service a
+  private unregistered `opencode serve` (resumes nothing) lists it once per directory and exits, cached by file signature for 5 min.
+
 ### Git Graph + Commit/Push: COMPLETE
 - Git page header shows `project › branch ↑N ↓M` from the existing porcelain status; the branch text is display-only.
 - Graph (below Changes, collapsed by default) draws real parent topology with an incremental lane layout
