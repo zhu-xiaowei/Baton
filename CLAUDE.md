@@ -209,7 +209,8 @@ Done:
   answered on the subagent's session (subscribe also fetches busy subagents' requests); one record per open request; every way it goes away (reply, reconcile with the service on subscribe / commit) settles it and tells the page. `heldElsewhere`: busy in the DB but not active in the service
   → a live non-service opencode process with the id in its argv or the session cwd. Rename/delete use the service,
   else `opencode api … --standalone`. `/name` is posted as a command first (404 → sent as text; its user row gets
-  the turnId live only); the command list is `/api/command`, asked again once if a cold directory lists nothing.
+  the turnId live only); the command list is `/api/command`, asked again once if a cold directory lists nothing; without the service a
+  private unregistered `opencode serve` (resumes nothing) lists it once per directory and exits, cached by file signature for 5 min.
 
 ### Git Graph + Commit/Push: COMPLETE
 - Git page header shows `project › branch ↑N ↓M` from the existing porcelain status; the branch text is display-only.
