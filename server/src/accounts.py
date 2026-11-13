@@ -183,8 +183,6 @@ class Approve(BaseModel):
 @router.post("/pair/approve")
 def pair_approve(body: Approve, request: Request):
     caller = request.state.auth
-    if caller["kind"] == "bridge":
-        raise HTTPException(403, "Only an App can add a computer.")
     if caller["kind"] == "key":
         _ensure_meta(caller["accountId"])
     computers = [token["deviceName"] for token in list_tokens(caller["accountId"]) if token["kind"] == "bridge"]

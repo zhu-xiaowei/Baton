@@ -44,6 +44,7 @@ import {
 } from './codex-commands.mjs';
 import { inspectCodexSession, resolveCodexSessionCwd } from './codex-session.mjs';
 import { updateSessionStatus, recentSessions } from './sync.mjs';
+import { approveJoin, createInvite } from './accounts.mjs';
 import { BRIDGE_VERSION } from './version.mjs';
 import {
   PermissionQueue,
@@ -793,6 +794,9 @@ function connect() {
         }), caller),
         create_project: params => createProject(params.projectPath, params.asAgent),
         delete_files: (params, caller) => collectFrames((send) => handleDeleteFiles({ ...params, progress: true }, { send }), caller),
+        // Pairing on behalf of an App, which never holds K in a form it could seal itself (plan D2).
+        pair_invite: () => createInvite(_config),
+        pair_approve: params => approveJoin(_config, params.link),
         ping: () => ({ bridgeVersion: BRIDGE_VERSION, runtimes: runtimeAdapters.filter(adapter => adapter.features.create).map(adapter => adapter.runtime) }),
       },
     });

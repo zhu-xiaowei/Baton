@@ -429,6 +429,8 @@ async function sessionFor(device) {
 // fingerprint wins, so every App and Bridge converge), or creates it, and gives it to the Bridges
 // without it, which then join again with sealed sessions (docs/v2-accounts-e2ee-plan.md §9).
 function migrate() {
+  // A paired App (device token) got K by pairing; only API-key Apps hand K over in clear.
+  if (state.KEY.startsWith('bt_')) return;
   if (migrating || performance.now() - migratedAt < STALL_MS) return;
   migrating = (async () => {
     const online = [...routes].filter(([, route]) => route.online);

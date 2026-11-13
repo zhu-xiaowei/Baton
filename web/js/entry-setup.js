@@ -12,6 +12,7 @@ import { initMacosTabs, setNativeTabTitle } from './macos-tabs.js';
 import { initMobileNotifications, mountNotificationSettings } from './mobile-notifications.js';
 import { mountTextSizeSettings } from './text-size-settings.js';
 import { initPageZoomShortcuts } from './page-zoom.js';
+import { viaComputer } from './v2/pairing.js';
 
 initMacosTabs();
 initPageZoomShortcuts();
@@ -43,32 +44,85 @@ setNativeTabTitle('Settings');
     else location.href = 'index.html';
   }
 
+  // The scan icon shows where Add device can scan: the phone apps (as on the sign-in page).
+  var nativeApp = !location.origin.startsWith('http') || location.origin.includes('tauri.localhost');
+  if ((nativeApp && ('ontouchstart' in window || navigator.maxTouchPoints > 0)) || window.harmonyBridge) {
+    document.querySelector('.add-device .scan-icon').hidden = false;
+  }
+
+  // After adding, the sign-in page returns to home past this page when home opened it.
+  document.querySelector('.add-device').addEventListener('click', function () {
+    var referrer = document.referrer ? new URL(document.referrer) : null;
+    var fromIndex = referrer && referrer.origin === location.origin && /\/(?:index\.html)?$/.test(referrer.pathname);
+    sessionStorage.setItem('baton-add-depth', fromIndex && history.length > 2 ? '2' : '0');
+  });
+
   mountBackButton(document.getElementById('setupBackButton'), leaveSetup);
   initSystemBack({ navigate: () => { leaveSetup(); return true; } });
 
-  // Steps 1-3 share one 10-minute token, so the install command, Start URL and QR code never
-  // carry the API key.
-  var cmdEl = document.getElementById('installCmdText');
+  // One 10-minute code serves the three tabs, requested only when one of them is shown. With the API
+  // key it is a start token, so the key never appears in the install command, Start URL or QR code; a
+  // paired App (device token) gets a one-use invite that an online computer seals K into.
   var platform = /Win/.test(navigator.platform) ? 'windows' : 'unix';
-  var token = '';
+  var paired = state.KEY.indexOf('bt_') === 0;
+  var tokenRequest = null;
 
-  function renderInstallCommand() {
-    var windows = platform === 'windows';
-    if (token) {
-      var url = state.SERVER + '/auth/install?t=' + token;
-      cmdEl.textContent = windows ? "irm '" + url + "&platform=windows' | iex" : 'curl -sL "' + url + '" | bash';
-    }
-    document.getElementById('installHint').textContent = windows
-      ? 'Run this command in PowerShell with Node.js installed.'
-      : 'Run this command on macOS or Linux with Node.js installed.';
-    document.querySelectorAll('.platform-option').forEach(function (button) {
-      button.classList.toggle('active', button.dataset.platform === platform);
-    });
+  function startToken() {
+    tokenRequest = tokenRequest || (paired ? viaComputer('pair_invite') : apiPost('/api/auth/start-token')).then(function (result) {
+      setTimeout(resetConnect, result.expiresIn * 1000);
+      return paired ? result.link : state.SERVER + '/?t=' + result.token;
+    }, function (error) { tokenRequest = null; throw error; });
+    return tokenRequest;
   }
 
-  window.selectInstallPlatform = function (value) {
-    platform = value;
-    renderInstallCommand();
+  function installCommand(startUrl) {
+    var url = paired ? state.SERVER + '/install' : startUrl.replace('/?t=', '/auth/install?t=');
+    var windows = platform === 'windows';
+    if (paired) return windows ? "irm '" + url + "?platform=windows' | iex" : 'curl -sL ' + url + ' | bash';
+    return windows ? "irm '" + url + "&platform=windows' | iex" : 'curl -sL "' + url + '" | bash';
+  }
+
+  function connectText(panel, startUrl) {
+    return panel === 'url' ? startUrl : installCommand(startUrl);
+  }
+
+  function resetConnect() {
+    tokenRequest = null;
+    document.querySelectorAll('.connect .code-block').forEach(function (block) {
+      var btn = block.querySelector('.code-btn');
+      block.classList.add('masked');
+      block.querySelector('.text').textContent = '••••••••••••••••••••••••••••••••';
+      if (btn.dataset.icon) btn.innerHTML = btn.dataset.icon;
+    });
+    document.querySelector('.connect .qr-frame').classList.remove('ready');
+    if (!document.querySelector('[data-panel="qr"]').hidden) showQr();
+  }
+
+  window.revealConnect = function (btn) {
+    var block = btn.parentElement;
+    if (!block.classList.contains('masked')) { copyText(btn, block.querySelector('.text').textContent); return; }
+    btn.dataset.icon = btn.dataset.icon || btn.innerHTML;
+    btn.innerHTML = '<span class="spinner"></span>';
+    btn.disabled = true;
+    // A paired App's install command needs no code.
+    (paired && block.dataset.panel === 'install' ? Promise.resolve('') : startToken()).then(function (startUrl) {
+      block.querySelector('.text').textContent = connectText(block.dataset.panel, startUrl);
+      block.classList.remove('masked');
+      btn.textContent = 'Copy';
+    }, function () { btn.innerHTML = btn.dataset.icon; }).finally(function () { btn.disabled = false; });
+  };
+
+  function showQr() {
+    if (document.querySelector('.connect .qr-frame.ready')) return;
+    startToken().then(drawQr, function () {});
+  }
+
+  window.selectConnectTab = function (tab) {
+    document.querySelectorAll('.connect-tabs .platform-option').forEach(function (button) {
+      button.classList.toggle('active', button.dataset.tab === tab);
+    });
+    document.querySelectorAll('.connect [data-panel]').forEach(function (panel) { panel.hidden = panel.dataset.panel !== tab; });
+    if (tab === 'qr') showQr();
   };
 
   function drawQr(startUrl) {
@@ -95,31 +149,6 @@ setNativeTabTitle('Settings');
     canvas.parentElement.classList.add('ready');
   }
 
-  async function refreshToken() {
-    var expiry = '';
-    try {
-      var result = await apiPost('/api/auth/start-token');
-      token = result.token;
-      expiry = 'Valid for ' + Math.round(result.expiresIn / 60) + ' minutes.';
-    } catch (e) {
-      token = '';
-      expiry = 'Could not create a link. Reopen this page to try again.';
-    }
-    document.querySelectorAll('.token-expiry').forEach(function (el) { el.textContent = expiry; });
-    renderInstallCommand();
-    if (!token) {
-      cmdEl.textContent = 'Could not create an install command.';
-      document.getElementById('qrUrl').textContent = 'Could not create a Start URL.';
-      document.getElementById('qrCanvas').parentElement.classList.remove('ready');
-      return;
-    }
-    var startUrl = state.SERVER + '/?t=' + token;
-    document.getElementById('qrUrl').textContent = startUrl;
-    drawQr(startUrl);
-  }
-  renderInstallCommand();
-  refreshToken();
-
   function copyText(btn, text) {
     navigator.clipboard.writeText(text).then(function () {
       btn.innerHTML = CHECK_ICON_SVG;
@@ -127,11 +156,6 @@ setNativeTabTitle('Settings');
       setTimeout(function () { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 2000);
     });
   }
-  function copyCmd(btn) { copyText(btn, document.getElementById('installCmdText').textContent); }
-  function copyUrl(btn) { copyText(btn, document.getElementById('qrUrl').textContent); }
-
-  window.copyCmd = copyCmd;
-  window.copyUrl = copyUrl;
 
   attachPageEdgeBackGesture(leaveSetup, ['.setup-bar', '.setup-content']);
 
@@ -139,7 +163,6 @@ setNativeTabTitle('Settings');
   var verEl = document.getElementById('appVersion');
   if (verEl && typeof __APP_VERSION__ !== 'undefined') {
     verEl.textContent = 'v' + __APP_VERSION__;
-    verEl.style.display = 'block';
 
     // Native shells show the installed package's version and build number.
     var harmony = window.harmonyBridge;

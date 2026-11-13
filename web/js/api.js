@@ -13,6 +13,7 @@ import { requestProjectFiles } from './project/rpc.js';
 import { currentProjectHash, relativeProjectImagePath } from './project/project-hash.js';
 import { expandedHome, loadHomeV2 } from './v2/home.js';
 import { request as requestBridge, resetDirectTransport } from './v2/direct-transport.js';
+import { forgetAccountKey } from './v2/account-key.js';
 import { loadLatestHistory, loadOlderHistory } from './v2/history.js';
 import { transfer } from '../../bridge/transfer-store.mjs';
 
@@ -66,6 +67,7 @@ function clearCredentials() {
 
 async function logout() {
   try { await window.unregisterMobileNotifications?.(); } catch {}
+  await forgetAccountKey(state.SERVER);
   clearCredentials();
   location.replace('landing.html');
 }

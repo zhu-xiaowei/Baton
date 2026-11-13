@@ -6,6 +6,7 @@ import './theme.js';
 
 import './state.js';
 import './api.js';
+import { showToast } from './components/toast.js';
 import './components/skeleton.js';
 import '../css/back-button.css';
 import '../css/breadcrumb.css';
@@ -41,3 +42,12 @@ if (Array.isArray(window.__navQueue)) {
 
 // Preheat viewer libs after 1.5s — yields IPC/main thread to navigation on Tauri.
 if (window.__preheatViewer) setTimeout(window.loadViewerLibs, 1500);
+
+// Settings → Add device returns here (history.go(-2)), possibly from the back-forward cache.
+addEventListener('pageshow', (event) => {
+  const added = sessionStorage.getItem('baton-added');
+  if (!added) return;
+  if (event.persisted) { location.reload(); return; }
+  sessionStorage.removeItem('baton-added');
+  showToast('Added ' + added);
+});

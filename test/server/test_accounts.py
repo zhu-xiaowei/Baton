@@ -82,7 +82,7 @@ def test_two_accounts_never_reach_each_other(api):
     api('/api/pair/create', {'code': code, 'sealed': SEALED}, b, status=409)
     assert api('/api/pair/claim', {'code': code, 'deviceName': 'iPad'})['accountId'] == A
     api('/api/pair/claim', {'code': code, 'deviceName': 'iPad'}, status=404)
-    # A computer joins A: wrong poll, B approving after A, a Bridge approving, a second wait all fail.
+    # A computer joins A: wrong poll, B approving after A, a second wait all fail.
     start = api('/api/pair/start', {'deviceName': 'Mac'})
     api('/api/pair/wait', {'code': start['code'], 'poll': 'wrong-poll-000000000000'}, status=404)
     assert api('/api/pair/wait', {'code': start['code'], 'poll': start['poll']}) == {'pending': True}
@@ -92,8 +92,9 @@ def test_two_accounts_never_reach_each_other(api):
     assert joined['accountId'] == A and joined['approvedBy'] == 'iPhone'
     api('/api/pair/wait', {'code': start['code'], 'poll': start['poll']}, status=404)
     api('/api/pair/approve', {'code': api('/api/pair/start', {'deviceName': 'Mac'})['code'], 'sealed': SEALED}, a, status=409)
-    api('/api/pair/approve', {'code': api('/api/pair/start', {'deviceName': 'PC'})['code'], 'sealed': SEALED},
-        joined['token'], status=403)
+    # A computer of the account adds another one on behalf of an App (pair_approve).
+    assert api('/api/pair/approve', {'code': api('/api/pair/start', {'deviceName': 'PC'})['code'], 'sealed': SEALED},
+               joined['token']) == {'deviceName': 'PC'}
     assert sorted(t['deviceName'] for t in api('/api/bridge/devices', None, a)['apps']) == ['Mac', 'iPad', 'iPhone']
     assert [t['deviceName'] for t in api('/api/bridge/devices', None, b)['apps']] == ['Pixel']
     # Recovery needs A's joinSecret.
