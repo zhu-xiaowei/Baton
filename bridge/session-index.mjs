@@ -611,10 +611,11 @@ export class SessionIndex {
     const { catalog } = this.snapshot();
     const rows = catalog.byProject.get(project) || [];
     const page = paginate(rows.map((row) => ({ key: [row.ms, row.sessionId], row })), cursor, limit);
+    const projectPath = this.projectPath(project); // copied resume commands need the cwd
     return {
       sessions: page.items.map(({ row }) => {
         const out = { sessionId: row.sessionId, preview: row.preview, lastActive: new Date(row.ms).toISOString(),
-          size: row.rec.size, model: row.rec.state?.model || '', status: row.status, agentCount: row.agentCount };
+          size: row.rec.size, model: row.rec.state?.model || '', status: row.status, agentCount: row.agentCount, projectPath };
         if (row.agent) { out.isAgent = true; out.agentName = row.agent.agentName || ''; }
         if (row.own === 'needs_input' && this.detail(row)) out.agentDetail = this.detail(row);
         return out;
