@@ -3,10 +3,10 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { FrameIndex, frameEvents, newFrames } from './frames.mjs';
-import { eventRows } from './extract.mjs';
-import { readPage } from '../../history-page.mjs';
-import { lockHolder, lockHolders } from './locks.mjs';
+import { FrameIndex, frameEvents, newFrames } from './dsh-frames.mjs';
+import { eventRows } from './dsh-extract.mjs';
+import { readPage } from './history-page.mjs';
+import { lockHolder, lockHolders } from './dsh-locks.mjs';
 
 export const LOG = 'session.v4.jsonl.zstd';
 export const DSH_HOME = process.env.DSH_HOME || path.join(os.homedir(), '.dsh');
@@ -57,9 +57,12 @@ export const catalog = {
   match: (file) => (path.basename(file) === LOG && file.startsWith(SESSIONS + path.sep) ? { id: path.basename(path.dirname(file)) } : null),
   newState: () => ({ offset: 0, frames: 0, v: 0, cwd: '', parent: '', title: '', model: '', first: '', turns: 0, open: false, asks: [] }),
   // Frames cannot be found from the tail, and logs are small, so the warm-up is the full read.
+  // Once the watcher runs, decoded events wait in `pending` for it, so it does not decode them again.
   advance(file, id, state) {
     const { frames, buf } = newFrames(file, state.offset);
-    for (const [s, e] of frames) for (const ev of frameEvents(buf.subarray(s - state.offset, e - state.offset))) apply(state, ev);
+    const events = frames.flatMap(([s, e], k) => frameEvents(buf.subarray(s - state.offset, e - state.offset)).map((event, i) => ({ frame: state.frames + k, i, event })));
+    for (const { event } of events) apply(state, event);
+    if (this.pending && events.length) this.pending.set(file, (this.pending.get(file) || []).concat(events));
     state.frames += frames.length;
     state.offset = frames.at(-1)?.[1] ?? state.offset;
     return state;
@@ -92,47 +95,45 @@ export function messages(file, sid) {
 const homeOf = (file) => path.resolve(path.dirname(file), '../../..');
 const rowsOf = (events, sid, file) => events.flatMap(({ frame, i, event }) => eventRows(event, frame, i, { sid, home: homeOf(file) }));
 
-export class DshHistoryReader {
+export class DshHistoryReader extends FrameIndex {
   constructor(file, sid) {
-    this.file = file;
+    super(file);
     this.sid = sid;
-    this.index = new FrameIndex(file);
-    this.stable = null;
   }
 
-  update() { this.index.update(); }
-
-  get epoch() { return this.index.epoch; }
+  get index() { return this; }
 
   // Rows from the open turn's turn/start on may still change.
   stableLine() {
-    if (this.stable?.size === this.index.size) return this.stable.line;
+    if (this.stable?.size === this.size) return this.stable.line;
     let line = Infinity;
-    for (let f = this.index.count - 1; f >= 0; f--) {
-      const last = this.index.events(f, f + 1).findLast(({ event }) => event.type === 'turn/start' || event.type === 'turn/end');
+    for (let f = this.count - 1; f >= 0; f--) {
+      const last = this.events(f, f + 1).findLast(({ event }) => event.type === 'turn/start' || event.type === 'turn/end');
       if (last) { if (last.event.type === 'turn/start') line = f; break; }
     }
-    this.stable = { size: this.index.size, line };
+    this.stable = { size: this.size, line };
     return line;
   }
 
-  async rows(lo, hi) { return withImages(rowsOf(this.index.events(lo, hi), this.sid, this.file)); }
+  rows(lo, hi) { return rowsOf(this.events(lo, hi), this.sid, this.file); }
 
   page(range) { return readPage(this, range, 32, 512); }
 }
 
-// Image blocks name the attachment file; its bytes go to the transfer store under the block's key.
+// Image blocks name the attachment file; on the main thread (storage access lives there) its bytes
+// go to the transfer store under the block's key, once per Bridge run.
+const uploaded = new Set();
 export async function withImages(rows) {
   const images = rows.flatMap((row) => (Array.isArray(row.content) ? row.content : []).filter((b) => b.type === 'image' && b.path));
-  if (!images.length) return rows;
-  const { transfer, reusable } = await import('../../transfer-store.mjs');
+  const { transfer, reusable } = images.length ? await import('./transfer-store.mjs') : {};
   await Promise.all(images.map(async (b) => {
     try {
-      if (!reusable(await transfer.head(b.key))) await transfer.put(b.key, fs.readFileSync(b.path), { contentType: b.mediaType || 'image/png' });
+      if (!uploaded.has(b.key) && !reusable(await transfer.head(b.key))) await transfer.put(b.key, fs.readFileSync(b.path), { contentType: b.mediaType || 'image/png' });
+      uploaded.add(b.key);
     } catch { b.placeholder = true; }
     delete b.path;
   }));
   return rows;
 }
 
-export default { runtime: 'dsh', catalog, messages, history: (target) => new DshHistoryReader(target.file, target.nativeSessionId) };
+export default { runtime: 'dsh', catalog, messages, withImages, history: (target) => new DshHistoryReader(target.file, target.nativeSessionId) };

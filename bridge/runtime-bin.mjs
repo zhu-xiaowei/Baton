@@ -18,7 +18,7 @@ function versionDirs(root, suffix) {
 }
 
 // Node version managers' install directories, each holding a node binary.
-export function nodeDirs() {
+function nodeDirs() {
   const bin = IS_WINDOWS ? '' : 'bin';
   const fnm = process.env.FNM_DIR || (process.platform === 'darwin'
     ? path.join(HOME, 'Library/Application Support/fnm') : path.join(HOME, '.local/share/fnm'));
@@ -29,7 +29,7 @@ export function nodeDirs() {
   ];
 }
 
-function commonDirs() {
+export function commonDirs() {
   return [
     path.join(process.env.VOLTA_HOME || path.join(HOME, '.volta'), 'bin'),
     path.join(HOME, '.local/bin'),

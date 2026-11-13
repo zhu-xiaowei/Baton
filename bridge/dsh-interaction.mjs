@@ -7,17 +7,17 @@ import os from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { BRIDGE_HOME } from '../../config.mjs';
-import { RpcStdio } from '../../rpc-stdio.mjs';
-import { finishProcess, sessionProcess } from '../../turn-process.mjs';
-import { nodeDirs, pickNode } from '../../runtime-bin.mjs';
-import { SessionGrants } from '../../session-grants.mjs';
-import { StreamFramer } from '../../stream-framer.mjs';
-import { defineInteractionAdapter } from '../../interaction-adapter.mjs';
-import { sessionIndex } from '../../session-index.mjs';
-import { mapTool } from './extract.mjs';
-import { catalog, DSH_HOME, LOG, SESSIONS } from './catalog.mjs';
-import { lockHolder, refreshLocks } from './locks.mjs';
+import { BRIDGE_HOME } from './config.mjs';
+import { RpcStdio } from './rpc-stdio.mjs';
+import { finishProcess, sessionProcess } from './turn-process.mjs';
+import { commonDirs, pickNode } from './runtime-bin.mjs';
+import { SessionGrants } from './session-grants.mjs';
+import { StreamFramer } from './stream-framer.mjs';
+import { defineInteractionAdapter } from './interaction-adapter.mjs';
+import { sessionIndex } from './session-index.mjs';
+import { mapTool } from './dsh-extract.mjs';
+import { catalog, DSH_HOME, LOG, SESSIONS } from './dsh-catalog.mjs';
+import { lockHolder, refreshLocks } from './dsh-locks.mjs';
 
 const IMAGE_TYPES = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', gif: 'image/gif' };
 const grants = new SessionGrants(path.join(BRIDGE_HOME, 'dsh-grants.json'));
@@ -26,8 +26,7 @@ const grants = new SessionGrants(path.join(BRIDGE_HOME, 'dsh-grants.json'));
 export function findDsh() {
   const win = process.platform === 'win32';
   const node = pickNode('24.9.0');
-  const found = [...nodeDirs().map((dir) => (win ? dir : path.dirname(dir))), '/opt/homebrew', '/usr/local', '/usr', path.join(os.homedir(), '.local'),
-    path.join(process.env.APPDATA || '', 'npm')].map((prefix) => path.join(prefix, win ? '' : 'lib', 'node_modules/@deepseek-ai/dsh')).flatMap((dir) => {
+  const found = [...(process.env.PATH || '').split(path.delimiter), ...commonDirs()].map((dir) => (win ? dir : path.dirname(dir))).map((prefix) => path.join(prefix, win ? '' : 'lib', 'node_modules/@deepseek-ai/dsh')).flatMap((dir) => {
     try { return [{ bin: path.join(dir, 'lib/bin.js'), version: JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8')).version }]; } catch { return []; }
   }).sort((a, b) => b.version.localeCompare(a.version, undefined, { numeric: true }));
   return node && found[0] ? { ...found[0], node: node.bin } : null;
@@ -36,7 +35,7 @@ export function findDsh() {
 // Approvals reach Baton (the user's profile is not edited), and ask_user_question gets an answerer.
 function overlay() {
   const file = path.join(BRIDGE_HOME, 'dsh-baton.patch.yml');
-  const plugin = JSON.stringify(fileURLToPath(new URL('./baton-ask.mjs', import.meta.url)));
+  const plugin = JSON.stringify(fileURLToPath(new URL('./dsh-ask.mjs', import.meta.url)));
   fs.mkdirSync(BRIDGE_HOME, { recursive: true });
   fs.writeFileSync(file, `- id: approval\n  config:\n    policy: ask\n- insert:\n    - id: tool-ask-user\n      name: '@deepseek-ai/dsh-tool-ask-user'\n    - id: baton-ask\n      name: ${plugin}\n`);
   return file;
@@ -66,9 +65,12 @@ function promptBlocks(text, vision) {
   return rest ? [{ type: 'text', text: rest }, ...images] : images;
 }
 
-// "Yes, for this session": the tool, and for a command its first word.
+// "Yes, for this session": the tool, and for a command its first word. A command with shell operators
+// is never covered, so it always asks.
 function sessionRule(t) {
-  const word = t.name === 'Bash' && String(t.input.command || '').trim().split(/\s+/)[0];
+  const command = String(t.input.command || '');
+  if (t.name === 'Bash' && /[&;|`<>\n]|\$\(/.test(command)) return null;
+  const word = t.name === 'Bash' && command.trim().split(/\s+/)[0];
   return word ? { toolName: 'Bash', ruleContent: `${word}:*` } : { toolName: t.name };
 }
 
@@ -83,8 +85,6 @@ class DshInteraction {
   }
 
   owns(sid) { return this.sessions.has(sid); }
-
-  isBusy(sid) { return this.sessions.has(sid); }
 
   // Another process holding the Session's lock must be let go first (writerConflict).
   async heldElsewhere(sid, file = findLog(sid)) {
@@ -163,11 +163,14 @@ class DshInteraction {
     s.finished ||= this.run(s);
   }
 
+  // The turn ends once, after the last queued prompt: an earlier failure shows as its error row.
   async run(s) {
     let last;
+    const sent = [];
     while (s.queue.length) {
       const item = s.current = s.queue.shift();
       s.tags.push(item.turnId);
+      sent.push(item.turnId);
       item.callbacks.onAccepted?.(item.turnId);
       let result = {};
       try {
@@ -180,8 +183,7 @@ class DshInteraction {
       this.closeBlock(item);
       item.framer.finish();
       s.current = null;
-      if (s.queue.length) item.callbacks.onResult?.(s.sid, result);
-      else last = [item, result];
+      last = [item, { ...result, consumedInputIds: sent }];
     }
     // Done: release the lock, let the process exit, then end the turn after its last rows.
     s.closing = true;
@@ -246,14 +248,14 @@ class DshInteraction {
     const callId = params.toolCall?.toolCallId;
     const t = s.tools.get(callId) || mapTool(params.toolCall?.title, params.toolCall?.rawInput || {});
     const rule = sessionRule(t);
-    const grant = rule.ruleContent ? `${rule.toolName}(${rule.ruleContent})` : rule.toolName;
+    const grant = rule && (rule.ruleContent ? `${rule.toolName}(${rule.ruleContent})` : rule.toolName);
     const option = (allow) => ({ outcome: { outcome: 'selected', optionId: (params.options || [])
       .find((o) => String(o.kind || o.optionId).startsWith(allow ? 'allow' : 'reject'))?.optionId || (allow ? 'allow-once' : 'reject-once') } });
-    if (grants.get(`dsh:${s.sid}`).includes(grant)) return option(true);
+    if (grant && grants.get(`dsh:${s.sid}`).includes(grant)) return option(true);
     return new Promise((resolve) => this.control(s, `dsh:${callId}`, {
-      tool_name: t.name, input: t.input, permission_suggestions: [{ type: 'addRules', behavior: 'allow', rules: [rule] }],
+      tool_name: t.name, input: t.input, ...(rule ? { permission_suggestions: [{ type: 'addRules', behavior: 'allow', rules: [rule] }] } : {}),
     }, (reply) => {
-      if (reply.decision === 'allow' && reply.scope === 'session') grants.add(`dsh:${s.sid}`, [grant]);
+      if (grant && reply.decision === 'allow' && reply.scope === 'session') grants.add(`dsh:${s.sid}`, [grant]);
       resolve(option(reply.decision === 'allow'));
     }));
   }
@@ -333,4 +335,5 @@ function listSkills(cwd) {
   return [...found.values()].sort((a, b) => a.name.localeCompare(b.name));
 }
 
+DshInteraction.prototype.isBusy = DshInteraction.prototype.owns;
 export const dshInteraction = defineInteractionAdapter(Object.assign(new DshInteraction(), { runtime: 'dsh' }));

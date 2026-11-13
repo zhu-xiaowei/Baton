@@ -2,19 +2,18 @@
 // from a watcher on them, interaction over ACP. Registered only when DSH_HOME exists.
 import fs from 'node:fs';
 import path from 'node:path';
-import { defineRuntimeAdapter } from '../../runtime-adapter.mjs';
-import { defineRuntimeWatcher } from '../../watcher-adapter.mjs';
-import { sessionIndex } from '../../session-index.mjs';
-import { storageSessionId } from '../../session-identity.mjs';
-import { lastKnownStatus, reportSessions } from '../../sync.mjs';
-import { publishMessages } from '../../ws.mjs';
-import { batonSessions, localIdleSec } from '../../presence.mjs';
-import { killLeftovers } from '../../turn-process.mjs';
-import dsh, { catalog, DSH_HOME, LOG, SESSIONS, withImages } from './catalog.mjs';
-import { eventRows } from './extract.mjs';
-import { frameEvents, newFrames } from './frames.mjs';
-import { lockHolders, refreshLocks } from './locks.mjs';
-import { dshInteraction, findLog } from './interaction.mjs';
+import { defineRuntimeAdapter } from './runtime-adapter.mjs';
+import { defineRuntimeWatcher } from './watcher-adapter.mjs';
+import { sessionIndex } from './session-index.mjs';
+import { storageSessionId } from './session-identity.mjs';
+import { lastKnownStatus, reportSessions } from './sync.mjs';
+import { publishMessages } from './ws.mjs';
+import { batonSessions, localIdleSec } from './presence.mjs';
+import { killLeftovers } from './turn-process.mjs';
+import dsh, { catalog, DSH_HOME, LOG, SESSIONS, withImages } from './dsh-catalog.mjs';
+import { eventRows } from './dsh-extract.mjs';
+import { refreshLocks } from './dsh-locks.mjs';
+import { dshInteraction, findLog } from './dsh-interaction.mjs';
 
 killLeftovers();
 let config = null;
@@ -31,18 +30,20 @@ function sessionRow(rec, status) {
     ...(view.parent ? { parentSessionId: storageSessionId('dsh', view.parent) } : {}) };
 }
 
-// A root's status counts its subagents: a finished turn still runs while a child holds its lock.
-function rootStatus(row, running) {
+// The root row of a Session Baton does not drive, and its status: a finished turn still runs while
+// a child holds its lock.
+function current(file, running) {
+  const row = file && rootOf(recOf(file));
+  if (!row || dshInteraction.owns(row.rec.id)) return null;
   const all = [row.rec, ...row.children].map((rec) => catalog.status(rec, running));
-  return all.includes('needs_input') ? 'needs_input' : all.includes('running') ? 'running' : 'completed';
+  return { row, status: all.includes('needs_input') ? 'needs_input' : all.includes('running') ? 'running' : 'completed' };
 }
 
 // Sessions Baton does not drive report their own changes; the first report seeds the notifier.
 async function report(file) {
-  const row = rootOf(recOf(file));
-  if (!row || dshInteraction.owns(row.rec.id)) return;
   await refreshLocks(SESSIONS);
-  const status = rootStatus(row, { locks: lockHolders(SESSIONS) });
+  const { row, status } = current(file, catalog.running()) || {};
+  if (!row) return;
   const sessionId = storageSessionId('dsh', row.rec.id);
   const previous = lastKnownStatus.get(sessionId);
   if (previous === status && reported.get(sessionId) === row.preview) return;
@@ -56,16 +57,11 @@ async function report(file) {
 async function readLog(file) {
   const id = catalog.match(file)?.id;
   if (!id) return;
-  const before = recOf(file)?.state;
-  const [offset, frame] = before ? [before.offset, before.frames] : [0, 0];
   sessionIndex.touch(file);
-  const end = recOf(file)?.state?.offset || 0;
-  if (end > offset) {
-    const { frames, buf } = newFrames(file, offset, end);
-    const rows = await withImages(frames.flatMap(([s, e], k) => frameEvents(buf.subarray(s - offset, e - offset))
-      .flatMap((event, i) => eventRows(event, frame + k, i, { sid: id, home: DSH_HOME }))));
-    if (rows.length && !dshInteraction.deliver(id, rows)) publishMessages(storageSessionId('dsh', id), rows);
-  }
+  const events = catalog.pending?.get(file) || [];
+  catalog.pending?.delete(file);
+  const rows = await withImages(events.flatMap(({ frame, i, event }) => eventRows(event, frame, i, { sid: id, home: DSH_HOME })));
+  if (rows.length && !dshInteraction.deliver(id, rows)) publishMessages(storageSessionId('dsh', id), rows);
   await report(file);
 }
 
@@ -98,6 +94,7 @@ const watcher = defineRuntimeWatcher({
     if (fs.existsSync(SESSIONS)) handle = watch();
     else handle = fs.watch(DSH_HOME, (_event, name) => { if (name === 'sessions' && fs.existsSync(SESSIONS)) { handle.close(); handle = watch(); } });
     void sessionIndex.readyPromise.then(() => {
+      catalog.pending = new Map();
       for (const row of sessionIndex.catalog().roots) if (row.rec.runtime === 'dsh') void report(row.rec.file);
     });
     return { stop: () => handle.close() };
@@ -111,7 +108,7 @@ async function deleteHistory(ids) {
   const all = dshRecords();
   for (let grown = true; grown;) grown = all.some((rec) => !ids.has(rec.id) && ids.has(rec.state.parent) && ids.add(rec.id));
   const recs = all.filter((rec) => ids.has(rec.id));
-  for (const rec of recs) if (await dshInteraction.heldElsewhere(rec.id, rec.file)) throw new Error('Close the active DSH session before deleting its history.');
+  for (const rec of recs) if (dshInteraction.owns(rec.id) || await dshInteraction.heldElsewhere(rec.id, rec.file)) throw new Error('Close the active DSH session before deleting its history.');
   for (const rec of recs) {
     fs.rmSync(path.dirname(rec.file), { recursive: true, force: true });
     fs.rmSync(path.join(DSH_HOME, 'storages', 'session_projcache', 'sessions', `${rec.id}.json`), { force: true });
@@ -123,7 +120,7 @@ async function deleteHistory(ids) {
 export default defineRuntimeAdapter({
   runtime: 'dsh',
   displayName: 'DeepSeek Harness',
-  module: new URL('./catalog.mjs', import.meta.url).href,
+  module: new URL('./dsh-catalog.mjs', import.meta.url).href,
   ...dsh,
   watcher,
   interaction: dshInteraction,
@@ -134,14 +131,11 @@ export default defineRuntimeAdapter({
   deleteSessionHistory: (id) => deleteHistory(new Set([id])),
   deleteProjectHistory: (hash) => deleteHistory(new Set(dshRecords().filter((rec) => sessionIndex.view(rec)?.project === hash).map((rec) => rec.id))),
   ownsLiveSession: (id) => dshInteraction.owns(id),
-  createStatusContext: () => ({ locks: lockHolders(SESSIONS) }),
+  createStatusContext: catalog.running,
   // A process that died without writing its turn's end leaves the row active until checked here.
   inspectActiveSession(active, running) {
-    const file = findLog(active.nativeSessionId);
-    const row = file && rootOf(recOf(file));
-    if (!row || dshInteraction.owns(row.rec.id)) return null;
-    const status = rootStatus(row, running);
-    return status === active.status ? null : { session: sessionRow(row.rec, status) };
+    const { row, status } = current(findLog(active.nativeSessionId), running) || {};
+    return row && status !== active.status ? { session: sessionRow(row.rec, status) } : null;
   },
   async updateSessionStatus(next, nativeSessionId, file, _project, status, detail, context) {
     sessionIndex.touch(file);

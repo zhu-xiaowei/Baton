@@ -67,7 +67,7 @@ test('Bridge and Server packaging use explicit production-only inputs', () => {
     install,
     /"\$BRIDGE_DIR\/project\/files\.mjs" > "\$BRIDGE_STAGE\/project-files\.mjs"/,
   );
-  assert.match(install, /tar czf "\$BRIDGE_TAR" \*\.mjs project runtimes package\.json package-lock\.json/);
+  assert.match(install, /tar czf "\$BRIDGE_TAR" \*\.mjs project package\.json package-lock\.json/);
   assert.doesNotMatch(install, /cp\s+-r\s+"\$BRIDGE_DIR"/);
   assert.doesNotMatch(install, /cp\s+-r\s+"\$ROOT_DIR"/);
   const bridgeUpload = install.indexOf('aws s3 cp "$BRIDGE_TAR"');

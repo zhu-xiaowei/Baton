@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import zlib from 'node:zlib';
-import { catalog, DshHistoryReader } from '../../bridge/runtimes/dsh/catalog.mjs';
+import { catalog, DshHistoryReader } from '../../bridge/dsh-catalog.mjs';
 
 test('DSH logs: concatenated zstd frames become the catalog row and history rows', async () => {
   const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-')), 'session.v4.jsonl.zstd');
