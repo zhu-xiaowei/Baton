@@ -25,7 +25,8 @@ export function registerRuntime(adapter) {
 // filesystem check; the module is imported (default-exporting its adapter) only when it passes.
 const OPTIONAL_RUNTIMES = [
   // kiro-cli 3.x unpacks its v3 engine (KAS) here on first run; Kiro IDE and 2.x do not.
-  ['./kiro-runtime.mjs', () => ['.local/share', 'Library/Application Support'].some((dir) => fs.existsSync(`${os.homedir()}/${dir}/kiro-cli/kas`))],
+  ['./kiro-runtime.mjs', () => [process.env.XDG_DATA_HOME || `${os.homedir()}/.local/share`, `${os.homedir()}/Library/Application Support`]
+    .some((dir) => fs.existsSync(`${dir}/kiro-cli/kas`))],
 ];
 
 export async function registerInstalledRuntimes(list = OPTIONAL_RUNTIMES) {

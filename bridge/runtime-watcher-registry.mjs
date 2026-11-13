@@ -11,7 +11,10 @@ export function startRuntimeWatchers(config, context = {}) {
   const handles = new Map();
   const registered = runtimeDescriptors().map((descriptor) => descriptor.watcher).filter(Boolean);
   for (const watcher of [...runtimeWatchers, ...registered]) {
-    handles.set(watcher.runtime, watcher.start(config, context));
+    // One runtime's watcher failing to start must not stop the others.
+    try { handles.set(watcher.runtime, watcher.start(config, context)); } catch (error) {
+      console.error(`[watcher] ${watcher.runtime} not started: ${error.message}`);
+    }
   }
   startJobsWatcher(config);
   return handles;

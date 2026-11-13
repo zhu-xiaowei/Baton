@@ -334,7 +334,7 @@ export default defineRuntimeAdapter({
   interaction: kiroInteraction,
   watcher: defineRuntimeWatcher({
     runtime: 'kiro',
-    // sessions/ (recursive) and session-leases/; the home itself, not recursive, only until both exist.
+    // sessions/ (recursive) and session-leases/; their parents, not recursive, only until both exist.
     start(next) {
       config = next;
       const arm = () => {
@@ -343,8 +343,9 @@ export default defineRuntimeAdapter({
           kiro.catalog.files().forEach(changed); // written before the watch existed
         }
         watches.leases ||= fs.existsSync(LEASES) && fs.watch(LEASES, (_event, name) => name?.endsWith('.lease') && reportStatus(recOf(name.slice(0, -6))));
-        if (watches.sessions && watches.leases) watches.home?.close();
-        else watches.home ||= fs.watch(HOME, arm);
+        // Until both exist: the Kiro home, or its parent while the home itself is missing.
+        const dir = watches.sessions && watches.leases ? null : fs.existsSync(HOME) ? HOME : path.dirname(HOME);
+        if (watches.home?.dir !== dir) watches.home = (watches.home?.close(), dir && Object.assign(fs.watch(dir, arm), { dir }));
       };
       arm();
     },
