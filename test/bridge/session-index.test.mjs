@@ -214,3 +214,19 @@ test('a registered rows source is listed and a change seen during its refresh is
   assert.equal(calls, 3);
   assert.deepEqual((await index.home()).sessions.map((s) => s.sessionId), ['rows1:r2', 'rows1:r1']);
 });
+
+test('a Done root whose process still runs a background agent stays running', async (t) => {
+  const { claudeRoot, statuses, index } = fixture(t);
+  const file = claude(claudeRoot, '-a', 1, 0);
+  const agent = path.join(path.dirname(file), id(1), 'subagents', 'agent-a1.jsonl');
+  fs.mkdirSync(path.dirname(agent), { recursive: true });
+  fs.writeFileSync(agent, JSON.stringify({ type: 'assistant', message: { stop_reason: 'tool_use', content: [{ type: 'tool_use', id: 't', name: 'Bash', input: {} }] } }) + '\n');
+  fs.utimesSync(agent, new Date(BASE), new Date(BASE)); // quiet for longer than 15 s
+  await index.warm();
+  statuses.set(id(1), 'completed');
+  const status = async () => (await index.sessions({ project: '-a' })).sessions[0].status;
+  assert.equal(await status(), 'completed');
+  index.awaitsAgents = (sessionId) => sessionId === id(1);
+  index.markStatus();
+  assert.equal(await status(), 'running');
+});
