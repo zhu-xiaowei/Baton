@@ -118,17 +118,30 @@ def register(body: Account, request: Request):
             "pk": f"ACCOUNT#{body.accountId}", "sk": "META", "joinSecretHash": _sha(body.joinSecret),
             "createdAt": int(time.time())}, ConditionExpression="attribute_not_exists(pk)")) is False:
         raise HTTPException(409, "Account exists.")
+    _join_index(body.accountId, _sha(body.joinSecret))
     return {"token": _issue(body.accountId, "app", body.deviceName)}
+
+
+def _join_index(account, digest):
+    # accountId is fixed at registration while K (and joinSecret) rotate: recovery finds it from joinSecret.
+    _table().put_item(Item={"pk": f"JOIN#{digest}", "sk": "-", "accountId": account})
+
+
+class Recover(BaseModel):
+    joinSecret: str = SECRET
+    deviceName: str = NAME
 
 
 @router.post("/account/recover")
-def recover(body: Account, request: Request):
+def recover(body: Recover, request: Request):
     _rate(f"recover#{_ip(request)}", 5)
-    _rate(f"recover#{body.accountId}", 5)
-    meta = _table().get_item(Key={"pk": f"ACCOUNT#{body.accountId}", "sk": "META"}, ConsistentRead=True).get("Item")
-    if not meta or not hmac.compare_digest(meta.get("joinSecretHash", ""), _sha(body.joinSecret)):
+    digest = _sha(body.joinSecret)
+    account = (_table().get_item(Key={"pk": f"JOIN#{digest}", "sk": "-"}, ConsistentRead=True).get("Item") or {}).get("accountId")
+    meta = account and _table().get_item(Key={"pk": f"ACCOUNT#{account}", "sk": "META"}, ConsistentRead=True).get("Item")
+    if not meta or not hmac.compare_digest(meta.get("joinSecretHash", ""), digest):
         raise HTTPException(403, "Recovery phrase does not match an account.")
-    return {"token": _issue(body.accountId, "app", body.deviceName)}
+    _rate(f"recover#{account}", 5)
+    return {"token": _issue(account, "app", body.deviceName), "accountId": account}
 
 
 class Create(BaseModel):
@@ -298,13 +311,16 @@ def rotate(body: Rotate, request: Request):
         raise HTTPException(403, "Only an App rotates the account key.")
     account = caller["accountId"]
     chain = [entry for entry in rotations(account) if entry["fp"] != body.fp][-(MAX_ROTATIONS - 1):]
-    if _conditional(lambda: _table().update_item(
-            Key={"pk": f"ACCOUNT#{account}", "sk": "META"},
+    old = _conditional(lambda: _table().update_item(
+            Key={"pk": f"ACCOUNT#{account}", "sk": "META"}, ReturnValues="UPDATED_OLD",
             UpdateExpression="SET joinSecretHash = :hash, rotations = :chain",
             ConditionExpression="attribute_exists(joinSecretHash)",
             ExpressionAttributeValues={":hash": _sha(body.joinSecret),
-                                       ":chain": chain + [{"fp": body.fp, "sealed": body.sealed}]})) is False:
+                                       ":chain": chain + [{"fp": body.fp, "sealed": body.sealed}]}))
+    if old is False:
         raise HTTPException(409, "This account has no recovery secret to rotate (self-hosted).")
+    _join_index(account, _sha(body.joinSecret))
+    _table().delete_item(Key={"pk": f"JOIN#{old['Attributes']['joinSecretHash']}", "sk": "-"})
     import bridge_ws
     bridge_ws._init()
     for item in bridge_ws._query_connections(account, "bridge"):
@@ -332,6 +348,8 @@ def delete_account(request: Request):
             if not rows:
                 break
             for row in rows:
+                if row["sk"] == "META" and row.get("joinSecretHash"):
+                    table.delete_item(Key={"pk": f"JOIN#{row['joinSecretHash']}", "sk": "-"})
                 if pk.startswith("ACCOUNT#") and row["sk"].startswith("TOKEN#"):
                     table.delete_item(Key={"pk": row["sk"], "sk": "-"})
                     auth.forget(row["sk"][6:])

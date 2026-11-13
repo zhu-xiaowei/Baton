@@ -42,15 +42,16 @@ class Table:
         return {'Attributes': row}
 
     def update_item(self, Key, UpdateExpression, ConditionExpression=None, ExpressionAttributeNames=None,
-                    ExpressionAttributeValues=None, **_):
+                    ExpressionAttributeValues=None, ReturnValues=None, **_):
         names, values = ExpressionAttributeNames or {}, ExpressionAttributeValues or {}
         row = self.rows.get((Key['pk'], Key['sk']), dict(Key))
         self._check(row, ConditionExpression, names, values)
+        before = dict(row)
         for verb, name, value in re.findall(r'(ADD|SET)?\s*(#?\w+)\s*=?\s*(:\w+)', UpdateExpression):
             name = names.get(name, name)
             row[name] = row.get(name, 0) + values[value] if verb == 'ADD' else values[value]
         self.rows[(Key['pk'], Key['sk'])] = row
-        return {'Attributes': dict(row)}
+        return {'Attributes': before if ReturnValues == 'UPDATED_OLD' else dict(row)}
 
     def query(self, KeyConditionExpression, **_):
         expr = KeyConditionExpression.get_expression()
@@ -102,9 +103,10 @@ def test_two_accounts_never_reach_each_other(api):
                joined['token']) == {'deviceName': 'PC'}
     assert sorted(t['deviceName'] for t in api('/api/bridge/devices', None, a)['apps']) == ['Mac', 'iPad', 'iPhone']
     assert [t['deviceName'] for t in api('/api/bridge/devices', None, b)['apps']] == ['Pixel']
-    # Recovery needs A's joinSecret.
-    api('/api/account/recover', {'accountId': A, 'joinSecret': 'secret-of-b-000000000000', 'deviceName': 'x'}, status=403)
-    api('/api/account/recover', {'accountId': A, 'joinSecret': 'secret-of-a-000000000000', 'deviceName': 'New'})
+    # A joinSecret recovers its own account only.
+    assert api('/api/account/recover', {'joinSecret': 'secret-of-b-000000000000', 'deviceName': 'x'})['accountId'] == B
+    api('/api/account/recover', {'joinSecret': 'secret-of-nobody-000000', 'deviceName': 'x'}, status=403)
+    api('/api/account/recover', {'joinSecret': 'secret-of-a-000000000000', 'deviceName': 'New'})
 
 
 def test_limits(api, monkeypatch):
@@ -112,8 +114,8 @@ def test_limits(api, monkeypatch):
         api('/api/account/register', {'accountId': f'{n:016x}', 'joinSecret': 's' * 24, 'deviceName': 'p'}, ip='9.9.9.9')
     api('/api/account/register', {'accountId': 'f' * 16, 'joinSecret': 's' * 24, 'deviceName': 'p'}, ip='9.9.9.9', status=429)
     for _ in range(5):
-        api('/api/account/recover', {'accountId': A, 'joinSecret': 's' * 24, 'deviceName': 'p'}, ip='8.8.8.8', status=403)
-    api('/api/account/recover', {'accountId': A, 'joinSecret': 's' * 24, 'deviceName': 'p'}, ip='7.7.7.7', status=429)
+        api('/api/account/recover', {'joinSecret': 'n' * 24, 'deviceName': 'p'}, ip='8.8.8.8', status=403)
+    api('/api/account/recover', {'joinSecret': 'n' * 24, 'deviceName': 'p'}, ip='8.8.8.8', status=429)
     owner = api('/api/account/register', {'accountId': 'e' * 16, 'joinSecret': 's' * 24, 'deviceName': 'p'})['token']
     monkeypatch.setattr('accounts.MAX_BRIDGES', 1)
     for status in (200, 409):
@@ -146,7 +148,9 @@ def test_logout_removal_rotation_and_deletion_stay_in_their_account(api):
     api('/api/account/rotate', rotation, a)
     assert api('/api/bridge/devices', None, a)['rotations'] == [{'fp': '0' * 16, 'sealed': SEALED}]
     assert api('/api/bridge/devices', None, b)['rotations'] == []
-    api('/api/account/recover', {'accountId': A, 'joinSecret': 'secret-of-a-000000000000', 'deviceName': 'x'}, status=403)
+    api('/api/account/recover', {'joinSecret': 'secret-of-a-000000000000', 'deviceName': 'x'}, status=403)
+    assert api('/api/account/recover', {'joinSecret': 'secret-of-a-111111111111', 'deviceName': 'x'})['accountId'] == A
     api('/api/account/delete', {}, a)
+    api('/api/account/recover', {'joinSecret': 'secret-of-a-111111111111', 'deviceName': 'x'}, ip='6.6.6.6', status=403)
     api('/api/bridge/devices', None, a, status=401)
     assert api('/api/bridge/devices', None, b)['apps'][0]['deviceName'] == 'Pixel'

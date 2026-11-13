@@ -53,6 +53,7 @@ connections (`apigatewaymanagementapi.delete_connection`), so renewal stops.
 | `ACCOUNT#<accountId>` | `META` | `joinSecretHash`, `createdAt` | — |
 | `ACCOUNT#<accountId>` | `TOKEN#<hash>` | `kind` (`app`/`bridge`), `deviceName`, `createdAt`, `lastSeen` | — |
 | `TOKEN#<hash>` | `-` | `accountId`, `kind`, `deviceName` | — |
+| `JOIN#<hash(joinSecret)>` | `-` | `accountId` (written at register, replaced at rotate, deleted with the account) | — |
 | `PAIR#<sha256(code)>` | `-` | `kind` (`app`/`bridge`), `accountId` (set when issued by a signed-in device or approved), `sealed` (K under `t`), `pollHash` (joining computer), `deviceName`, `token` (issued token for a waiting Bridge, deleted on read) | 10 min |
 | `PUSH_DEVICE#<accountId>` | `<environment>:<token>` | (replaces the shared `PUSH_DEVICE` partition) | 30 days (as today) |
 | `RATE#<scope>` | `<window start>` | `n` (atomic `ADD`) | window + 1 h |
@@ -65,7 +66,7 @@ devices queries `pk = ACCOUNT#<id>, begins_with(sk, 'TOKEN#')`.
 | Route | Credential | Body → reply | Notes |
 |---|---|---|---|
 | `POST /api/account/register` | none | `{accountId, joinSecret, deviceName}` → `{token}` (app) | called by the first App, which creates `K`; only with `OpenRegistration`; `accountId` must not exist (conditional put); `RATE#ip` ≤ 5 / hour; `accountId == HKDF(K)` is unverifiable by the server and need not be |
-| `POST /api/account/recover` | none | `{accountId, joinSecret, deviceName}` → `{token}` (app) | `hash(joinSecret)` must match; `RATE#ip` and `RATE#account` ≤ 5 / hour; pushes `account_recovered` to the account's Apps |
+| `POST /api/account/recover` | none | `{joinSecret, deviceName}` → `{token, accountId}` (app) | the account is found by `JOIN#<hash(joinSecret)>` (accountId is fixed at registration while K rotates, so it cannot be derived from the phrase); `RATE#ip` and `RATE#account` ≤ 5 / hour; the new App appears in the device list |
 | `POST /api/account/rotate` | app token | `{joinSecret}` (new) → `{}` | after a device removal (§8) |
 | `POST /api/account/delete` | app token | `{}` → `{}` | §9 |
 | `POST /api/pair/create` | app token or API key or bridge token | `{kind:'app', sealed}` → `{code, expiresIn}` | sealed = K under `t` (§5) |

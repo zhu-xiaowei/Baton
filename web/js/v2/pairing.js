@@ -80,8 +80,7 @@ export async function rotateAccountKey() {
 }
 
 export async function recoverAccount(server, raw) {
-  const { accountId, joinSecret } = await accountOf(raw);
-  const { token } = await post(server, '/api/account/recover', { accountId, joinSecret, deviceName: deviceName() });
+  const { token } = await post(server, '/api/account/recover', { joinSecret: (await accountOf(raw)).joinSecret, deviceName: deviceName() });
   await saveAccountKey(server, raw);
   return token;
 }
