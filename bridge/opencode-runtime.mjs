@@ -86,13 +86,14 @@ const watcher = defineRuntimeWatcher({
     const pass = async () => {
       await sessionIndex.touch(DB_FILE);
       await refreshActive();
+      // Requests answered elsewhere (subagents' included) leave pending.
+      for (const sid of interaction.pendingSessions()) await interaction.reconcile(sid);
       const procs = writerProcesses();
       for (const id of changed) {
         const rec = record(id);
         if (rec && interaction.owns(id)) continue; // reported by the turn; looked at again once it ends
         changed.delete(id);
         if (!rec || rec.state.parent) continue;
-        if (interaction.pending(id)) await interaction.reconcile(id);
         const sessionId = storageSessionId('opencode', id);
         const status = catalog.status(rec, procs);
         const previous = lastKnownStatus.get(sessionId);

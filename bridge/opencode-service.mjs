@@ -247,6 +247,7 @@ const dbBusy = (id) => sessionOf(id)?.time_busy > (sessionOf(id)?.time_idle || 0
 export const interaction = defineInteractionAdapter({
   runtime: 'opencode',
   pending: (id) => [...pending.values()].includes(id),
+  pendingSessions: () => new Set(pending.values()),
   async create({ cwd, text, streamId, onCreated }) {
     await service.ensure();
     await connect();
