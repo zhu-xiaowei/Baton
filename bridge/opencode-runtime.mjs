@@ -14,6 +14,8 @@ import { DB_FILE, displayLabel } from './opencode-extract.mjs';
 import history, { db, OpenCodeReader } from './opencode-history.mjs';
 import { interaction, refreshActive, service, working, writerProcesses } from './opencode-service.mjs';
 
+// OpenCode 1.x has no v2 tables: such a store is listed as nothing and offers no sessions.
+const v2 = db.all("SELECT 1 FROM sqlite_master WHERE name = 'session_v2'").length > 0;
 const MARK = 'max(time_updated, coalesce(time_busy, 0), coalesce(time_idle, 0), coalesce(time_suspended, 0), coalesce(time_archived, 0))';
 const file = (id) => `rows:opencode:${id}`;
 const record = (id) => sessionIndex.records.get(file(id));
@@ -25,6 +27,7 @@ const catalog = {
   watchPaths: () => [DB_FILE, `${DB_FILE}-wal`],
   // PRAGMA data_version says whether anyone committed; then only rows whose mark moved are read.
   refresh(cursor) {
+    if (!v2) return { cursor };
     const version = db.dataVersion();
     if (cursor?.version === version) return { cursor };
     const rows = db.all(`SELECT id, parent_id, directory, title, model, time_updated, time_busy, time_idle, time_archived, ${MARK} AS mark
@@ -75,6 +78,7 @@ function sessionRow(rec, status, detail = '') {
 const watcher = defineRuntimeWatcher({
   runtime: 'opencode',
   start(config) {
+    if (!v2) return null;
     const readers = new Map();
     let since = Date.now();
     let busy = null;
@@ -88,6 +92,7 @@ const watcher = defineRuntimeWatcher({
         if (rec && interaction.owns(id)) continue; // reported by the turn; looked at again once it ends
         changed.delete(id);
         if (!rec || rec.state.parent) continue;
+        if (interaction.pending(id)) await interaction.reconcile(id);
         const sessionId = storageSessionId('opencode', id);
         const status = catalog.status(rec, procs);
         const previous = lastKnownStatus.get(sessionId);
@@ -130,11 +135,11 @@ const watcher = defineRuntimeWatcher({
 export default defineRuntimeAdapter({
   ...history,
   displayName: 'OpenCode',
-  features: { create: true, send: true, interrupt: true, deleteHistory: true, statusPolling: true },
+  features: { create: v2, send: v2, interrupt: v2, deleteHistory: v2, statusPolling: v2 },
   catalog,
   watcher,
   interaction,
-  discover: () => db.all('SELECT 1 FROM session_v2 LIMIT 0') && { sessions: [] }, // OpenCode 1.x has no v2 tables
+  discover: () => ({ sessions: [] }),
   findSessionFile: (id) => (record(id) ? file(id) : null),
   baselineToEnd() {},
   async updateSessionStatus(config, id, _file, _project, status, detail, context) {
@@ -150,11 +155,13 @@ export default defineRuntimeAdapter({
   // OpenCode deletes children with their root; it would also delete a busy session (ws.mjs guards).
   deleteSessionHistory: (id) => service.api('DELETE', `/api/session/${id}`).then(() => true),
   async deleteProjectHistory(projectHash) {
-    for (const rec of [...sessionIndex.records.values()]) {
-      if (rec.runtime !== 'opencode' || rec.state.parent || catalog.view(rec, sessionIndex)?.project !== projectHash) continue;
-      if (interaction.isBusy(rec.id)) throw new Error('Close the active OpenCode sessions before deleting this project.');
-      await service.api('DELETE', `/api/session/${rec.id}`);
+    const roots = [...sessionIndex.records.values()].filter((rec) => rec.runtime === 'opencode' && !rec.state.parent
+      && catalog.view(rec, sessionIndex)?.project === projectHash);
+    // Nothing is deleted while any of them is in use.
+    for (const rec of roots) {
+      if (interaction.isBusy(rec.id) || await interaction.heldElsewhere(rec.id)) throw new Error('Close the active OpenCode sessions before deleting this project.');
     }
+    for (const rec of roots) await service.api('DELETE', `/api/session/${rec.id}`);
     return true;
   },
 });

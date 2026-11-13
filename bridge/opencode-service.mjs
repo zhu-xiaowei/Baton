@@ -138,8 +138,11 @@ function dispatch(ev) {
   const d = ev.data || {};
   const sid = d.sessionID || d.form?.sessionID;
   const control = ev.type === 'permission.asked' ? controlRequest(d) : ev.type === 'form.created' ? controlRequest(d.form, true) : null;
-  if (/^(permission\.replied|form\.(replied|cancelled))$/.test(ev.type)) pending.delete(d.requestID || d.id || d.form?.id);
-  const exec = execs.get(sid);
+  const replied = /^(permission\.replied|form\.(replied|cancelled))$/.test(ev.type);
+  if (replied) pending.delete(d.requestID || d.id || d.form?.id);
+  // A subagent's request belongs to the Baton turn of its root.
+  let exec = execs.get(sid);
+  for (let id = sid; !exec && (control || replied) && (id = sessionOf(id)?.parent_id);) exec = execs.get(id);
   if (!exec) return;
   const cb = exec.callbacks;
   const block = (key) => exec.blocks.get(key) ?? exec.blocks.set(key, exec.blocks.size + 1).get(key);
@@ -237,7 +240,7 @@ const cwdOf = (pid) => { try { return fs.readlinkSync(`/proc/${pid}/cwd`); } cat
 const writerOf = (id, directory, procs = writerProcesses()) => procs.find((p) => p.args.includes(id) || cwdOf(p.pid) === directory);
 // Someone runs a busy session: Baton, the service, or another process on it (else it is an orphaned claim).
 export const working = (id, directory, procs) => execs.has(id) || active.has(id) || !!writerOf(id, directory, procs);
-const sessionOf = (id) => db.all('SELECT directory, time_busy, time_idle FROM session_v2 WHERE id = ?', [id])[0];
+const sessionOf = (id) => db.all('SELECT directory, parent_id, time_busy, time_idle FROM session_v2 WHERE id = ?', [id])[0];
 const dbBusy = (id) => sessionOf(id)?.time_busy > (sessionOf(id)?.time_idle || 0);
 
 export const interaction = defineInteractionAdapter({
@@ -267,7 +270,7 @@ export const interaction = defineInteractionAdapter({
     const req = asked.get(requestId);
     asked.delete(requestId);
     pending.delete(requestId);
-    const base = `/api/session/${id}`;
+    const base = `/api/session/${req?.sessionID || id}`; // a subagent's own session
     const reply = async () => {
       if (req?.fields) {
         if (decision !== 'answer') return request('DELETE', `${base}/form/${requestId}`);
@@ -300,11 +303,16 @@ export const interaction = defineInteractionAdapter({
   // Requests waiting outside a Baton turn show on subscribe.
   async observePermissions({ nativeSessionId: id, callbacks }) {
     if (execs.has(id) || !serviceInfo()) return;
-    for (const kind of ['permission', 'form']) {
-      for (const p of await request('GET', `/api/session/${id}/${kind}`).then((r) => r?.data || [], () => [])) {
-        callbacks.onControlRequest(controlRequest(p, kind === 'form'));
-      }
-    }
+    const [perms, forms] = await interaction.reconcile(id);
+    for (const p of perms) callbacks.onControlRequest(controlRequest(p));
+    for (const form of forms) callbacks.onControlRequest(controlRequest(form, true));
+  },
+  // The service's open requests of a session; ones answered elsewhere leave `pending`.
+  async reconcile(id) {
+    const lists = await Promise.all(['permission', 'form'].map((kind) => request('GET', `/api/session/${id}/${kind}`).then((r) => r?.data || [], () => [])));
+    const open = new Set(lists.flat().map((p) => p.id));
+    for (const [rid, sid] of pending) if (sid === id && !open.has(rid)) pending.delete(rid);
+    return lists;
   },
   async listCommands({ cwd }) {
     if (!serviceInfo()) return { commands: [], skills: [] };
