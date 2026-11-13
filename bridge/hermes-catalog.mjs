@@ -182,6 +182,7 @@ export class HermesHistoryReader {
 // A cached image Hermes kept on disk; once it is gone only the description remains.
 function loadImage(block) {
   if (!block.path) return block;
+  if (/^https?:/.test(block.path)) return { type: 'text', text: block.path };
   try {
     if (fs.statSync(block.path).size <= 20 << 20) return { type: 'image', source: { type: 'base64', data: fs.readFileSync(block.path).toString('base64') } };
   } catch {}
