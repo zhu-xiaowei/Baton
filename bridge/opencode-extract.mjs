@@ -1,4 +1,4 @@
-// OpenCode 2.x rows → Baton rows: a step is one assistant row plus one user row per tool result
+// OpenCode 2.x rows → Baton rows: one row per block of a step plus one per tool result
 // (`<msgId>#b:<toolId|t0|r0>`, `<msgId>#r:<toolId>`), the same live and in history.
 import os from 'node:os';
 import path from 'node:path';
