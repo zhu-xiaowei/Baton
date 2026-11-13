@@ -166,6 +166,7 @@ body.browse-view #content { overflow-y: scroll; scrollbar-gutter: stable; }
 .badge.agent { background: rgba(136, 87, 229, 0.2); color: var(--syntax-violet); border: 1px solid rgba(136, 87, 229, 0.4); }
 .runtime-mark { display: inline-flex; width: 16px; height: 16px; flex: 0 0 16px; align-items: center; justify-content: center; vertical-align: middle; }
 .runtime-icon { display: block; width: 16px; height: 16px; object-fit: contain; }
+:root[data-theme="dark"] .runtime-mark[data-runtime="dsh"] .runtime-icon { filter: brightness(1.45); } /* brand blue is too dark on the dark canvas */
 .runtime-mark-mono { position: relative; }
 .runtime-mark-mono .runtime-icon { visibility: hidden; }
 .runtime-mark-mono::before {
