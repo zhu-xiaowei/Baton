@@ -82,9 +82,7 @@ const watcher = defineRuntimeWatcher({
   start(config) {
     if (!v2) return null;
     const readers = new Map();
-    let since = Date.now();
-    let busy = null;
-    let again = false;
+    let since = Date.now(), busy = null, again = false;
     const pass = async () => {
       await sessionIndex.touch(DB_FILE);
       await refreshActive();
@@ -96,9 +94,8 @@ const watcher = defineRuntimeWatcher({
         if (rec && interaction.owns(id)) continue; // reported by the turn; looked at again once it ends
         changed.delete(id);
         if (!rec || rec.state.parent) continue;
-        const sessionId = storageSessionId('opencode', id);
         const status = catalog.status(rec, procs);
-        const previous = lastKnownStatus.get(sessionId);
+        const previous = lastKnownStatus.get(storageSessionId('opencode', id));
         if (status === previous || (!previous && status === 'completed')) continue;
         const row = sessionRow(rec, status);
         if (previous === 'running' && !batonSessions.has(id)) row.localIdleSec = await localIdleSec();
@@ -106,12 +103,10 @@ const watcher = defineRuntimeWatcher({
       }
       const ids = new Set(db.all('SELECT DISTINCT session_id AS id FROM session_message WHERE time_created >= ?', [since]).map((r) => r.id));
       for (const rec of sessionIndex.records.values()) if (rec.runtime === 'opencode' && rec.state.busy > rec.state.idle) ids.add(rec.id);
-      const floor = since;
-      since = Date.now() - 1000;
+      const floor = since; since = Date.now() - 1000;
       for (const id of ids) {
         const reader = readers.get(id) || new OpenCodeReader(id);
-        const fresh = !readers.delete(id);
-        readers.set(id, reader);
+        const fresh = !readers.delete(id); readers.set(id, reader);
         if (readers.size > 32) readers.delete(readers.keys().next().value);
         if (!reader.update() || interaction.owns(id)) continue;
         const { ids: all, changed: rowIds, marks: rowMarks } = reader.index;
@@ -124,10 +119,8 @@ const watcher = defineRuntimeWatcher({
     };
     const kick = () => {
       if (busy) { again = true; return; }
-      busy = pass().catch((error) => console.error(`[watcher] OpenCode: ${error.message}`)).finally(() => {
-        busy = null;
-        if (again) { again = false; kick(); }
-      });
+      busy = pass().catch((error) => console.error(`[watcher] OpenCode: ${error.message}`))
+        .finally(() => { busy = null; if (again) { again = false; kick(); } });
     };
     interaction.settled = kick;
     const names = new Set(catalog.watchPaths().map((p) => path.basename(p)));

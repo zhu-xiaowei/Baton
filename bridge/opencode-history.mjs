@@ -24,8 +24,7 @@ export class OpenCodeReader {
 
   // Rows of the turn after the last idle row, and running `!cmd` rows, are still updated in place.
   stableLine() {
-    const ids = this.index.ids;
-    let line = Infinity;
+    const ids = this.index.ids; let line = Infinity;
     for (let i = ids.length - 1; i >= 0; i--) {
       const { type } = this.meta.get(ids[i]);
       if (type === 'idle') break;

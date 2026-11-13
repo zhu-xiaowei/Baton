@@ -9,6 +9,9 @@ import { defineInteractionAdapter } from './interaction-adapter.mjs';
 import { findRuntimeBin } from './runtime-bin.mjs';
 import { StreamFramer } from './stream-framer.mjs';
 import { markLiveMessagePushed } from './live-message-registry.mjs';
+import { sessionProcess } from './turn-process.mjs';
+import { randomBytes } from 'node:crypto';
+import net from 'node:net';
 import { SERVICE_FILE, messageRows, toolName } from './opencode-extract.mjs';
 import { db } from './opencode-history.mjs';
 
@@ -40,8 +43,7 @@ function serviceInfo() {
   } catch { return null; }
 }
 
-async function request(method, p, body) {
-  const svc = serviceInfo();
+async function request(method, p, body, svc = serviceInfo()) {
   if (!svc) throw Object.assign(new Error('OpenCode service is not running'), { down: true });
   const res = await fetch(svc.url + p, { method, headers: { Authorization: svc.auth, 'content-type': 'application/json' },
     body: body && JSON.stringify(body), signal: AbortSignal.timeout(30_000) }).catch((error) => { throw Object.assign(error, { down: true }); });
@@ -70,28 +72,24 @@ export const service = {
 
 const execs = new Map(); // session id → Baton's execution
 const asked = new Map(); // open request id → its permission or form (+ `resolved` of the page shown it)
-let sse = null;
-let idleTimer = null;
+let sse = null, idleTimer = null;
 
 function connect() {
   clearTimeout(idleTimer);
   if (sse) return sse.ready;
   const svc = serviceInfo();
-  const ctrl = new AbortController();
-  let ready;
+  const ctrl = new AbortController(); let ready;
   const current = sse = { ctrl, ready: new Promise((resolve) => { ready = resolve; }) };
   (async () => {
     const res = await fetch(`${svc.url}/api/event`, { headers: { Authorization: svc.auth, Accept: 'text/event-stream' }, signal: ctrl.signal });
-    const decoder = new TextDecoder();
-    let buf = '';
+    const decoder = new TextDecoder(); let buf = '';
     for await (const chunk of res.body) {
       buf += decoder.decode(chunk, { stream: true });
       for (let i; (i = buf.indexOf('\n\n')) >= 0; buf = buf.slice(i + 2)) {
         const data = buf.slice(0, i).split('\n').filter((l) => l.startsWith('data:')).map((l) => l.slice(5).trim()).join('\n');
         let ev;
         try { ev = JSON.parse(data); } catch { continue; }
-        if (ev.type === 'server.connected') ready();
-        else dispatch(ev);
+        (ev.type === 'server.connected' ? ready : dispatch)(ev);
       }
     }
   })().catch((error) => { if (error.name !== 'AbortError') console.error(`[opencode] events: ${error.message}`); }).finally(() => {
@@ -107,10 +105,8 @@ function end(id, exec, result) {
   exec.framer.finish();
   execs.delete(id);
   // The live interrupt marker stands for the interrupted row OpenCode wrote for this turn: never push that row too.
-  if (result.subtype === 'interrupted') {
-    const row = db.all("SELECT id FROM session_message WHERE session_id = ? AND type = 'idle' AND time_created >= ? ORDER BY seq DESC LIMIT 1", [id, exec.at])[0];
-    if (row) markLiveMessagePushed('opencode', row.id);
-  }
+  const row = result.subtype === 'interrupted' && db.all("SELECT id FROM session_message WHERE session_id = ? AND type = 'idle' AND time_created >= ? ORDER BY seq DESC LIMIT 1", [id, exec.at])[0];
+  if (row) markLiveMessagePushed('opencode', row.id);
   exec.callbacks.onResult(`opencode:${id}`, { ...result, consumedInputIds: [...exec.turns] });
   interaction.settled?.();
   if (!execs.size) idleTimer = setTimeout(() => { sse?.ctrl.abort(); sse = null; }, IDLE_MS).unref();
@@ -255,6 +251,40 @@ const writerOf = (id, directory, procs = writerProcesses()) => procs.find((p) =>
 export const working = (id, directory, procs) => execs.has(id) || active.has(id) || !!writerOf(id, directory, procs);
 const sessionOf = (id) => db.all('SELECT directory, parent_id, time_busy, time_idle FROM session_v2 WHERE id = ?', [id])[0];
 const busyChildren = (id) => db.all('SELECT id FROM session_v2 WHERE parent_id = ? AND time_busy > coalesce(time_idle, 0)', [id]).map((r) => r.id);
+// Without the service the list comes from a private, unregistered `opencode serve` (it resumes nothing and is
+// ended at once), kept per directory until its command / skill / config files change or 5 min pass.
+const listed = new Map(); // cwd → { sig, at, list } or a pending promise
+const CONFIG_DIRS = (cwd) => [cwd, path.join(os.homedir(), '.config/opencode')].flatMap((dir) =>
+  ['', 'opencode.json', 'opencode.jsonc', '.opencode', '.opencode/command', '.opencode/commands', 'command', 'commands', 'skill', 'skills'].map((f) => path.join(dir, f)));
+const signature = (cwd) => CONFIG_DIRS(cwd).map((f) => { try { return fs.statSync(f).mtimeMs; } catch { return 0; } }).join();
+async function privateCommands(cwd, get) {
+  const hit = listed.get(cwd); if (hit?.then) return hit;
+  if (hit && hit.sig === signature(cwd) && Date.now() - hit.at < 5 * 60_000) return hit.list;
+  const pending = (async () => {
+    const port = await new Promise((resolve) => { const srv = net.createServer().listen(0, '127.0.0.1', () => { const { port } = srv.address(); srv.close(() => resolve(port)); }); });
+    const [password, sig] = [randomBytes(12).toString('hex'), signature(cwd)];
+    const svc = { url: `http://127.0.0.1:${port}`, auth: 'Basic ' + Buffer.from(`opencode:${password}`).toString('base64') };
+    const child = await sessionProcess(`opencode-commands:${cwd}`, opencodeBin(), ['serve', '--hostname', '127.0.0.1', '--port', String(port)],
+      { cwd, stdio: 'ignore', env: { ...process.env, OPENCODE_PASSWORD: password } });
+    try {
+      // The directory loads lazily (built-ins, then project commands): take the list once it is 400 ms unchanged.
+      let list = [];
+      for (let i = 0, last = '', changed = 0; i < 50; i++) {
+        await new Promise((r) => setTimeout(r, 100));
+        list = await get(svc);
+        if (JSON.stringify(list) !== last) [last, changed] = [JSON.stringify(list), Date.now()];
+        else if (list.length && Date.now() - changed >= 400) break;
+      }
+      if (list.length) listed.set(cwd, { sig, at: Date.now(), list });
+      return list;
+    } finally {
+      try { process.kill(process.platform === 'win32' ? child.pid : -child.pid, 'SIGTERM'); } catch {}
+    }
+  })().finally(() => { if (listed.get(cwd) === pending) listed.delete(cwd); });
+  listed.set(cwd, pending);
+  return pending;
+}
+
 const dbBusy = (id) => sessionOf(id)?.time_busy > (sessionOf(id)?.time_idle || 0);
 
 export const interaction = defineInteractionAdapter({
@@ -329,12 +359,10 @@ export const interaction = defineInteractionAdapter({
     return lists;
   },
   async listCommands({ cwd }) {
-    // A private `--standalone` server lists nothing on its single request; without the service the App asks again.
-    if (!serviceInfo()) throw new Error('OpenCode service is not running');
-    const get = () => request('GET', `/api/command?${loc(cwd)}`).then((r) => r?.data || [], () => []);
-    let list = await get();
+    const get = (svc) => request('GET', `/api/command?${loc(cwd)}`, null, svc).then((r) => r?.data || [], () => []);
     // A directory the service has not opened yet lists nothing on the first request.
-    if (!list.length) list = await new Promise((r) => setTimeout(r, 700)).then(get);
+    let list = serviceInfo() ? await get() : await privateCommands(cwd, get);
+    if (!list.length && serviceInfo()) list = await new Promise((r) => setTimeout(r, 700)).then(() => get());
     return { commands: list.map((c) => ({ name: c.name, description: c.description || '', source: 'runtime' })), skills: [] };
   },
   shutdown() { sse?.ctrl.abort(); sse = null; },

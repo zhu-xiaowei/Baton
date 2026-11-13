@@ -17,11 +17,8 @@ export function displayLabel(title, parent) {
 }
 
 // 2.x names, plus the 1.x ones kept in migrated history (bash / task).
-export const TOOL_NAMES = {
-  shell: 'Bash', bash: 'Bash', read: 'Read', edit: 'Edit', patch: 'Edit', write: 'Write', grep: 'Grep',
-  glob: 'Glob', todowrite: 'TodoWrite', subagent: 'Agent', task: 'Agent', question: 'AskUserQuestion',
-  skill: 'Skill', webfetch: 'WebFetch', websearch: 'WebSearch',
-};
+export const TOOL_NAMES = { shell: 'Bash', bash: 'Bash', read: 'Read', edit: 'Edit', patch: 'Edit', write: 'Write', grep: 'Grep', glob: 'Glob',
+  todowrite: 'TodoWrite', subagent: 'Agent', task: 'Agent', question: 'AskUserQuestion', skill: 'Skill', webfetch: 'WebFetch', websearch: 'WebSearch' };
 export const toolName = (name) => TOOL_NAMES[name] || String(name || 'tool');
 
 function toolInput(name, input = {}) {
@@ -39,19 +36,16 @@ function toolInput(name, input = {}) {
     case 'Grep': case 'Glob': return { pattern: input.pattern || '', path: input.path, glob: input.include };
     case 'TodoWrite': return { todos: Array.isArray(input.todos) ? input.todos : [] };
     case 'Agent': return { description: input.description || '', prompt: input.prompt || '', subagent_type: input.agent || input.subagent_type || '' };
-    case 'AskUserQuestion': return { questions: (input.questions || []).map((q) => ({ question: q.question || '', header: q.header || '',
-      options: q.options || [], multiSelect: !!q.multiple })) };
+    case 'AskUserQuestion': return { questions: (input.questions || []).map((q) => ({ question: q.question || '', header: q.header || '', options: q.options || [], multiSelect: !!q.multiple })) };
     default: return input;
   }
 }
 
-const contentText = (content) => (Array.isArray(content)
-  ? content.map((c) => (c?.type === 'text' ? c.text : c?.uri ? `[${c.mime || 'file'}] ${c.uri}` : '')).filter(Boolean).join('\n')
-  : typeof content === 'string' ? content : '');
+const contentText = (content) => (Array.isArray(content) ? content.map((c) => (c?.type === 'text' ? c.text : c?.uri ? `[${c.mime || 'file'}] ${c.uri}` : ''))
+  .filter(Boolean).join('\n') : typeof content === 'string' ? content : '');
 
 function toolResult(tool) {
-  const state = tool.state || {};
-  const name = toolName(tool.name);
+  const [state, name] = [tool.state || {}, toolName(tool.name)];
   if (state.status === 'completed') {
     const exit = state.metadata?.exit;
     return markEditResult({ type: 'tool_result', tool_use_id: tool.id, content: contentText(state.content) || state.metadata?.output || '',
