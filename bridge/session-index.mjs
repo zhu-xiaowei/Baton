@@ -611,8 +611,8 @@ export class SessionIndex {
     const { catalog } = this.snapshot();
     const rows = catalog.byProject.get(project) || [];
     const page = paginate(rows.map((row) => ({ key: [row.ms, row.sessionId], row })), cursor, limit);
-    const cwd = projectHashToPath(project); // copied resume commands cd here; omitted unless absolute
-    const extra = path.isAbsolute(cwd || '') ? { projectPath: cwd } : {};
+    const cwd = projectHashToPath(project); // copied resume commands cd here; omitted unless it exists
+    const extra = cwd && fs.existsSync(cwd) ? { projectPath: cwd } : {};
     return {
       sessions: page.items.map(({ row }) => {
         const out = { sessionId: row.sessionId, preview: row.preview, lastActive: new Date(row.ms).toISOString(),
