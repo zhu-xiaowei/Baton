@@ -191,7 +191,7 @@
   var runtimeIconCacheKey = 'baton-runtime-icons-v2';
   // Mirrors js/runtimes.js (id: [label, icon file, mono]); this script runs before modules load.
   var runtimeIconTable = { claude: ['Claude Code', 'claude-code.svg'], codex: ['Codex', 'codex.svg', 1], opencode: ['OpenCode', 'runtime-opencode.svg', 1],
-    dsh: ['DeepSeek Harness', 'runtime-dsh.svg', 1], hermes: ['Hermes', 'runtime-hermes.svg', 1], pi: ['Pi', 'runtime-pi.svg', 1], kiro: ['Kiro', 'runtime-kiro.svg', 1] };
+    dsh: ['DeepSeek Harness', 'runtime-dsh.svg'], hermes: ['Hermes', 'runtime-hermes.svg', 1], pi: ['Pi', 'runtime-pi.svg', 1], kiro: ['Kiro', 'runtime-kiro.svg', 1] };
   var runtimeIconCache = {};
   var runtimeIconPending = {};
   function validRuntimeSvg(svg) {
@@ -383,7 +383,7 @@
       image.src = runtimeIconSource(runtime);
       if (!runtimeIconTable[runtime][2]) return;
       image.parentNode.classList.add('runtime-mark-mono');
-      image.parentNode.style.setProperty('--runtime-mask', 'url("' + image.src + '")');
+      image.parentNode.style.setProperty('--runtime-mask', 'url("' + new URL(image.getAttribute('src'), document.baseURI).href + '")');
     });
     content.replaceChildren(preview.content);
     fitRecentTimeColumn();
