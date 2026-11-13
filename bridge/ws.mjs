@@ -939,7 +939,7 @@ function publishTitle(reply) {
 // Sessions enter on their first history read (Claude's never do: its titles arrive as rows).
 const _catalogTitles = new Map(); // root sessionId → catalog title at the last check
 let _titleCheck = null;
-sessionIndex.onDirty = () => { if (_subscribers.sessions.size) _titleCheck ||= setTimeout(publishCatalogTitles, 500); };
+sessionIndex.onDirty = () => { if (_subscribers.sessions.size || _catalogTitles.size) _titleCheck ||= setTimeout(publishCatalogTitles, 500); };
 function publishCatalogTitles() {
   _titleCheck = null;
   const { roots } = sessionIndex.catalog();
