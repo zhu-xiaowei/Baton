@@ -11,7 +11,7 @@ import { Worker } from 'worker_threads';
 import { CLAUDE_PROJECTS, CODEX_STATUS_STALE_MS } from './config.mjs';
 import {
   cachedDaemonSessions, getRunningInfo, getSessionStatus, normalizeProjectHash, previewText,
-  readableProjectName, readClaudeFirstPrompts,
+  projectHashToPath, readableProjectName, readClaudeFirstPrompts,
 } from './session.mjs';
 import { CODEX_SESSION_INDEX, codexSessionIdFromPath, getCodexRunningInfo, readCodexThreadNames, walkJsonl } from './codex-session.mjs';
 import { discoverClaudeSubagents } from './claude-subagent.mjs';
@@ -611,11 +611,12 @@ export class SessionIndex {
     const { catalog } = this.snapshot();
     const rows = catalog.byProject.get(project) || [];
     const page = paginate(rows.map((row) => ({ key: [row.ms, row.sessionId], row })), cursor, limit);
-    const projectPath = this.projectPath(project); // copied resume commands need the cwd
+    const cwd = projectHashToPath(project); // copied resume commands cd here; omitted unless absolute
+    const extra = path.isAbsolute(cwd || '') ? { projectPath: cwd } : {};
     return {
       sessions: page.items.map(({ row }) => {
         const out = { sessionId: row.sessionId, preview: row.preview, lastActive: new Date(row.ms).toISOString(),
-          size: row.rec.size, model: row.rec.state?.model || '', status: row.status, agentCount: row.agentCount, projectPath };
+          size: row.rec.size, model: row.rec.state?.model || '', status: row.status, agentCount: row.agentCount, ...extra };
         if (row.agent) { out.isAgent = true; out.agentName = row.agent.agentName || ''; }
         if (row.own === 'needs_input' && this.detail(row)) out.agentDetail = this.detail(row);
         return out;

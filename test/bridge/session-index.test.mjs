@@ -154,7 +154,7 @@ test('project and session lists page with keyset cursors and count only valid ro
   assert.equal(a.runningCount, 1);
   const sessions = await allPages((cursor) => index.sessions({ project: '-a', cursor, limit: 3 }));
   assert.deepEqual(sessions.map((s) => s.sessionId), [16, 15, 14, 13, 12, 11, 10].map(id));
-  assert.deepEqual(Object.keys(sessions[0]).sort(), ['agentCount', 'lastActive', 'model', 'preview', 'projectPath', 'sessionId', 'size', 'status']);
+  assert.deepEqual(Object.keys(sessions[0]).sort(), ['agentCount', 'lastActive', 'model', 'preview', 'sessionId', 'size', 'status']);
   const repo = await index.sessions({ project: projectHashFromCwd('/repo', claudeRoot) });
   assert.deepEqual(repo.sessions.map((s) => [s.sessionId, s.agentCount]), [[`codex:${id(50)}`, 1]]);
   await assert.rejects(index.sessions({ project: '-a', cursor: 'nope' }), /Invalid pagination cursor/);
