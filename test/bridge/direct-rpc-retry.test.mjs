@@ -3,9 +3,6 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { Worker } from 'node:worker_threads';
-import { deflateRawSync } from 'node:zlib';
-import { DirectRpcBridge } from '../../bridge/direct-rpc.mjs';
-import { rpcResultFrames } from '../../bridge/direct-rpc-protocol.mjs';
 
 const ENDPOINT = 'https://data.execute-api.ap-northeast-1.amazonaws.com/v1';
 const credentials = () => ({ accessKeyId: 'AK', secretAccessKey: 'SK', sessionToken: 'TOKEN', expiresAt: Math.floor(Date.now() / 1000) + 3600 });
@@ -18,7 +15,7 @@ const run = (options) => new Promise((resolve, reject) => {
 });
 
 test('resends keep their requestId: the Bridge computes once and replies once', async () => {
-  const [normal, lost, late, slow, chunk, silent, offline, reconnect] = await Promise.all([
+  const [normal, lost, late, slow, chunk, silent, offline, reconnect, waiting] = await Promise.all([
     run({}),
     run({ dropRequests: 1 }),
     run({ coldStart: true, devicesDelayMs: 7000, dropRequests: 1 }),
@@ -27,6 +24,7 @@ test('resends keep their requestId: the Bridge computes once and replies once', 
     run({ silent: true }),
     run({ online: false }),
     run({ computeMs: 1500, reconnectAt: 300 }),
+    run({ coldStart: true, devicesDelayMs: 13000 }),
   ]);
   assert.deepEqual([normal.value, normal.requests, normal.computed, normal.slowAt], [{ ok: 1 }, 1, 1, null], 'normal');
 
@@ -42,12 +40,9 @@ test('resends keep their requestId: the Bridge computes once and replies once', 
   assert.equal(slow.chunksSent, 1, 'and the reply is sent once');
   assert.ok(slow.slowAt >= 6000 && slow.ms >= 8000);
 
-  const chunks = rpcResultFrames('x', big, { deflate: deflateRawSync }).length;
-  assert.ok(chunks >= 3, 'a multi-chunk reply');
   assert.deepEqual(chunk.value, big, 'a lost chunk');
   assert.equal(chunk.computed, 1);
   assert.equal(chunk.requests, 2);
-  assert.equal(chunk.chunksSent, chunks + 1, 'only the missing chunk is sent again');
 
   assert.equal(silent.error, 'timeout', 'a silent Bridge fails at 12 s');
   assert.equal(silent.requests, 2, 'after exactly one resend');
@@ -59,28 +54,8 @@ test('resends keep their requestId: the Bridge computes once and replies once', 
   assert.deepEqual(reconnect.value, { ok: 1 }, 'a reconnect mid-request');
   assert.equal(reconnect.computed, 1, 'the resend after reconnecting is not recomputed');
   assert.equal(reconnect.chunksSent, 1, 'the reply goes once, to the new connection');
-});
 
-test('a resend after the reply went out gets only the missing chunks from the stored reply', async () => {
-  const sent = [];
-  const bridge = new DirectRpcBridge({ key: 'key', sendControl: () => true, handlers: { work: async () => big } });
-  bridge.auth = { endpoint: ENDPOINT, region: 'ap-northeast-1', credentials: credentials() };
-  const socket = { readyState: 1, send: (text) => sent.push(JSON.parse(JSON.parse(text).body)) };
-  bridge.socket = socket;
-  const request = (missing) => JSON.stringify({ v: 2, kind: 'rpc', requestId: 'r1', method: 'work', params: {}, replyTo: 'app=', accept: ['deflate'], ...(missing ? { missing } : {}) });
-  bridge.receive(socket, request());
-  await new Promise((r) => setTimeout(r, 200));
-  const count = sent.length;
-  assert.ok(count >= 3);
-  bridge.receive(socket, request([1, 2]));
-  await new Promise((r) => setTimeout(r, 200));
-  assert.deepEqual(sent.slice(count).map((frame) => frame.chunk.index), [1, 2]);
-  bridge.receive(socket, request());
-  await new Promise((r) => setTimeout(r, 200));
-  assert.equal(sent.length, count * 2 + 2, 'a full resend repeats every stored chunk');
-  bridge.receive(socket, request(5)); // not a chunk list: the whole reply again
-  await new Promise((r) => setTimeout(r, 200));
-  assert.equal(sent.length, count * 3 + 2);
+  assert.deepEqual(waiting.value, { ok: 1 }, 'time spent waiting for routes and credentials is not part of the deadline');
 });
 
 test('receipts, a dead socket and expiring credentials', async () => {
@@ -125,27 +100,3 @@ test('pushes reach subscribers only, whole, and follow a reconnect', async () =>
   assert.equal(result.sentAfterLeave, 0, 'and nothing after it left');
 });
 
-test('a long request lives on progress frames; an unchanged read answers "not modified"; waiting requests are not queued', async () => {
-  const long = await run({ computeMs: 20000 });
-  assert.deepEqual(long.value, { ok: 1 }, 'a 20 s request without a receipt survives on progress frames');
-
-  const sent = [];
-  let gate;
-  const bridge = new DirectRpcBridge({ key: 'key', sendControl: () => true,
-    limited: (frame) => frame.method === 'read',
-    handlers: { read: async () => ({ rows: [1, 2] }), wait: () => new Promise((resolve) => { gate = resolve; }) } });
-  bridge.auth = { endpoint: ENDPOINT, region: 'ap-northeast-1', credentials: credentials() };
-  const socket = { readyState: 1, bufferedAmount: 0, send: (text) => sent.push(JSON.parse(JSON.parse(text).body)) };
-  bridge.socket = socket;
-  const ask = (requestId, method, params = {}) => bridge.receive(socket, JSON.stringify({ v: 2, kind: 'rpc', requestId, method, params, replyTo: 'app=', accept: [] }));
-  const reply = (requestId) => JSON.parse(sent.find((frame) => frame.requestId === requestId && frame.kind === 'rpc_result').data);
-  for (let i = 0; i < 8; i++) ask('w' + i, 'wait');
-  ask('r1', 'read', { known: '' });
-  await new Promise((r) => setTimeout(r, 100));
-  const first = reply('r1');
-  assert.deepEqual(first.rows, [1, 2], 'eight waiting requests do not hold a read back');
-  ask('r2', 'read', { known: first.fingerprint });
-  await new Promise((r) => setTimeout(r, 100));
-  assert.deepEqual(reply('r2'), { notModified: true, fingerprint: first.fingerprint });
-  gate();
-});

@@ -1,6 +1,7 @@
 // Mobile alerts, decided here from the Session rows this Bridge reports (`reportSessions`). The
 // server only stores the event for Android and the iOS extension and pushes it through the relay.
 import { createHash, randomUUID } from 'crypto';
+import { seal } from './e2ee-node.mjs';
 import { parseStorageSessionId, storageSessionId } from './session-identity.mjs';
 
 const LOCAL_IDLE_ALERT_SEC = 120;
@@ -98,8 +99,8 @@ const hasBlocks = (content) => {
   return Array.isArray(content) ? content.length > 0 : !!content;
 };
 
-// The finished turn's last reply, or null when no alert should follow it.
-export async function completionSummary(sessionId, attempts = 3) {
+// The finished turn's last reply, or null when no alert should follow it. lastActive is the root row's.
+export async function completionSummary(sessionId, lastActive = '', attempts = 3) {
   let summary = '';
   for (let attempt = 0; attempt < attempts; attempt++) {
     if (attempt) await deps.sleep(1000); // the final reply can land after the status
@@ -113,8 +114,11 @@ export async function completionSummary(sessionId, attempts = 3) {
       const text = textSummary(message.content ?? '');
       if (message.type === 'user') {
         if (text.startsWith('[Request interrupted')) return null;
-        // CC already started a report-back turn; its own end alerts.
-        if (text.startsWith('<task-notification>') && !replied) return null;
+        if (text.startsWith('<task-notification>') && !replied) {
+          // CC already started a report-back turn; its own end alerts.
+          if (!message.timestamp || message.timestamp > lastActive) return null;
+          continue; // The root was written after it with CC idle: CC never answers it.
+        }
         // A slash command or Skill answers with its output, not an assistant row.
         if (text.startsWith('<local-command-stdout>')) return text.replace(/<\/?local-command-stdout>/g, '').trim();
         break; // never show a previous turn's answer
@@ -153,7 +157,7 @@ export async function alertFor(old, row) {
     // A held Done is due once its agents are gone; CC reports back as each one ends.
     if (row.backgroundAgents) return null;
     action = 'Done';
-    detail = await completionSummary(row.sessionId);
+    detail = await completionSummary(row.sessionId, row.lastActive);
     if (detail == null) return null; // the user stopped it, or CC's next turn will alert
   } else {
     return null;
@@ -181,8 +185,18 @@ async function deliver(alert) {
   if (!await send(alert)) enqueue(alert);
 }
 
+// With K, the text and the project travel sealed (`e`, bound to eventId); the phone opens them.
+const SEALED = ['projectHash', 'projectName', 'sessionTitle', 'title', 'body'];
+function sealAlert(alert, key) {
+  const out = { ...alert, ...Object.fromEntries(SEALED.map((name) => [name, ''])) };
+  const plain = Buffer.from(JSON.stringify(Object.fromEntries(SEALED.map((name) => [name, alert[name]]))));
+  out.e = seal(key, plain, 0, 0, Buffer.from(alert.eventId)).toString('base64');
+  return out;
+}
+
 async function send(alert) {
-  const response = await deps.post('/api/notifications/events', alert);
+  const key = deps.notifyKey?.();
+  const response = await deps.post('/api/notifications/events', key ? sealAlert(alert, key) : alert);
   return !!response && response.status < 500; // a 4xx would only fail again
 }
 

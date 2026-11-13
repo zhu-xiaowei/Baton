@@ -85,7 +85,8 @@ def issue_credentials(account_id, sts=None):
 
 def rpc_info(account_id, query, sts=None):
     """Bridges an App can address directly, plus data-API credentials (see issue_credentials)."""
-    bridges = [{"device": bridge.get("deviceName", ""), "dataId": bridge["rpcDataId"]}
+    bridges = [{"device": bridge.get("deviceName", ""), "dataId": bridge["rpcDataId"],
+                **{key: bridge[name] for key, name in (("pub", "rpcPub"), ("fp", "rpcFp")) if bridge.get(name)}}
                for bridge in query(account_id, "bridge") if bridge.get("rpcDataId")]
     return {"bridges": bridges, "endpoint": data_endpoint(), "credentials": issue_credentials(account_id, sts),
             "storage": storage_info(account_id)}
@@ -128,8 +129,13 @@ def handle_direct_rpc(body, conn, connection_id, endpoint, *, table, query, post
         if not current or current[0]["connectionId"] != ticket["controlId"]:
             post(endpoint, connection_id, {"action": "direct_rpc", "type": "error"})
             return {"statusCode": 403}
-        table.update_item(Key={"connectionId": ticket["controlId"]}, UpdateExpression="SET rpcDataId = :data",
-            ConditionExpression="attribute_exists(connectionId)", ExpressionAttributeValues={":data": connection_id})
+        # The end-to-end session key (e2ee.mjs) and K's fingerprint, relayed to Apps as they are.
+        pub, fp = body.get("pub"), body.get("fp")
+        if not (isinstance(pub, str) and re.fullmatch(r"[A-Za-z0-9+/]{86}[A-Za-z0-9+/=]{2}", pub)
+                and isinstance(fp, str) and re.fullmatch(r"[0-9a-f]{16}", fp)):
+            pub = fp = ""
+        table.update_item(Key={"connectionId": ticket["controlId"]}, UpdateExpression="SET rpcDataId = :data, rpcPub = :pub, rpcFp = :fp",
+            ConditionExpression="attribute_exists(connectionId)", ExpressionAttributeValues={":data": connection_id, ":pub": pub, ":fp": fp})
         table.update_item(Key={"connectionId": connection_id}, UpdateExpression="SET rpcControlId = :control",
             ConditionExpression="attribute_exists(connectionId)", ExpressionAttributeValues={":control": ticket["controlId"]})
         post(endpoint, connection_id, {"action": "direct_rpc", "type": "joined"})

@@ -115,13 +115,15 @@ def events(request: Request, cursor: str = ""):
 class Alert(BaseModel):
     eventId: str = Field(pattern=r"^[a-f0-9]{64}$")
     device: str = Field(max_length=200)
-    projectHash: str = Field(max_length=400)
-    projectName: str = Field(max_length=80)
+    projectHash: str = Field("", max_length=400)
+    projectName: str = Field("", max_length=80)
     sessionId: str = Field(max_length=200)
-    sessionTitle: str = Field(max_length=120)
+    sessionTitle: str = Field("", max_length=120)
     rootSessionId: str = Field(max_length=200)
-    title: str = Field(max_length=210)
-    body: str = Field(max_length=300)
+    title: str = Field("", max_length=210)
+    body: str = Field("", max_length=300)
+    # The fields above, sealed by the Bridge (bridge/notify.mjs); only the phone can open them.
+    e: str = Field("", max_length=8000)
 
 
 @router.post("/events")

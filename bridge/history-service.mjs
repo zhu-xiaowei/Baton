@@ -82,9 +82,10 @@ export class HistoryService {
     const rootId = String(params.rootSessionId || params.sessionId || '');
     const root = this.index.snapshot().catalog.roots.find((row) => row.sessionId === rootId);
     const page = await this.pages.history(file, params);
+    await runtimeDescriptor(file.runtime)?.withImages?.(page.messages); // storage access is on this thread
     // A Session Baton started whose transcript is still empty (a forked Skill): the prompt it sent.
     const sentPrompt = status === 'running' && !page.messages.length && !params.after && this.index.sentPrompts?.get(target.nativeSessionId);
-    return { ...page, status, ...(sentPrompt ? { sentPrompt } : {}), ...(root ? { agentCount: root.agentCount } : {}) };
+    return { ...page, status, ...(sentPrompt ? { sentPrompt } : {}), ...(root ? { agentCount: root.agentCount } : {}), ...(root?.rec.view?.readOnly ? { canSend: false } : {}) };
   }
 
   // The thread list: the root, then its subagents depth-first, newest first.
@@ -96,7 +97,7 @@ export class HistoryService {
     if (!row) return { rootSessionId: sessionId, threads: [] };
     const rec = row.rec;
     const items = [{ sessionId, preview: row.preview, status: row.status, lastActive: new Date(rec.ms).toISOString(), size: rec.size,
-      agentName: row.agent?.agentName || '', runtime: rec.runtime, nativeSessionId: rec.id }];
+      agentName: row.agent?.agentName || '', runtime: rec.runtime, nativeSessionId: rec.id, canSend: !rec.view?.readOnly }];
     const source = runtimeDescriptor(rec.runtime)?.catalog;
     if (row.agentCount && source) {
       // A registered runtime's children are catalog records already.
@@ -111,7 +112,7 @@ export class HistoryService {
       const codex = rec.runtime === 'codex' ? row.children.map((child) => ({ file: child.file, id: child.id,
         threadName: this.index.threadNames.get(child.home)?.names.get(child.id) || '' })) : [];
       const children = await this.pages.children({ runtime: rec.runtime, dir: rec.dir, id: rec.id, project: row.project,
-        status: row.own || row.status, codex });
+        status: row.own || row.status, backgroundAgents: this.index.awaitsAgents?.(rec.id), codex });
       for (const child of children) {
         const childId = storageSessionId(child.runtime, child.nativeSessionId);
         items.push({ ...child, sessionId: childId, status: this.index.statuses.get(childId) || child.status });

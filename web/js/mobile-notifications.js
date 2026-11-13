@@ -1,6 +1,6 @@
 import { state } from './state.js';
 import { showToast } from './components/toast.js';
-import { devices } from './v2/direct-transport.js';
+import { devices, notifyKey, openAlert } from './v2/direct-transport.js';
 
 // iOS: APNs. Android: a foreground service polling the event feed. Both work while
 // Baton is in the background; the local push plugin owns notification taps.
@@ -38,20 +38,23 @@ function validTarget(event) {
 }
 
 async function openNotification(event) {
-  if (!validTarget(event) && !event?.id) return;
+  if (!validTarget(event) && !event?.id && !event?.e) return;
   if (!config) {
     pendingTarget = event;
     return;
   }
   pendingTarget = null;
+  // The phone could not open it before display: open it here.
+  if (!validTarget(event)) event = await openAlert(event);
   // The extension could not fetch it before display: the push carried only its ID.
-  if (!validTarget(event)) {
+  if (!validTarget(event) && event.id) {
     event = await window.api('/api/notifications/event', { id: event.id }).catch(error => {
       if (String(error.message).startsWith('404')) return null;  // Events live 7 days.
       throw error;
     });
+    event = event && await openAlert(event);
   }
-  if (!event) return;
+  if (!validTarget(event)) return;
   if (event.accountId !== config.accountId) {
     showToast('This notification belongs to another account.');
   } else if (typeof window.openNotificationSession === 'function') {
@@ -65,7 +68,7 @@ async function openNotification(event) {
 async function enableIos(prompt) {
   if (!config.ios) return setStatus('iOS push is not configured on this server.');
   // The notification extension reads these to fetch each alert's text.
-  const result = await invoke('plugin:push|register', { server: state.SERVER, apiKey: state.KEY, prompt });
+  const result = await invoke('plugin:push|register', { server: state.SERVER, apiKey: state.KEY, notifyKey: await notifyKey(), prompt });
   if (!result.granted || !enabled() || !state.KEY) return result;
   const device = { token: result.token, environment: result.environment };
   await window.apiPost('/api/notifications/devices', device);
@@ -84,7 +87,7 @@ function showSwitch() {
 async function apply(prompt = true) {
   if (enabled()) {
     permission = await (platform === 'ios' ? enableIos(prompt)
-      : invoke('plugin:push|start', { server: state.SERVER, apiKey: state.KEY, prompt })) || permission;
+      : invoke('plugin:push|start', { server: state.SERVER, apiKey: state.KEY, notifyKey: await notifyKey(), prompt })) || permission;
   } else {
     setStatus('');
   }
@@ -134,6 +137,8 @@ async function initialize() {
   const prompt = !localStorage.getItem(ASKED);
   localStorage.setItem(ASKED, '1');
   await apply(prompt);
+  // The phone opens sealed alerts with K's alert key: hand it over again once K arrives.
+  window.addEventListener('baton-account-key', () => { void apply(false).catch(() => {}); });
 }
 
 export function initMobileNotifications() {

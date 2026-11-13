@@ -14,7 +14,7 @@ export async function renameNativeSession(message, options = {}) {
   const identity = parseStorageSessionId(message.sessionId);
   const name = typeof message.name === 'string' ? message.name.trim() : '';
   const descriptor = runtimeDescriptor(identity.runtime);
-  if (!descriptor && !SESSION_UUID.test(identity.nativeSessionId)) throw new Error('Invalid session ID.');
+  if (!descriptor?.rename && !SESSION_UUID.test(identity.nativeSessionId)) throw new Error('Invalid session ID.');
   if (!name || name.length > 200 || /[\r\n\x00-\x1f\x7f]/.test(name)) {
     throw new Error('Enter a session name between 1 and 200 characters on one line.');
   }
@@ -56,7 +56,7 @@ export async function renameNativeSession(message, options = {}) {
       await client.stop();
     }
   } else if (descriptor?.rename) {
-    await descriptor.rename(identity.nativeSessionId, name);
+    return { sessionId: identity.sessionId, runtime: identity.runtime, name: await descriptor.rename(identity.nativeSessionId, name, message.projectHash) };
   } else {
     throw new Error('This runtime does not support session renaming.');
   }

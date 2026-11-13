@@ -10,6 +10,7 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
+import android.util.Base64
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
@@ -17,6 +18,9 @@ import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
+import javax.crypto.Cipher
+import javax.crypto.spec.GCMParameterSpec
+import javax.crypto.spec.SecretKeySpec
 
 // Polls the account's notification feed from a foreground service, so alerts keep
 // arriving while Baton is in the background. WebView timers are throttled there.
@@ -32,8 +36,8 @@ class AlertService : Service() {
     @Volatile var foreground = false
     @Volatile var openSession = ""
 
-    fun start(context: Context, server: String, apiKey: String) {
-      prefs(context).edit().putString("server", server).putString("apiKey", apiKey).apply()
+    fun start(context: Context, server: String, apiKey: String, notifyKey: String) {
+      prefs(context).edit().putString("server", server).putString("apiKey", apiKey).putString("notifyKey", notifyKey).apply()
       ContextCompat.startForegroundService(context, Intent(context, AlertService::class.java))
     }
 
@@ -133,12 +137,33 @@ class AlertService : Service() {
       val body = JSONObject(connection.inputStream.bufferedReader().use { it.readText() })
       if (cursor.isNotEmpty()) {
         val events = body.optJSONArray("events")
-        for (index in 0 until (events?.length() ?: 0)) show(events!!.getJSONObject(index))
+        for (index in 0 until (events?.length() ?: 0)) show(open(events!!.getJSONObject(index)))
       }
       return body.optString("cursor", cursor)
     } finally {
       connection.disconnect()
     }
+  }
+
+  // A sealed alert (`e`, bridge/notify.mjs): AES-GCM, bound to its eventId; plaintext after a 5-byte header.
+  private fun open(event: JSONObject): JSONObject {
+    val sealed = event.optString("e")
+    if (sealed.isEmpty()) return event
+    // Not openable here (no key yet): a placeholder; tapping opens it in the app.
+    event.put("body", "Open Baton to see this update.")
+    val key = prefs(this).getString("notifyKey", null)
+    if (key.isNullOrEmpty()) return event
+    try {
+      val bytes = Base64.decode(sealed, Base64.DEFAULT)
+      val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+      cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(Base64.decode(key, Base64.DEFAULT), "AES"), GCMParameterSpec(128, bytes, 0, 12))
+      cipher.updateAAD(event.optString("eventId").toByteArray())
+      val plain = cipher.doFinal(bytes, 12, bytes.size - 12)
+      val fields = JSONObject(String(plain, 5, plain.size - 5, Charsets.UTF_8))
+      for (name in fields.keys()) event.put(name, fields.get(name))
+    } catch (_: Exception) {
+    }
+    return event
   }
 
   private fun show(event: JSONObject) {

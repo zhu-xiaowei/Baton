@@ -71,6 +71,7 @@ export async function readAttachmentText(url, limit = 5 * 1024 * 1024) {
 
 export async function uploadAttachment(file, prepared, onProgress, signal) {
   const urls = [...new Set([prepared.url, prepared.fallbackUrl].filter(Boolean))];
+  const body = prepared.seal ? new Blob([await prepared.seal(file)]) : file;
   for (const url of urls) {
     try {
       await new Promise((resolve, reject) => {
@@ -88,7 +89,7 @@ export async function uploadAttachment(file, prepared, onProgress, signal) {
         upload.onloadend = () => signal.removeEventListener('abort', abort);
         if (signal.aborted) return abort();
         signal.addEventListener('abort', abort, { once: true });
-        upload.send(file);
+        upload.send(body);
       });
       return;
     } catch (error) {

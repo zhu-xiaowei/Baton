@@ -152,7 +152,7 @@ export default defineRuntimeAdapter({
     const rec = record(nativeSessionId);
     return rec && catalog.status(rec, procs) !== status ? { session: sessionRow(rec, catalog.status(rec, procs)) } : null;
   },
-  rename: (id, title) => service.api('PATCH', `/api/session/${id}`, { title }),
+  rename: (id, title) => service.api('PATCH', `/api/session/${id}`, { title }).then(() => title),
   // OpenCode deletes children with their root; it would also delete a busy session (ws.mjs guards).
   deleteSessionHistory: (id) => service.api('DELETE', `/api/session/${id}`).then(() => true),
   async deleteProjectHistory(projectHash) {

@@ -131,6 +131,62 @@ Done:
   (no Done alert for a turn a takeover, exit or parent ended).
 - Bridge needs Node ≥ 22.15 (`node:sqlite`, zstd); install scripts refuse older Node, auto-update skips a package
   whose `engines` the running Node does not meet.
+- Optional runtimes are listed in `runtime-registry.mjs` `OPTIONAL_RUNTIMES` ([installed?, import]); `bridge.mjs`
+  awaits `registerInstalledRuntimes()` before the index warms, so an absent harness loads no code. Their modules
+  sit at the Bridge root (`<rt>-*.mjs`), because the package and updater ship only root `*.mjs` + `project/`.
+
+### Hermes (≥ 0.23, gateway `hermes-gateway-v1`) — H3
+- `hermes-catalog.mjs` (worker-safe): read-only `$HERMES_HOME/state.db` (default profile). Rows catalog: every
+  `data_version` change re-reads the `sessions` signatures (finds renames and deletions) plus messages past the
+  last id. Local sources with a real cwd join that project; messaging/automation Sessions go to the virtual
+  project `hermes:assistant` ("Hermes 助理", preview prefixed by source, read-only via `threads.canSend:false`; the
+  App hides Files/Git/Terminal for any hash containing `:`). oneshot/tool/batch/… are hidden, subagents are
+  children (running until `ended_at`), empty untitled Sessions (a bare TUI start) are hidden. History =
+  Hermes' display projection (active or compaction-archived rows, one per `display_order`) behind `RowIndex`;
+  a rewind/compaction/revision change rebuilds under a new epoch. A user row's `submission_id` is the Baton
+  turn id: uuid = turnId, `nativeId: live:user:<turnId>`.
+- `hermes-convert.mjs`: tools → Bash/Read/Write/Edit/Grep/Glob/TodoWrite (also inside `tool_call`)/Agent
+  (+ async completion row)/WebSearch/WebFetch/AskUserQuestion/ViewImage/Skill, others `mcp__hermes__*`; vision
+  rows → image from Hermes' cache file; steer wrapper and expanded Skill bodies (`/name instruction`) are undone;
+  `process_complete` → `system_event`; hidden interrupted row → `[Request interrupted by user]`; a trailing
+  `EXIT=<n>` marks a failed command whose wrapper shell exited 0.
+- `hermes-gateway.mjs` + `hermes-runtime.mjs`: one WS to the user's gateway; each connection gets a fresh
+  single-use ticket from `$HERMES_HOME/gateway.sock` (never logged). Browsing/subscribing never starts the
+  gateway; sending starts it once (`hermes gateway attach --json --start`) and lets its own idle-exit stop it;
+  Baton disconnects after 120 s without turns or waiting prompts. Send = `prompt.submit{submission_id: turnId}`
+  (a send during a turn is queued by Hermes and becomes the next turn; no takeover needed), new =
+  `session.create{source:'tui', cwd}` (no cwd → `$HOME`), interrupt = `session.interrupt{execution_generation}`.
+  Deltas/tool starts stream through `StreamFramer`; rows Hermes stores during the turn are its authority.
+  `approval.request` → tool prompt with "Yes, for this session" (`choice:session`, also kept in
+  `~/.baton-bridge/hermes-grants.json` and answered by the Bridge after a gateway restart); `clarify.request` →
+  ask (multi-select answers as a JSON array, cancel = skip). Subscribing resumes the Session, re-shows waiting
+  prompts and routes other clients' prompts there. Images are staged with `image.attach_bytes`.
+- Watcher: `fs.watch($HERMES_HOME)` for `state.db`/`-wal`, plus one pass 50 ms later (a WAL write is seen just
+  before its commit is visible). Status from the gateway's lease/admission tables; needs_input only while a page
+  or a Baton turn is attached. Rows other clients store are pushed to open pages. Rename/delete use the
+  `hermes sessions rename|delete` CLI (Hermes refuses deleting a Session with an active turn).
+
+### H2: DeepSeek Harness (dsh 0.2.2, log v4) — `bridge/dsh-*.mjs`
+- Registered by `bridge.mjs` only when `DSH_HOME` (default `~/.dsh`) exists. Storage id `dsh:<native id>`.
+- Logs are concatenated zstd frames; `dsh-frames.mjs` splits them by header (Node decodes one frame per call)
+  and `FrameIndex` is the LineIndex of frames. The warm-up workers GC every 16 frames (zstd contexts are
+  freed only on GC). Title = last `session/title`, else DSH's 5-word / 40-byte fallback, else the folder.
+- Status: a held `session.lock` (Linux `/proc/locks`, macOS `lsof`, read off the request path) plus the
+  log: open asks/approvals → needs_input, open turn → running, a child holding its lock keeps the root running.
+- Rows: one per event, assistant messages one row per block (so live blocks meet their own row). Attachment
+  images are uploaded on the main thread (`withImages`, called by `history-service` and the watcher). Live turns
+  get no rows of their own: the log watcher hands the new rows to the running turn (`deliver`), tagging the
+  first prompt row after a send `live:user:<turnId>`; other Sessions' rows go to subscribers.
+- Interaction: one `dsh --profile acp --patch ~/.baton-bridge/dsh-baton.patch.yml` per Session; sends queue in
+  it (ACP admits one prompt), and when the queue empties: `session/close` → EOF → the log is read to its end →
+  `stream_end`. The overlay pins approval to ask and adds ask_user_question with `dsh-ask.mjs`, which asks
+  the Bridge over fd 3 (multi-select answers keep each question id). Approvals are allow-once/reject-once;
+  "for this session" is kept in `~/.baton-bridge/dsh-grants.json` and answered by the Bridge.
+- "For this session" never covers a command with shell operators (`&;|<>`, backtick, `$(`, newline): it asks.
+  A failed prompt does not fail the ones queued behind it; the turn ends once, after the last.
+- A lock held by another process → `dsh_active_writer` takeover (SIGTERM; a `dsh web` closes all its sessions).
+  Delete (Session or project) refuses Sessions Baton or another process holds, then removes the Session folders
+  (children too) and DSH's projcache entry. Rename appends dsh's own user `session/title` frame under the Session lock and updates its list cache (refused while in use; not on Windows).
 
 ### Multi-harness H1: OpenCode ≥ 2.2 (`bridge/opencode-*.mjs`)
 - Loaded whenever `~/.local/share/opencode/opencode.db` exists (one `OPTIONAL_RUNTIMES` line). A 1.x DB without
@@ -246,15 +302,19 @@ template. S3 bucket / ECR repo / AWS account id are derived automatically by
   - **subagent threads**: a root row shows the *effective* status (own status OR any child
     `runningAgentCount`/`needsInputAgentCount`). An interrupted subagent's tail stays
     non-terminal forever, so unless `.meta.json` says `finished:true` (CC never writes `false`) a
-    child trusts its tail only while its parent's own status is running (CC stays `busy` while
-    foreground or background subagents run) or it was written in the last 15s. A stopped agent never
+    child trusts its tail only while its parent's own status is running, CC's record for the root reads
+    `busy`/`waiting` (it stays so while foreground or background subagents run, also at a prompt), the pool
+    still lists a background agent, or it was written in the last 15s (`claudeParentLive()`, shared by discovery,
+    the session index and the thread list). A stopped agent never
     gets `finished:true`, so a child is also completed when its spawner's transcript last reports
     it in a `<task-notification>` rather than a later `resumedAgentId`. A child last written before the earliest
     live CC process of its root Session started (its `~/.claude/sessions/<pid>.json`, pool processes
     included) died with an earlier process and is completed too. While a root's own status holds (unchanged or
     pool/daemon-owned), `checkStopped` applies both end rules to its tracked active children with one stat each. Only CC's own rows count
     (`claudeTaskEvent()`: enqueued notifications, notification prompts, `SendMessage` results), not
-    tool output quoting them; `claudeSubagentEnded()` scans incrementally; the watcher rechecks active children when that notification is appended. `inspectActiveSession()`
+    tool output quoting them; `claudeSubagentEnded()` scans incrementally; the watcher rechecks active children when that notification is appended, after the root's own
+    write. CC (2.1.322+) also writes a notification it already reported through a hand-back, or one replayed at
+    resume, and never answers it: while CC's record reads `idle` that row means `completed`, not `running`. `inspectActiveSession()`
     re-derives the counts on every `checkStopped` pass and reports them, because the notifier
     treats missing counts as "unchanged".
   - `getRunningInfo()`: `ps aux` + `--resume` arg extraction → exact session ID + project cwd
