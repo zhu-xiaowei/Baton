@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import zlib from 'node:zlib';
-import { catalog, DshHistoryReader } from '../../bridge/dsh-catalog.mjs';
+import { catalog, DshHistoryReader, normalizeTitle } from '../../bridge/dsh-catalog.mjs';
 
 test('DSH logs: concatenated zstd frames become the catalog row and history rows', async () => {
   const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-')), 'session.v4.jsonl.zstd');
@@ -20,4 +20,5 @@ test('DSH logs: concatenated zstd frames become the catalog row and history rows
   const rows = await reader.rows(0, reader.index.count);
   assert.deepEqual(rows.map((r) => [r.uuid, r.content[0].type, r.content[0].name || r.content[0].is_error]), [['u1', 'text', undefined], ['a1', 'thinking', undefined], ['a1:1', 'tool_use', 'Bash'], ['r1', 'tool_result', true]]);
   assert.equal(reader.stableLine(), 0); // the turn is still open
+  assert.equal(normalizeTitle('  改名\t\u001b[31m🚀 ' + 'x'.repeat(90)), `改名 🚀 ${'x'.repeat(68)}`); // DSH's 80-byte cut
 });

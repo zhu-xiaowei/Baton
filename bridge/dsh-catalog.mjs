@@ -17,14 +17,16 @@ export const readdir = (dir) => { try { return fs.readdirSync(dir); } catch { re
 // DSH's session-title fallback (packages/session/session-title normalize.ts): the first user prompt
 // without control sequences, its first 5 words, cut to 40 UTF-8 bytes.
 const CONTROL = /(?:\u001B\]|\u009D)(?:(?!\u0007|\u001B\\)[\s\S])*(?:\u0007|\u001B\\|$)|(?:\u001B\[|\u009B)[0-?]*[ -/]*[@-~]|\u001B[@-_]|[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F\u200B\u200E\u200F\u202A-\u202E\u2060-\u2064\u2066-\u206F\uFEFF]/gu;
-export function fallbackTitle(text) {
+// normalizeSessionTitle (renames: 80 bytes) and fallbackSessionTitle (5 words, 40 bytes).
+export function normalizeTitle(text, max = 80, words = undefined) {
   let out = '';
-  for (const ch of String(text).replace(CONTROL, '').replace(/\s+/gu, ' ').trim().split(' ').slice(0, 5).join(' ')) {
-    if (Buffer.byteLength(out + ch) > 40) break;
+  for (const ch of String(text).replace(CONTROL, '').replace(/\s+/gu, ' ').trim().split(' ').slice(0, words).join(' ')) {
+    if (Buffer.byteLength(out + ch) > max) break;
     out += ch;
   }
   return out.trimEnd();
 }
+const fallbackTitle = (text) => normalizeTitle(text, 40, 5);
 
 function apply(st, e) {
   const d = e.data || {};
@@ -43,6 +45,7 @@ function apply(st, e) {
     case 'tool/result': st.asks = st.asks.filter((id) => id !== d.message?.toolCallId); break;
     default: break;
   }
+  if (e.seq !== undefined) st.seq = e.seq;
 }
 
 export const catalog = {

@@ -1,6 +1,8 @@
 // DeepSeek Harness (dsh 0.2.2, session log v4): catalog and history from the zstd logs, live rows
 // from a watcher on them, interaction over ACP. Registered only when DSH_HOME exists.
 import fs from 'node:fs';
+import zlib from 'node:zlib';
+import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import { defineRuntimeAdapter } from './runtime-adapter.mjs';
 import { defineRuntimeWatcher } from './watcher-adapter.mjs';
@@ -9,7 +11,7 @@ import { storageSessionId } from './session-identity.mjs';
 import { lastKnownStatus, reportSessions } from './sync.mjs';
 import { publishMessages } from './ws.mjs';
 import { batonSessions, localIdleSec } from './presence.mjs';
-import dsh, { catalog, DSH_HOME, LOG, SESSIONS, withImages } from './dsh-catalog.mjs';
+import dsh, { catalog, DSH_HOME, LOG, normalizeTitle, SESSIONS, withImages } from './dsh-catalog.mjs';
 import { eventRows } from './dsh-extract.mjs';
 import { refreshLocks } from './dsh-locks.mjs';
 import { dshInteraction, findLog } from './dsh-interaction.mjs';
@@ -115,7 +117,42 @@ async function deleteHistory(ids) {
   return true;
 }
 
+// dsh's own rename (session-title rename in `dsh web`) appends a user `session/title` event; Baton appends
+// the same event as one checksummed frame while holding the Session's write lock, as dsh's writer does,
+// and only if the log did not grow since it was read; dsh's list cache gets the title too.
+async function rename(id, name, project) {
+  const file = findLog(id);
+  sessionIndex.touch(file || '');
+  const rec = recOf(file);
+  if (!rec?.state || sessionIndex.view(rec)?.project !== project) throw new Error('Session not found on this device.');
+  const title = normalizeTitle(name);
+  if (!title || process.platform === 'win32') throw new Error(title ? 'Renaming DSH sessions is not supported on Windows.' : 'Enter a session name.');
+  const frame = zlib.zstdCompressSync(`${JSON.stringify({ type: 'session/title', seq: rec.state.seq + 1, time: Date.now(), data: { title, messageSeqs: [], source: { kind: 'user' } } })}\n`,
+    { params: { [zlib.constants.ZSTD_c_checksumFlag]: 1 } });
+  const lock = path.join(path.dirname(file), 'session.lock');
+  const size = String(rec.state.offset);
+  try {
+    if (dshInteraction.owns(id)) throw Object.assign(new Error(), { status: 9 });
+    execFileSync(...(process.platform === 'darwin'
+      ? ['perl', ['-MFcntl=:flock', '-e', 'open(L,"<",$ARGV[0]) && flock(L,LOCK_EX|LOCK_NB) or exit 9; -s $ARGV[1] == $ARGV[2] or exit 8; open(F,">>",$ARGV[1]) or exit 7; binmode F; binmode STDIN; local $/; print F <STDIN>; close F or exit 7', lock, file, size]]
+      : ['flock', ['-n', '-E', '9', lock, 'sh', '-c', '[ "$(stat -c %s "$1")" = "$2" ] || exit 8; cat >> "$1"', 'sh', file, size]]), { input: frame, timeout: 5000 });
+  } catch (error) {
+    throw new Error(error.status === 9 ? 'Close the active DSH session before renaming it.' : error.status === 8 ? 'The session changed; try again.' : `Rename failed: ${error.message}`);
+  }
+  // dsh's list reads its projection cache, where each row says the seq it has folded through.
+  const cache = path.join(DSH_HOME, 'storages', 'session_projcache', 'sessions', `${id}.json`);
+  try {
+    const doc = JSON.parse(fs.readFileSync(cache, 'utf8'));
+    doc.record.rows.title = { ...doc.record.rows.title, seq: rec.state.seq + 1, val: title };
+    fs.writeFileSync(`${cache}.baton`, JSON.stringify(doc, null, 2));
+    fs.renameSync(`${cache}.baton`, cache);
+  } catch {}
+  sessionIndex.touch(file);
+  return title;
+}
+
 export default defineRuntimeAdapter({
+  rename,
   runtime: 'dsh',
   displayName: 'DeepSeek Harness',
   module: new URL('./dsh-catalog.mjs', import.meta.url).href,
