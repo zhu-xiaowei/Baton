@@ -22,17 +22,28 @@ export function registerRuntime(adapter) {
   adaptersByRuntime.set(adapter.runtime, adapter);
 }
 
-// Optional runtimes: [installed?, module], the module imported only when its harness is installed.
+// Runtimes beyond claude/codex, flat in bridge/: [module, installed]. `installed` must be a cheap
+// filesystem check; the module is imported (default-exporting its adapter) only when it passes.
 const OPTIONAL_RUNTIMES = [
-  [() => fs.existsSync(path.join(process.env.HERMES_HOME || path.join(os.homedir(), '.hermes'), 'state.db')), () => import('./hermes-runtime.mjs')],
+  ['./hermes-runtime.mjs', () => fs.existsSync(path.join(process.env.HERMES_HOME || path.join(os.homedir(), '.hermes'), 'state.db'))],
 ];
 
-export async function registerInstalledRuntimes() {
-  for (const [installed, load] of OPTIONAL_RUNTIMES) {
+export async function registerInstalledRuntimes(list = OPTIONAL_RUNTIMES) {
+  for (const [file, installed] of list) {
     try {
-      if (installed()) registerRuntime((await load()).default);
+      if (!installed()) continue;
+      const adapter = (await import(new URL(file, import.meta.url))).default;
+      const discover = adapter.discover.bind(adapter);
+      // A store this runtime cannot read must not stop Claude/Codex from syncing.
+      adapter.discover = (options) => {
+        try { return discover(options); } catch (error) {
+          console.error(`[runtime] ${adapter.runtime} discovery failed: ${error.message}`);
+          return { sessions: [] };
+        }
+      };
+      registerRuntime(adapter);
     } catch (error) {
-      console.error(`[runtime] ${error.message}`);
+      console.error(`[runtime] ${file} not loaded: ${error.message}`);
     }
   }
 }
