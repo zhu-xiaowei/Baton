@@ -15,7 +15,7 @@ const run = (options) => new Promise((resolve, reject) => {
 });
 
 test('resends keep their requestId: the Bridge computes once and replies once', async () => {
-  const [normal, lost, late, slow, chunk, silent, offline, reconnect] = await Promise.all([
+  const [normal, lost, late, slow, chunk, silent, offline, reconnect, waiting] = await Promise.all([
     run({}),
     run({ dropRequests: 1 }),
     run({ coldStart: true, devicesDelayMs: 7000, dropRequests: 1 }),
@@ -24,6 +24,7 @@ test('resends keep their requestId: the Bridge computes once and replies once', 
     run({ silent: true }),
     run({ online: false }),
     run({ computeMs: 1500, reconnectAt: 300 }),
+    run({ coldStart: true, devicesDelayMs: 13000 }),
   ]);
   assert.deepEqual([normal.value, normal.requests, normal.computed, normal.slowAt], [{ ok: 1 }, 1, 1, null], 'normal');
 
@@ -53,6 +54,8 @@ test('resends keep their requestId: the Bridge computes once and replies once', 
   assert.deepEqual(reconnect.value, { ok: 1 }, 'a reconnect mid-request');
   assert.equal(reconnect.computed, 1, 'the resend after reconnecting is not recomputed');
   assert.equal(reconnect.chunksSent, 1, 'the reply goes once, to the new connection');
+
+  assert.deepEqual(waiting.value, { ok: 1 }, 'time spent waiting for routes and credentials is not part of the deadline');
 });
 
 test('receipts, a dead socket and expiring credentials', async () => {
