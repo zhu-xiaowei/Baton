@@ -2,7 +2,7 @@ import { synced } from './extract.mjs';
 import { parseStorageSessionId, storageSessionId } from './session-identity.mjs';
 import { getRuntimeAdapter, runtimeAdapters } from './runtime-registry.mjs';
 import { heldForAgents, pendingInteractionDetail, poolAwaitsAgents, poolOwns } from './ws.mjs';
-import { rebuildAgentCounts } from './agent-counts.mjs';
+import { activeChildSessions, rebuildAgentCounts } from './agent-counts.mjs';
 import { ObservedMap } from './observed-map.mjs';
 import { observeSessions } from './notify.mjs';
 import { parseClaudeSubagentSessionId } from './claude-subagent.mjs';
@@ -108,11 +108,14 @@ export async function updateSessionStatus(
 export function checkStopped(config, index = sessionIndex) {
   const roots = new Map(index.catalog().roots.map((row) => [row.sessionId, row]));
   const updates = [];
+  const agentCountUpdates = [];
   const statusContexts = new Map();
 
   for (const [sessionId, status] of [...lastKnownStatus]) {
-    if (status !== 'running' && status !== 'needs_input') continue;
     const identity = parseStorageSessionId(sessionId);
+    // A finished root is still checked while it counts active children, so orphans settle.
+    if (status !== 'running' && status !== 'needs_input'
+      && !(roots.get(identity.sessionId)?.agentCount && activeChildSessions(identity.sessionId).length)) continue;
     if (pendingInteractionDetail(identity.sessionId) !== null) continue;
     const adapter = getRuntimeAdapter(identity.runtime);
     if (!adapter.features.statusPolling) continue;
@@ -133,9 +136,10 @@ export function checkStopped(config, index = sessionIndex) {
       lastActive: row ? new Date(row.ms).toISOString() : '',
     }, statusContexts.get(adapter.runtime));
     if (!result) continue;
-    if (adapter.runtime === 'claude') heldForAgents.set(identity.sessionId, !!result.session.backgroundAgents);
-    updates.push(result.session, ...(result.extraSessions || []));
+    if (adapter.runtime === 'claude' && result.session) heldForAgents.set(identity.sessionId, !!result.session.backgroundAgents);
+    updates.push(...[result.session || [], ...(result.extraSessions || [])].flat());
+    agentCountUpdates.push(...(result.agentCountUpdates || []));
   }
 
-  if (updates.length > 0) reportSessions(config, updates);
+  if (updates.length > 0) reportSessions(config, updates, { agentCountUpdates });
 }
