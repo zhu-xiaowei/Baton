@@ -16,7 +16,7 @@ import { StreamFramer } from './stream-framer.mjs';
 import { defineInteractionAdapter } from './interaction-adapter.mjs';
 import { sessionIndex } from './session-index.mjs';
 import { mapTool } from './dsh-extract.mjs';
-import { catalog, DSH_HOME, LOG, readdir, SESSIONS } from './dsh-catalog.mjs';
+import { catalog, DSH_HOME, LOG, promptIds, readdir, SESSIONS } from './dsh-catalog.mjs';
 import { lockHolder, refreshLocks } from './dsh-locks.mjs';
 
 const IMAGE_TYPES = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', gif: 'image/gif' };
@@ -65,13 +65,14 @@ function promptBlocks(text, vision) {
   return rest ? [{ type: 'text', text: rest }, ...images] : images;
 }
 
-// "Yes, for this session": the tool, and for a command its first word. A command with shell operators
-// is never covered, so it always asks.
+// "Yes, for this session": the tool, and for a command its program and a plain lowercase subcommand
+// ("git status"), as Pi does. Shell syntax, a bare program, a flag/path second or a wrapper always asks.
 function sessionRule(t) {
-  const command = String(t.input.command || '');
-  if (t.name === 'Bash' && /[&;|`<>\n]|\$\(/.test(command)) return null;
-  const word = t.name === 'Bash' && command.trim().split(/\s+/)[0];
-  return word ? { toolName: 'Bash', ruleContent: `${word}:*` } : { toolName: t.name };
+  if (t.name !== 'Bash') return { toolName: t.name };
+  const command = String(t.input.command || '').trim();
+  const [program, sub] = command.split(/\s+/);
+  return /^[\w \t./:=@%+,-]+$/.test(command) && /^[a-z]+$/.test(sub ?? '')
+    && !/^(timeout|env|nice|nohup|sudo|doas|xargs|time|command|exec|eval|stdbuf|ionice|sh|bash|zsh)$/.test(program) ? { toolName: 'Bash', ruleContent: `${program} ${sub}:*` } : null;
 }
 
 const isPrompt = (row) => row.type === 'user' && !String(row.uuid).startsWith('dsh-interrupt')
@@ -199,7 +200,7 @@ class DshInteraction {
     const s = this.sessions.get(sid);
     if (!s?.callbacks) return false;
     for (const row of rows) {
-      if (s.tags.length && isPrompt(row)) row.nativeId = `live:user:${s.tags.shift()}`;
+      if (s.tags.length && isPrompt(row)) promptIds.set(row.uuid, row.nativeId = `live:user:${s.tags.shift()}`);
       s.callbacks.onMessage?.(s.sid, row, { normalized: true });
     }
     return true;

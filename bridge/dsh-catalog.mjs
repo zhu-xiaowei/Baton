@@ -114,10 +114,13 @@ export class DshHistoryReader extends FrameIndex {
   page(range) { return readPage(this, range, 32, 512); }
 }
 
-// Image blocks name the attachment file; on the main thread (storage access lives there) its bytes
-// go to the transfer store under the block's key, checked again after a day (storage keeps 7).
+// Rows on the main thread, before they reach the App: a prompt Baton sent keeps the App's turn id, and
+// image blocks, which name the attachment file, have its bytes put in the transfer store under their key
+// (checked again after a day: storage keeps 7).
 const uploaded = recentKeys();
+export const promptIds = recentKeys(); // row uuid → live:user:<turnId> of prompts Baton sent
 export async function withImages(rows) {
+  for (const row of rows) row.nativeId ||= promptIds.get(row.uuid);
   const images = rows.flatMap((row) => (Array.isArray(row.content) ? row.content : []).filter((b) => b.type === 'image' && b.path));
   await Promise.all(images.map(async (b) => {
     try {

@@ -108,8 +108,8 @@ export function eventRows(event, frame, i, { sid, home }) {
     case 'turn/end': {
       const r = d.reason || {};
       const why = r.reason?.kind;
-      if ((r.kind === 'aborted' && why === 'user') || r.kind === 'interrupted') return [{ uuid: `dsh-interrupt-${sid}-${d.turn}`, type: 'user', content: INTERRUPT, ...base }];
-      // Disposed (takeover, process exit), parent or hook: not a turn the user should be told is done.
+      if ((r.kind === 'aborted' && (why === 'user' || why === 'disposed')) || r.kind === 'interrupted') return [{ uuid: `dsh-interrupt-${sid}-${d.turn}`, type: 'user', content: INTERRUPT, ...base }];
+      // Disposed (a takeover or the process closing) reads as interrupted; parent or hook: a notice, no alert.
       if (r.kind === 'aborted') return notice('aborted', `Turn stopped (${why || 'aborted'})`, { noAlert: true });
       if (END_NOTICE[r.kind]) return notice('end', END_NOTICE[r.kind]);
       if (r.kind === 'error') return [{ uuid: `dsh-error-${sid}-${d.turn}`, type: 'assistant', content: [{ type: 'text', text: `Error: ${r.error?.message || r.error?.code || 'turn failed'}` }], ...base, stopReason: 'end_turn' }];
