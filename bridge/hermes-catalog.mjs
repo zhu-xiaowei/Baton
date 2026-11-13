@@ -167,13 +167,8 @@ export class HermesHistoryReader {
   }
 
   async rows(lo, hi) {
-    const { extractForApp, nativeOrderKey } = await import('./extract.mjs');
-    const out = [];
-    for (const { row, n, fragment } of this.convert(lo, hi)) {
-      if (Array.isArray(row.content) && row.content.some((b) => b.type === 'image')) row.content = (await extractForApp({ message: { content: row.content.map(loadImage) } })).content;
-      out.push({ ...row, orderKey: nativeOrderKey(n, fragment) });
-    }
-    return out;
+    const { nativeOrderKey } = await import('./extract.mjs');
+    return this.convert(lo, hi).map(({ row, n, fragment }) => ({ ...row, orderKey: nativeOrderKey(n, fragment) }));
   }
 
   page(range) { return readPage(this, range, 64, 256); }
@@ -189,6 +184,16 @@ function loadImage(block) {
   return { type: 'text', text: `[Image unavailable] ${block.alt || path.basename(block.path)}` };
 }
 
+// On the main thread, which can reach the transfer store: image paths become uploaded keys
+// (extractForApp remembers each upload for a day; storage keeps them 7).
+export async function withImages(rows) {
+  const { extractForApp } = await import('./extract.mjs');
+  for (const row of rows) {
+    if (Array.isArray(row.content) && row.content.some((b) => b.path)) row.content = (await extractForApp({ message: { content: row.content.map(loadImage) } })).content;
+  }
+  return rows;
+}
+
 export function readSessionMessages(sessionId) {
   const reader = new HermesHistoryReader(sessionId);
   reader.update();
@@ -200,6 +205,7 @@ export default {
   runtime: 'hermes',
   module: import.meta.url,
   catalog,
+  withImages,
   history: ({ nativeSessionId }) => new HermesHistoryReader(nativeSessionId),
   messages: (_file, nativeSessionId) => readSessionMessages(nativeSessionId),
 };

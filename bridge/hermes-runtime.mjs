@@ -11,7 +11,8 @@ import { SessionGrants } from './session-grants.mjs';
 import { BRIDGE_HOME } from './config.mjs';
 import { liveMessageRoute } from './live-message-registry.mjs';
 import { trackAgentSession } from './agent-counts.mjs';
-import light, { catalog, HERMES_HOME, HermesHistoryReader, select, STATE_DB } from './hermes-catalog.mjs';
+import { batonSessions, localIdleSec } from './presence.mjs';
+import light, { catalog, HERMES_HOME, HermesHistoryReader, select, STATE_DB, withImages } from './hermes-catalog.mjs';
 import { mapTool } from './hermes-convert.mjs';
 import { HermesGateway, hermesCli } from './hermes-gateway.mjs';
 import { sessionIndex } from './session-index.mjs';
@@ -65,7 +66,7 @@ async function storedRows(id, rowIds) {
   if (readers.size > 16) readers.delete(readers.keys().next().value);
   reader.update();
   const at = rowIds.map((rowId) => reader.index.ids.indexOf(rowId)).filter((i) => i >= 0);
-  return at.length ? reader.rows(Math.min(...at), Math.max(...at) + 1) : [];
+  return at.length ? withImages(await reader.rows(Math.min(...at), Math.max(...at) + 1)) : [];
 }
 
 function sessionRow(id, status, state = sessionIndex.records.get(`rows:hermes:${id}`)?.state) {
@@ -77,9 +78,9 @@ function sessionRow(id, status, state = sessionIndex.records.get(`rows:hermes:${
 }
 
 // Through the agent counts, so a parent's Done waits for its running subagents.
-function report(id, status, state) {
+function report(id, status, state, idle) {
   const session = config && sessionRow(id, status, state);
-  if (session) reportSessions(config, [session], { agentCountUpdates: trackAgentSession(session) });
+  if (session) reportSessions(config, [{ ...session, ...(idle !== undefined ? { localIdleSec: idle } : {}) }], { agentCountUpdates: trackAgentSession(session) });
 }
 
 function control(e, request) {
@@ -278,7 +279,10 @@ async function onRows(rows, added) {
   for (const [id, state] of states) {
     if (activeTurn(id) || pendingInteractionDetail(storageId(id)) !== null) continue; // reported by the turn
     const status = catalog.status({ id, state }, running);
-    if (lastKnownStatus.get(storageId(id)) !== status) report(id, status, state);
+    const previous = lastKnownStatus.get(storageId(id));
+    // Like Codex: a turn another client ran that just ended alerts only when nobody is at the computer.
+    const away = previous === 'running' && status !== 'running' && !state.parent && !batonSessions.has(id);
+    if (previous !== status) report(id, status, state, away ? await localIdleSec() : undefined);
   }
   for (const [id, rowIds] of added) await publishRows(id, rowIds);
 }
