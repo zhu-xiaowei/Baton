@@ -64,7 +64,10 @@ export const catalog = {
       if (cursor?.sigs.get(s.id) !== sig || added.has(s.id)) changed.push(s);
     }
     // Newest message and stored bytes per Session: one grouped scan at start, then only the changed Sessions.
-    const lastQuery = 'SELECT session_id, max(timestamp) AS ts, sum(length(CAST(content AS BLOB))) AS bytes FROM messages';
+    // Like a transcript file's size: text, tool calls and reasoning (the columns this version has).
+    const bytes = select('messages', ['content', 'tool_calls', 'reasoning', 'reasoning_content', 'reasoning_details'])
+      .split(', ').map((c) => `coalesce(length(CAST(${c} AS BLOB)), 0)`).join(' + ');
+    const lastQuery = `SELECT session_id, max(timestamp) AS ts, sum(${bytes}) AS bytes FROM messages`;
     const last = new Map((cursor ? changed.flatMap((s) => db.all(`${lastQuery} WHERE session_id = ?`, [s.id]))
       : db.all(`${lastQuery} GROUP BY session_id`)).map((r) => [r.session_id, r]));
     const upserts = changed.map((s) => ({
