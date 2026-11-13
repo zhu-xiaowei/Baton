@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { CLAUDE_PROJECTS } from './config.mjs';
 import { countJsonlLines } from './extract.mjs';
-import { claudeSessionStartedAt, getSessionMetadata } from './session.mjs';
+import { claudeSessionStartedAt, getSessionMetadata, liveRecordStatus } from './session.mjs';
 
 const MARKER = ':subagent:';
 const taskScans = new Map(); // spawner transcript → { ino, offset, ended: taskId → bool }
@@ -128,6 +128,9 @@ export function discoverClaudeSubagents(projectDir, parentSession, options = {})
     return [];
   }
   const now = options.now ?? Date.now();
+  // CC stays busy (waiting at a prompt) while its agents run; some -p versions read idle instead.
+  const live = parentSession.status === 'running' || parentSession.backgroundAgents
+    || ['busy', 'waiting'].includes(liveRecordStatus(parentSession.nativeSessionId));
   return files.flatMap((file) => {
     const filePath = path.join(subagentsDir, file);
     let stat;
@@ -142,7 +145,7 @@ export function discoverClaudeSubagents(projectDir, parentSession, options = {})
     const metadata = getSessionMetadata(filePath, { includeStatus: true });
     const fresh = now - stat.mtimeMs < 15_000;
     const status = meta.finished === true ? 'completed'
-      : (parentSession.status === 'running' || fresh)
+      : (live || fresh)
       ? (metadata.status || 'running')
       : 'completed';
     return [{

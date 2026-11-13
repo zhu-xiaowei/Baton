@@ -73,7 +73,9 @@ def completion_summary(session, attempts=3):
                 if text.startswith("[Request interrupted"):
                     return None
                 if text.startswith("<task-notification>") and not replied:
-                    return None  # CC already started a report-back turn; its own end alerts.
+                    if not message.get("timestamp") or message["timestamp"] > session.get("lastActive", ""):
+                        return None  # CC already started a report-back turn; its own end alerts.
+                    continue  # The root was written after it with CC idle: CC never answers it.
                 if text.startswith("<local-command-stdout>"):
                     # A slash command or Skill answers with its output, not an assistant row.
                     return re.sub(r"</?local-command-stdout>", "", text).strip()
