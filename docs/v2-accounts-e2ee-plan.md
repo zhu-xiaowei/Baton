@@ -123,7 +123,7 @@ appears in the device list (removal rotates `K`).
   key per process and sends its public key in `bridge_join`; the server returns it with the Bridge's route
   (`/devices`, and the `bridges` update after every join). The App creates an ephemeral key per process and
   sends its public key on requests and stream `open`s (other frames carry a short session id).
-  `sessionKey = HKDF(ikm = ECDH, salt = HMAC(psk, appPub ‖ bridgePub))`, one key per direction, with `psk`
+  `sessionKey = HKDF(ikm = ECDH, salt = HMAC(psk, appPub ‖ bridgePub))`, one key whose direction is in the AAD, with `psk`
   derived from `K`. A server that swaps a public key cannot compute the salt, so it can neither read nor
   forge; no signature is needed. The App's ephemeral private key dies with the App process, so a later leak
   of `K` does not decrypt recorded traffic, and the 2³² random-nonce budget applies per session. A Bridge
@@ -148,14 +148,15 @@ appears in the device list (removal rotates `K`).
 - **Compress, then encrypt** stays (traffic and per-32 KB charges): the length leak (CRIME class) needs an
   attacker who controls the relay and injects chosen text into the same payload; accepted and stated in
   SECURITY.md.
-- **Attachments**: non-video files up to 50 MB are encrypted whole (one AES-GCM record, key derived from
-  `K`) before the S3 PUT and opened after download; the content-hash key becomes `HMAC(K-derived key,
+- **Attachments**: non-video files up to 50 MB are sealed in 64 KiB records (STREAM construction: each record
+  `nonce ‖ AES-GCM ‖ tag`, AAD = key | index | last) before the S3 PUT and marked `x-amz-meta-sealed: 1`; a PDF
+  still loads by range (only the records it needs). Files without the marker that do not open are read as
+  written before K, for 7 days after K arrived (the S3 lifetime); the content-hash key becomes `HMAC(K-derived key,
   sha256(file))` so dedup stays per account, and the S3 checksum covers the ciphertext. Videos and larger files
   stay as today (account-scoped prefix, 7-day lifecycle) so videos keep streaming with Range; chunked records
-  with ranged reads come with the EC2 relay (phase 4). Competitors: Happy encrypts server attachments whole
+  for video come with the EC2 relay (phase 4). Competitors: Happy encrypts server attachments whole
   up to 10 MB and streams video only over a direct link to the computer; Paseo sends files whole (≤ 50 MB
-  up, 64 MB down) through its encrypted channel and has no video preview. 8–50 MB PDFs lose ranged loading
-  (whole download with progress).
+  up, 64 MB down) through its encrypted channel and has no video preview.
 - **Notifications**: Bridge encrypts title and body; the server stores and forwards ciphertext only (§12
   item 4); the iOS NSE and Android decrypt with `K` from shared storage.
 

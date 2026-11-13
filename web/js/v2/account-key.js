@@ -1,4 +1,5 @@
-// The account key K per server, kept in IndexedDB as a non-extractable CryptoKey (plan D2).
+// The account key K per server, kept in IndexedDB as a non-extractable CryptoKey (plan D2), with
+// when it arrived ({ key, at }).
 import { importAccountKey } from '../../../bridge/e2ee.mjs';
 
 const memory = new Map(); // where IndexedDB is missing or blocked: this page only
@@ -21,7 +22,7 @@ function store(mode, use) {
 export const loadAccountKey = (server) => store('readonly', (keys) => keys.get(server)).catch(() => memory.get(server) || null);
 
 export async function saveAccountKey(server, raw) {
-  const key = await importAccountKey(raw);
-  await store('readwrite', (keys) => keys.put(key, server)).catch(() => memory.set(server, key));
-  return key;
+  const saved = { key: await importAccountKey(raw), at: Date.now() };
+  await store('readwrite', (keys) => keys.put(saved, server)).catch(() => memory.set(server, saved));
+  return saved;
 }

@@ -148,8 +148,11 @@ class AlertService : Service() {
   // A sealed alert (`e`, bridge/notify.mjs): AES-GCM, bound to its eventId; plaintext after a 5-byte header.
   private fun open(event: JSONObject): JSONObject {
     val sealed = event.optString("e")
+    if (sealed.isEmpty()) return event
+    // Not openable here (no key yet): a placeholder; tapping opens it in the app.
+    event.put("body", "Open Baton to see this update.")
     val key = prefs(this).getString("notifyKey", null)
-    if (sealed.isEmpty() || key.isNullOrEmpty()) return event
+    if (key.isNullOrEmpty()) return event
     try {
       val bytes = Base64.decode(sealed, Base64.DEFAULT)
       val cipher = Cipher.getInstance("AES/GCM/NoPadding")

@@ -71,10 +71,10 @@ export class DirectRpcBridge {
   // `streams[ch](frame)`: terminal / preview frames from Apps, their message already unpacked.
   // `accountKey` (K, 32 bytes): every frame but `account_key` is sealed (e2ee.mjs); `saveAccountKey(K)`
   // stores a K an App hands over (migration of existing users, docs/v2-accounts-e2ee-plan.md §9).
-  constructor({ key, accountKey, saveAccountKey, sendControl, handlers, subscribers, socketFactory, limited = () => true, streams = {} }) {
+  constructor({ key, accountKey, accountKeyAt, saveAccountKey, sendControl, handlers, subscribers, socketFactory, limited = () => true, streams = {} }) {
     this.key = key;
     this.accountKey = accountKey || null;
-    this.keys = accountKey ? bridgeKeys(accountKey) : null;
+    this.keys = accountKey ? bridgeKeys(accountKey, accountKeyAt) : null;
     this.saveAccountKey = saveAccountKey;
     this.peers = new Map(); // App connection → its session tag
     this.sendControl = sendControl;
@@ -184,9 +184,12 @@ export class DirectRpcBridge {
     if (isStreamFrame(frame)) {
       const session = this.keys && (frame.pk ? this.keys.session(frame.pk) : this.keys.byTag(frame.s));
       if (!session) return;
-      this.peers.set(frame.from, session.tag);
       openStreamMessage({ kind: 'stream', ch: frame.ch, id: frame.id }, frame.m, session.open)
-        .then((opened) => opened && unpackStreamMessage(opened, inflateRawSync))
+        .then((opened) => {
+          if (!opened) return null;
+          this.peers.set(frame.from, session.tag); // only an opened frame may point replies at a connection
+          return unpackStreamMessage(opened, inflateRawSync);
+        })
         .then((opened) => opened && this.streams[frame.ch]?.({ ...frame, m: opened }), () => {});
       return;
     }
@@ -314,7 +317,7 @@ export class DirectRpcBridge {
     const raw = typeof k === 'string' ? Buffer.from(k, 'base64') : null;
     if (raw?.length === 32 && !raw.equals(this.accountKey || Buffer.alloc(0))) {
       this.accountKey = raw;
-      this.keys = bridgeKeys(raw);
+      this.keys = bridgeKeys(raw, Date.now());
       this.saveAccountKey?.(raw);
       setTimeout(() => { const socket = this.socket; this.socket = null; socket?.close(); this.requestToken(); }, 300).unref?.();
     }

@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
-import { transfer } from './transfer-store.mjs';
+import { plainSize, transfer } from './transfer-store.mjs';
 
 const MAX_BYTES = 512 * 1024 * 1024;
 
@@ -28,12 +28,12 @@ export async function downloadAttachment(key, options = {}) {
   await fs.promises.mkdir(directory, { recursive: true, mode: 0o700 });
   const localPath = path.join(directory, key);
   const existing = await fs.promises.lstat(localPath).catch(() => null);
-  const sealed = await store.sealed?.(key, file.size);
-  if (existing?.isFile() && existing.size === (sealed ? file.size - 28 : file.size)) return localPath;
+  const { sealed } = file;
+  if (existing?.isFile() && existing.size === (sealed ? plainSize(file.size) : file.size)) return localPath;
   const temporary = `${localPath}.${crypto.randomUUID()}.part`;
   try {
     if (sealed) {
-      await fs.promises.writeFile(temporary, await store.bytes(key, file.size), { flag: 'wx', mode: 0o600 });
+      await fs.promises.writeFile(temporary, await store.bytes(key, true), { flag: 'wx', mode: 0o600 });
       await fs.promises.rename(temporary, localPath);
       return localPath;
     }

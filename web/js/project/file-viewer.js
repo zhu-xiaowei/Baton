@@ -770,7 +770,8 @@ async function showAttachment(key) {
       }
       const controller = new AbortController();
       _pdfLoadController = controller;
-      const pdfPreview = await mountPdfPreview(body, file.previewUrl, file.size, controller.signal, cacheKey, {
+      const source = file.sealed ? (begin, end) => transfer.range(key, begin, end, file.stored) : file.previewUrl;
+      const pdfPreview = await mountPdfPreview(body, source, file.size, controller.signal, cacheKey, {
         data: file.data, onFile: !file.data && (bytes => cacheAttachment(key, file.name, bytes)),
       });
       if (_pdfLoadController === controller) _pdfLoadController = null;

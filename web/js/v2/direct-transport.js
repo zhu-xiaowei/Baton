@@ -65,6 +65,7 @@ let keys = null;              // appKeys(K): every frame but `account_key` is se
 let keysLoaded = null;
 let migrating = null;
 let migratedAt = -Infinity;
+let handedK = null;           // K this page created or took: handed over again, never replaced by a new one
 
 function storageKey() {
   return 'baton-v2-rpc:' + state.SERVER;
@@ -369,6 +370,8 @@ function receive(ws, text) {
   if (!pending.has(frame.requestId)) return;
   const part = assembler.add(frame);
   if (!part?.done) return;
+  // A clear error is the Bridge's own before any session (`too_large`) or an `account_key` failure; others are dropped.
+  if (part.error && part.error !== 'too_large' && pending.get(part.requestId).method !== 'account_key') return;
   finish(part.requestId, pending.get(part.requestId), part.error ? { error: part.error } : { payload: part.payload, failed: part.failed });
 }
 
@@ -382,6 +385,12 @@ async function openAny(head, text) {
   return null;
 }
 
+// An alert the phone could not open before showing it (bridge/notify.mjs `e`).
+export async function openAlert(event) {
+  await accountKeys();
+  return keys && event?.e ? keys.openAlert(event) : event;
+}
+
 // For the notification code on the phone (iOS extension, Android service): K's alert key only.
 export async function notifyKey() {
   await accountKeys();
@@ -389,7 +398,7 @@ export async function notifyKey() {
 }
 
 function accountKeys() {
-  keysLoaded ||= loadAccountKey(state.SERVER).then(async (k) => { if (k && !keys) keys = await appKeys(k); });
+  keysLoaded ||= loadAccountKey(state.SERVER).then(async (saved) => { if (saved?.key && !keys) keys = await appKeys(saved.key, saved.at); });
   return keysLoaded;
 }
 
@@ -411,11 +420,14 @@ function migrate() {
     const online = [...routes].filter(([, route]) => route.online);
     const keyed = online.filter(([, route]) => route.fp).sort(([, a], [, b]) => (a.fp < b.fp ? -1 : 1));
     const take = async (fp) => (await request(keyed.find(([, route]) => route.fp === fp)[0], 'account_key', {})).k;
+    // Routes still without a fingerprint after a handover (a late update) get the same K again.
     let raw = null;
-    if (!keyed.length) raw = crypto.getRandomValues(new Uint8Array(32));
+    if (!keyed.length) raw = handedK || crypto.getRandomValues(new Uint8Array(32));
     else if (keys?.fp !== keyed[0][1].fp) raw = fromBase64(await take(keyed[0][1].fp));
-    if (raw?.length === 32) {
-      keys = await appKeys(await saveAccountKey(state.SERVER, raw));
+    if (raw?.length === 32 && raw !== handedK) {
+      handedK = raw;
+      const saved = await saveAccountKey(state.SERVER, raw);
+      keys = await appKeys(saved.key, saved.at);
       window.dispatchEvent?.(new Event('baton-account-key'));
     }
     if (!keys) return;
@@ -597,7 +609,7 @@ export function resetDirectTransport() {
   epochs.clear();
   lastId = replacedId = '';
   rpc = null;
-  keys = keysLoaded = null;
+  keys = keysLoaded = handedK = null;
   routesKnown = false;
   restored = true;
   dataUrl = '';

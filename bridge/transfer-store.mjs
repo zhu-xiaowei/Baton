@@ -25,29 +25,48 @@ const PREVIEW_TYPES = {
 const extension = (key) => (key.includes('.') ? key.slice(key.lastIndexOf('.') + 1).toLowerCase() : '');
 export const previewType = (key) => PREVIEW_TYPES[extension(key)] || 'application/octet-stream';
 
-// With K, files up to SEALED_MAX that are not played as streams are sealed whole (AES-GCM, nonce ‖
-// ciphertext ‖ tag, AAD = key) and keyed by HMAC(content hash), so dedup stays within the account.
-// Videos, audio and larger files stay as they are, so they keep ranged reads (plan §6 "Attachments").
+// With K, files up to SEALED_MAX that are not played as streams are sealed in 64 KiB records (STREAM:
+// each nonce ‖ AES-GCM ‖ tag, AAD = key | index | last), so a PDF still loads by range. They carry
+// `x-amz-meta-sealed: 1` and are keyed by HMAC(content hash), so dedup stays within the account.
+// Videos, audio and larger files stay as they are and keep ranged reads (plan §6 "Attachments").
 export const SEALED_MAX = 50 * 1024 * 1024;
-const SEAL_OVERHEAD = 28;
+const RECORD = 64 * 1024;
+const SEALED_RECORD = RECORD + 28;
+const records = (stored) => Math.max(1, Math.ceil(stored / SEALED_RECORD));
+export const plainSize = (stored) => stored - 28 * records(stored);
+const sealedSize = (size) => size + 28 * Math.max(1, Math.ceil(size / RECORD));
 const STREAMED = /^(mp4|m4v|mov|webm|mkv|avi|mp3|wav|m4a|ogg)$/;
+// Files written before the account had K are read as they are for the 7 days S3 keeps them.
+const PLAIN_GRACE_MS = 7 * 86400_000;
 let fileKeys = () => null;
-// `next()` resolves { key: AES-GCM CryptoKey, id: HMAC CryptoKey } for this account, or null.
+// `next()` resolves { key: AES-GCM CryptoKey, id: HMAC CryptoKey, since: when K arrived } or null.
 export function setTransferKeys(next) { fileKeys = next; }
-const sealedKeys = async (name, size) => (size <= SEALED_MAX + SEAL_OVERHEAD && !STREAMED.test(extension(name)) ? fileKeys() : null);
+const sealedKeys = async (name, size) => (size <= SEALED_MAX && !STREAMED.test(extension(name)) ? fileKeys() : null);
+const recordAad = (key, index, count) => encoder.encode(`${key}|${index}|${index === count - 1 ? 1 : 0}`);
 
 async function sealBytes(keys, key, body) {
-  const nonce = crypto.getRandomValues(new Uint8Array(12));
   const bytes = new Uint8Array(await new Response(body).arrayBuffer());
-  const sealed = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv: nonce, additionalData: encoder.encode(key) }, keys.key, bytes));
-  const out = new Uint8Array(12 + sealed.length);
-  out.set(nonce);
-  out.set(sealed, 12);
+  const count = Math.max(1, Math.ceil(bytes.length / RECORD));
+  const out = new Uint8Array(sealedSize(bytes.length));
+  for (let i = 0; i < count; i++) {
+    const nonce = crypto.getRandomValues(new Uint8Array(12));
+    out.set(nonce, i * SEALED_RECORD);
+    out.set(new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv: nonce, additionalData: recordAad(key, i, count) },
+      keys.key, bytes.subarray(i * RECORD, (i + 1) * RECORD))), i * SEALED_RECORD + 12);
+  }
   return out;
 }
 
-const openBytes = async (keys, key, bytes) => new Uint8Array(await crypto.subtle.decrypt(
-  { name: 'AES-GCM', iv: bytes.subarray(0, 12), additionalData: encoder.encode(key) }, keys.key, bytes.subarray(12)));
+// `bytes` are whole records starting at record `first` of `count`.
+async function openRecords(keys, key, bytes, first, count) {
+  const out = new Uint8Array(bytes.length - 28 * Math.ceil(bytes.length / SEALED_RECORD));
+  for (let at = 0, i = first; at < bytes.length; at += SEALED_RECORD, i++) {
+    const record = bytes.subarray(at, at + SEALED_RECORD);
+    out.set(new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: record.subarray(0, 12), additionalData: recordAad(key, i, count) },
+      keys.key, record.subarray(12))), (i - first) * RECORD);
+  }
+  return out;
+}
 
 const opened = new Map(); // key → Blob URL of the opened file (browser), the newest 32
 function blobUrl(key, bytes, type) {
@@ -137,6 +156,7 @@ export function createTransferStore(access, fetchFn = (...args) => fetch(...args
       checksum: response.headers.get('x-amz-checksum-sha256') || '',
       name: meta('filename'),
       contentType: meta('content-type'),
+      sealed: meta('sealed') === '1',
       modified: Date.parse(response.headers.get('last-modified') || '') || 0,
     };
   }
@@ -154,8 +174,9 @@ export function createTransferStore(access, fetchFn = (...args) => fetch(...args
       if (keys) {
         const key = await this.keyFor(/^[0-9a-f]{64}$/.test(contentHash) ? contentHash : crypto.randomUUID(), ext);
         const existing = contentHash ? await head(key) : null;
-        if (existing?.size === size + SEAL_OVERHEAD && reusable(existing)) return { key, exists: true };
-        const headers = { 'Content-Type': 'application/octet-stream', 'x-amz-meta-filename': rfc3986(name), 'x-amz-meta-content-type': rfc3986(contentType) };
+        if (existing?.sealed && existing.size === sealedSize(size) && reusable(existing)) return { key, exists: true };
+        const headers = { 'Content-Type': 'application/octet-stream', 'x-amz-meta-filename': rfc3986(name),
+          'x-amz-meta-content-type': rfc3986(contentType), 'x-amz-meta-sealed': '1' };
         const storage = await access();
         const url = await presign(storage, 'PUT', key, { headers });
         return { key, url: storage.accelerate ? await presign(storage, 'PUT', key, { headers, accelerate: true }) : url, fallbackUrl: url,
@@ -183,12 +204,10 @@ export function createTransferStore(access, fetchFn = (...args) => fetch(...args
     },
 
     // A PUT URL for bytes the caller streams itself, with the headers to send.
-    async uploadUrl(key, { contentType = 'application/octet-stream' } = {}) {
-      const headers = { 'Content-Type': contentType };
+    async uploadUrl(key, { contentType = 'application/octet-stream', sealed = false } = {}) {
+      const headers = { 'Content-Type': contentType, ...(sealed ? { 'x-amz-meta-sealed': '1' } : {}) };
       return { url: await presign(await access(), 'PUT', key, { headers }), headers };
     },
-
-    sealed: async (key, size) => !!await sealedKeys(key, size),
 
     // The key for content identified by `id` (any string): HMAC-derived when files are sealed.
     async keyFor(id, ext) {
@@ -200,25 +219,43 @@ export function createTransferStore(access, fetchFn = (...args) => fetch(...args
     async put(key, body, { contentType = 'application/octet-stream' } = {}) {
       const keys = await sealedKeys(key, body.size ?? body.length ?? 0);
       if (keys) body = await sealBytes(keys, key, body);
-      const { url, headers } = await this.uploadUrl(key, { contentType });
+      const { url, headers } = await this.uploadUrl(key, { contentType, sealed: !!keys });
       const response = await fetchFn(url, { method: 'PUT', headers, body });
       if (!response.ok) throw new Error(`Storage upload failed (${response.status})`);
     },
 
-    // The stored file's bytes, opened when sealed (`size` from head(), when known).
-    async bytes(key, size = 0) {
+    // The stored file's bytes, opened when sealed. `sealed` comes from head(); unknown (undefined),
+    // a file that does not open is taken as written before K, within PLAIN_GRACE_MS of it.
+    async bytes(key, sealed) {
       const response = await fetchFn(await this.url(key, { plain: true }));
       if (!response.ok) throw new Error(`Storage read failed (${response.status})`);
       const bytes = new Uint8Array(await response.arrayBuffer());
-      const keys = await sealedKeys(key, size || bytes.length);
-      return keys ? openBytes(keys, key, bytes) : bytes;
+      const keys = sealed === false || STREAMED.test(extension(key)) ? null : await fileKeys();
+      if (!keys) return bytes;
+      try { return await openRecords(keys, key, bytes, 0, records(bytes.length)); } catch (error) {
+        if (sealed || !(Date.now() - keys.since < PLAIN_GRACE_MS)) throw error;
+        return bytes;
+      }
+    },
+
+    // Plain bytes [begin, end) of a sealed file stored with `stored` bytes: only the records needed.
+    async range(key, begin, end, stored) {
+      const first = Math.floor(begin / RECORD);
+      const last = Math.floor((end - 1) / RECORD);
+      const response = await fetchFn(await this.url(key, { plain: true }),
+        { headers: { Range: `bytes=${first * SEALED_RECORD}-${Math.min(stored, (last + 1) * SEALED_RECORD) - 1}` } });
+      if (response.status !== 206 && response.status !== 200) throw new Error(`Storage read failed (${response.status})`);
+      let bytes = new Uint8Array(await response.arrayBuffer());
+      if (response.status === 200) bytes = bytes.subarray(first * SEALED_RECORD, (last + 1) * SEALED_RECORD);
+      const plain = await openRecords(await fileKeys(), key, bytes, first, records(stored));
+      return plain.subarray(begin - first * RECORD, end - first * RECORD);
     },
 
     // A GET URL shown inline with the type its key implies, or downloaded under `download`. A sealed
-    // file is fetched and opened here and comes back as a Blob URL (`size`: skip that for larger ones).
-    async url(key, { download = '', contentType = previewType(key), plain = false, size = 0 } = {}) {
-      if (!plain && typeof document !== 'undefined' && await sealedKeys(key, size)) {
-        return opened.get(key) || blobUrl(key, await this.bytes(key, size), contentType);
+    // file is fetched and opened here and comes back as a Blob URL.
+    async url(key, { download = '', contentType = previewType(key), plain = false, sealed } = {}) {
+      if (!plain && sealed !== false && typeof document !== 'undefined' && !STREAMED.test(extension(key)) && await fileKeys()) {
+        return opened.get(key) || blobUrl(key, await this.bytes(key, sealed), contentType);
       }
       return presign(await access(), 'GET', key, { query: download
         ? { 'response-content-disposition': disposition(download) }
@@ -232,11 +269,14 @@ export function createTransferStore(access, fetchFn = (...args) => fetch(...args
       // Deduplicated files keep the first uploader's name; the caller's own name wins.
       const shown = name && name.length <= 255 && !/[\u0000-\u001f/\\]/.test(name) ? name : object.name || key;
       const type = previewType(key);
-      const sealed = !!await sealedKeys(key, object.size);
+      const { sealed } = object;
+      // A sealed PDF is read by range (range()); the rest is opened here.
+      const lazy = sealed && type === 'application/pdf';
       return {
-        key, name: shown, size: sealed ? object.size - SEAL_OVERHEAD : object.size, contentType: object.contentType || 'application/octet-stream',
-        url: await this.url(key, { download: shown, size: object.size }),
-        previewUrl: await this.url(key, { contentType: type, size: object.size }), previewType: type, sealed,
+        key, name: shown, size: sealed ? plainSize(object.size) : object.size, stored: object.size,
+        contentType: object.contentType || 'application/octet-stream', sealed,
+        url: lazy ? '' : await this.url(key, { download: shown, sealed }),
+        previewUrl: lazy ? '' : await this.url(key, { contentType: type, sealed }), previewType: type,
       };
     },
 

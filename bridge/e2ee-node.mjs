@@ -25,45 +25,65 @@ export function open(key, sealed, aad) {
 }
 
 // K (32 bytes) → this Bridge process's keys; sessions are found by the App's public key or its tag.
-export function bridgeKeys(k) {
+// `since`: when K arrived (files written before it are read as they are for a while).
+export function bridgeKeys(k, since = 0) {
   const psk = hkdf(k, 'psk');
   const ecdh = createECDH('prime256v1');
   const pubRaw = ecdh.generateKeys();
-  const sessions = new Map(); // tag → session
+  const sessions = new Map(); // tag → session, most recently used last
+  // An evicted session's replay floor and sequence, so it resumes when its App returns.
+  const retired = new Map();
   let files = null;
+  const touch = (tag) => {
+    const found = sessions.get(tag);
+    if (found) { sessions.delete(tag); sessions.set(tag, found); }
+    return found || null;
+  };
+  // A session is kept only once a frame sealed with it opened: nobody without K can make one.
+  const keep = (tag, made) => {
+    sessions.set(tag, made);
+    retired.delete(tag);
+    if (sessions.size <= MAX_SESSIONS) return;
+    const [old, evicted] = sessions.entries().next().value;
+    sessions.delete(old);
+    retired.set(old, evicted.state());
+    if (retired.size > 4096) retired.delete(retired.keys().next().value);
+  };
   const session = (appPub) => {
     const tag = sessionTag(appPub);
-    let found = sessions.get(tag);
-    if (found) { sessions.delete(tag); sessions.set(tag, found); return found; }
+    const found = touch(tag);
+    if (found) return found;
     let key;
     try {
       const peer = Buffer.from(appPub, 'base64');
       const salt = createHmac('sha256', psk).update(Buffer.concat([peer, pubRaw])).digest();
       key = hkdf(ecdh.computeSecret(peer), 'session', 32, salt);
     } catch { return null; }
-    let seq = 0;
-    const window = new ReplayWindow();
-    found = {
+    const past = retired.get(tag);
+    let seq = past?.seq || 0;
+    const window = new ReplayWindow(past?.floor || 0);
+    const made = {
       tag,
       seal: (frame, body, flags = 0) => seal(key, body, ++seq, flags, aadOf('b', frame)).toString('base64'),
       open: (frame, text) => {
         const out = open(key, Buffer.from(String(text), 'base64'), aadOf('a', frame));
-        return out && window.accept(out.seq) ? out : null;
+        if (!out || !window.accept(out.seq)) return null;
+        if (sessions.get(tag) !== made) keep(tag, made);
+        return out;
       },
+      state: () => ({ floor: window.max, seq }),
     };
-    sessions.set(tag, found);
-    if (sessions.size > MAX_SESSIONS) sessions.delete(sessions.keys().next().value);
-    return found;
+    return made;
   };
   return {
     pub: pubRaw.toString('base64'),
     fp: hkdf(k, 'fp', 8).toString('hex'),
     session,
-    byTag: (tag) => sessions.get(tag) || null,
+    byTag: touch,
     notifyKey: hkdf(k, 'notify'),
     // For transfer-store.mjs, which seals files with WebCrypto on both sides.
     files: () => (files ||= Promise.all([
       crypto.subtle.importKey('raw', hkdf(k, 'file'), 'AES-GCM', false, ['encrypt', 'decrypt']),
-      crypto.subtle.importKey('raw', hkdf(k, 'file-id'), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'])]).then(([key, id]) => ({ key, id }))),
+      crypto.subtle.importKey('raw', hkdf(k, 'file-id'), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'])]).then(([key, id]) => ({ key, id, since }))),
   };
 }

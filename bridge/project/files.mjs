@@ -42,7 +42,10 @@ async function prepareFileDownload(message, { projectRoot, store = transfer, fet
     const urls = info.exists ? [] : [...new Set([info.url, info.fallbackUrl].filter(Boolean))];
     let uploaded = !!info.exists;
     let rejected = false;
-    const sealed = info.seal && !info.exists ? await info.seal(await fs.promises.readFile(absPath)) : null;
+    const read = info.seal && !info.exists ? await fs.promises.readFile(absPath) : null;
+    // The key comes from the hash: bytes that changed since it was taken must not be stored under it.
+    if (read && crypto.createHash('sha256').update(read).digest('hex') !== hash) throw new Error('File changed while preparing the download. Try again.');
+    const sealed = read && await info.seal(read);
     for (const url of urls) {
       const body = sealed ? Buffer.from(sealed) : fs.createReadStream(absPath);
       const closed = sealed ? null : finished(body).catch(() => {});

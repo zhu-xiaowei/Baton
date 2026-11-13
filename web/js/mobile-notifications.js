@@ -1,6 +1,6 @@
 import { state } from './state.js';
 import { showToast } from './components/toast.js';
-import { devices, notifyKey } from './v2/direct-transport.js';
+import { devices, notifyKey, openAlert } from './v2/direct-transport.js';
 
 // iOS: APNs. Android: a foreground service polling the event feed. Both work while
 // Baton is in the background; the local push plugin owns notification taps.
@@ -38,20 +38,23 @@ function validTarget(event) {
 }
 
 async function openNotification(event) {
-  if (!validTarget(event) && !event?.id) return;
+  if (!validTarget(event) && !event?.id && !event?.e) return;
   if (!config) {
     pendingTarget = event;
     return;
   }
   pendingTarget = null;
+  // The phone could not open it before display: open it here.
+  if (!validTarget(event)) event = await openAlert(event);
   // The extension could not fetch it before display: the push carried only its ID.
-  if (!validTarget(event)) {
+  if (!validTarget(event) && event.id) {
     event = await window.api('/api/notifications/event', { id: event.id }).catch(error => {
       if (String(error.message).startsWith('404')) return null;  // Events live 7 days.
       throw error;
     });
+    event = event && await openAlert(event);
   }
-  if (!event) return;
+  if (!validTarget(event)) return;
   if (event.accountId !== config.accountId) {
     showToast('This notification belongs to another account.');
   } else if (typeof window.openNotificationSession === 'function') {

@@ -16,10 +16,11 @@ export function aadOf(dir, frame) {
 }
 
 // Sequence numbers already opened; profile A reorders frames, so this is a window, not a counter.
+// `floor`: everything up to it was seen (a session Bridge evicted and made again).
 export class ReplayWindow {
-  constructor() { this.max = 0; this.seen = new Set(); }
+  constructor(floor = 0) { this.max = this.floor = floor; this.seen = new Set(); }
   accept(seq) {
-    if (seq <= this.max - WINDOW || this.seen.has(seq)) return false;
+    if (seq <= this.floor || seq <= this.max - WINDOW || this.seen.has(seq)) return false;
     this.seen.add(seq);
     if (seq > this.max) {
       this.max = seq;
@@ -65,7 +66,7 @@ async function openWith(key, sealed, aad) {
 }
 
 // The App's keys for one K: per-process ephemeral key, sessions with Bridges, notification key.
-export async function appKeys(k) {
+export async function appKeys(k, since = 0) {
   const psk = await derive(k, 'psk', { name: 'HMAC', hash: 'SHA-256', length: 256 }, ['sign']);
   const pair = await subtle().generateKey({ name: 'ECDH', namedCurve: 'P-256' }, false, ['deriveBits']);
   const pubRaw = new Uint8Array(await subtle().exportKey('raw', pair.publicKey));
@@ -100,7 +101,16 @@ export async function appKeys(k) {
       return sessions.get(bridgePub);
     },
     notifyKey: async () => b64(await bits(k, 'notify')),
+    openAlert: async (event) => {
+      try {
+        const sealed = unb64(event.e);
+        const key = await derive(k, 'notify', { name: 'AES-GCM', length: 256 }, ['decrypt']);
+        const plain = new Uint8Array(await subtle().decrypt({ name: 'AES-GCM', iv: sealed.subarray(0, 12),
+          additionalData: encoder.encode(event.eventId || '') }, key, sealed.subarray(12)));
+        return { ...event, ...JSON.parse(new TextDecoder().decode(plain.subarray(5))) };
+      } catch { return event; }
+    },
     files: () => (files ||= Promise.all([derive(k, 'file', { name: 'AES-GCM', length: 256 }, ['encrypt', 'decrypt']),
-      derive(k, 'file-id', { name: 'HMAC', hash: 'SHA-256', length: 256 }, ['sign'])]).then(([key, id]) => ({ key, id }))),
+      derive(k, 'file-id', { name: 'HMAC', hash: 'SHA-256', length: 256 }, ['sign'])]).then(([key, id]) => ({ key, id, since }))),
   };
 }
