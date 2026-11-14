@@ -221,6 +221,25 @@ function changed(full) {
   void reportStatus(rec);
 }
 
+// Kiro's own rename (`_kiro/session/rename`) from a short process, which only writes session.json. A process
+// holding the Session (another client's, or Baton's own turn) would write its title back, so that is refused.
+async function rename(id, name, project) {
+  const rec = recOf(id);
+  if (!rec?.state || sessionIndex.view(rec)?.project !== project) throw new Error('Session not found on this device.');
+  if (conns.has(id) || kiroInteraction.heldElsewhere(id)) throw new Error('The Kiro session is in use; rename it when its turn has ended or the other client has closed it.');
+  const c = connect(rec.state.cwd);
+  try {
+    await c.ready;
+    const result = await c.rpc.request('_kiro/session/rename', { sessionId: id, title: name, sessionSource: 'local' }, { timeoutMs: 30_000 });
+    if (!result?.success) throw new Error('Kiro did not rename the session.');
+    // Node's recursive watch misses a replaced (renamed-over) file it saw once, so read the new title now.
+    changed(path.join(path.dirname(rec.file), 'session.json'));
+  } finally {
+    close(c);
+  }
+  return name;
+}
+
 async function deleteSession(id) {
   await promisify(execFile)(await kiroBin(), ['chat', '--delete-session', id], { timeout: 30_000 });
   return true;
@@ -362,6 +381,7 @@ export default defineRuntimeAdapter({
   findSessionFile: sessionFile,
   baselineToEnd() {},
   deleteSessionHistory: deleteSession,
+  rename,
   async deleteProjectHistory(projectHash) {
     const ids = (sessionIndex.catalog().byProject.get(projectHash) || []).filter((row) => row.rec.runtime === 'kiro').map((row) => row.rec.id);
     // Session deletes are guarded by ws.mjs; a project's are checked here.

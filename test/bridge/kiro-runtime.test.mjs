@@ -35,3 +35,13 @@ test('kiro: a watcher error (a dir gone mid-scan) is handled and the watch is ar
   fs.watch = watch;
   kiroWatches().forEach((w) => w.close());
 });
+
+test('kiro: rename is refused while another client holds the session', async () => {
+  const [{ default: kiro }, { sessionIndex }, { registerRuntime }] = await Promise.all(['kiro-runtime', 'session-index', 'runtime-registry']
+    .map((name) => import(`../../bridge/${name}.mjs`)));
+  registerRuntime(kiro);
+  const file = kiro.findSessionFile('s');
+  fs.writeFileSync(path.join(path.dirname(file), 'session.json'), JSON.stringify({ workspacePaths: [process.env.KIRO_HOME] }));
+  sessionIndex.touch(file);
+  await assert.rejects(kiro.rename('s', 'New', sessionIndex.view(sessionIndex.records.get(file)).project), /in use/);
+});
