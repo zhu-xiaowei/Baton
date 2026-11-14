@@ -18,7 +18,7 @@ import {
 } from './session.mjs';
 import { parseStorageSessionId, runtimeDescriptor, storageSessionId } from './session-identity.mjs';
 import { SessionGrants } from './session-grants.mjs';
-import { getRuntimeAdapter, runtimeAdapters } from './runtime-registry.mjs';
+import { getRuntimeAdapter, registerInstalledRuntimes, runtimeAdapters } from './runtime-registry.mjs';
 import { WS_FRAME_LIMIT, saveConfig, uninstallBridge } from './config.mjs';
 import { ClaudePool } from './headless.mjs';
 import {
@@ -755,7 +755,7 @@ function connect() {
       limited: limitedRequest,
       streams: { terminal: terminalStream, preview: previewStream },
       handlers: {
-        home: params => { historyService.warm(); return sessionIndex.home(params.revision); },
+        home: async params => { historyService.warm(); await registerLateRuntimes(); return sessionIndex.home(params.revision); },
         projects: params => sessionIndex.projects(params),
         sessions: params => sessionIndex.sessions(params),
         // Subscribing here, before the file is read, leaves no gap between the page and the pushes.
@@ -793,7 +793,7 @@ function connect() {
         }), caller),
         create_project: params => createProject(params.projectPath, params.asAgent),
         delete_files: (params, caller) => collectFrames((send) => handleDeleteFiles({ ...params, progress: true }, { send }), caller),
-        ping: () => ({ bridgeVersion: BRIDGE_VERSION, runtimes: runtimeAdapters.filter(adapter => adapter.features.create).map(adapter => adapter.runtime) }),
+        ping: async () => (await registerLateRuntimes(), { bridgeVersion: BRIDGE_VERSION, runtimes: runtimeAdapters.filter(adapter => adapter.features.create).map(adapter => adapter.runtime) }),
       },
     });
     _directRpc.start();
@@ -918,6 +918,18 @@ async function handleMessage(msg) {
     default:
       console.log(`[ws] unknown action: ${msg.action}`);
   }
+}
+
+// A harness installed after start appears on the next home or ping, exactly as if present at start.
+let _lateRuntimes = null;
+export function registerLateRuntimes() {
+  return _lateRuntimes ||= registerInstalledRuntimes().then(async (added) => {
+    if (!added.length) return;
+    const { startRuntimeWatcher } = await import('./runtime-watcher-registry.mjs'); // static import would cycle via watcher.mjs
+    for (const adapter of added) if (adapter.watcher) startRuntimeWatcher(adapter.watcher, _config);
+    await sessionIndex.readyPromise;
+    await sessionIndex.warm();
+  }).finally(() => { _lateRuntimes = null; });
 }
 
 function subscribeCaller(params, caller) {

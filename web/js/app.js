@@ -1974,7 +1974,7 @@ async function refreshNewSessionRuntimes(nav) {
   var reply;
   try { reply = await window.bridgeRequest('ping', {}, state.appState.device); } catch (e) { return; }
   if (_navVersion !== nav || !Array.isArray(reply?.runtimes)) return;
-  var runtimes = reply.runtimes.filter(function (runtime) { return RUNTIMES[runtime]; });
+  var runtimes = Object.keys(RUNTIMES).filter(function (runtime) { return reply.runtimes.includes(runtime); });
   if (!runtimes.length) return;
   try { localStorage.setItem(newSessionRuntimesKey(), JSON.stringify(runtimes)); } catch (e) {}
   var only = virtualProjectRuntimes(state.appState.project?.hash);
@@ -1994,7 +1994,8 @@ function newSessionRuntimesKey() {
 function knownNewSessionRuntimes() {
   try {
     var runtimes = JSON.parse(localStorage.getItem(newSessionRuntimesKey()) || 'null');
-    return Array.isArray(runtimes) && runtimes.length && runtimes.every(function (runtime) { return RUNTIMES[runtime]; }) ? runtimes : null;
+    return Array.isArray(runtimes) && runtimes.length && runtimes.every(function (runtime) { return RUNTIMES[runtime]; })
+      ? Object.keys(RUNTIMES).filter(function (runtime) { return runtimes.includes(runtime); }) : null;
   } catch (e) { return null; }
 }
 
