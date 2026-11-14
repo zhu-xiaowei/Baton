@@ -78,14 +78,16 @@ export class HistoryService {
     const target = this.resolve(String(params.sessionId || ''));
     if (!target) throw new Error('unknown_session');
     const { status, ...file } = target;
-    // The root's subagent count: the App asks for `threads` only when there are some.
-    const rootId = String(params.rootSessionId || params.sessionId || '');
-    const root = this.index.snapshot().catalog.roots.find((row) => row.sessionId === rootId);
     const page = await this.pages.history(file, params);
     await runtimeDescriptor(file.runtime)?.withImages?.(page.messages); // storage access is on this thread
+    // The root's subagent count (the App asks for `threads` only when there are some) and title, as of now.
+    const rootId = String(params.rootSessionId || params.sessionId || '');
+    const root = this.index.snapshot().catalog.roots.find((row) => row.sessionId === rootId);
     // A Session Baton started whose transcript is still empty (a forked Skill): the prompt it sent.
     const sentPrompt = status === 'running' && !page.messages.length && !params.after && this.index.sentPrompts?.get(target.nativeSessionId);
-    return { ...page, status, ...(sentPrompt ? { sentPrompt } : {}), ...(root ? { agentCount: root.agentCount } : {}), ...(root?.rec.view?.readOnly ? { canSend: false } : {}) };
+    return { ...page, status, ...(sentPrompt ? { sentPrompt } : {}), ...(root ? { agentCount: root.agentCount } : {}),
+      // The list's title; Claude's come as title rows.
+      ...(root?.sessionId === params.sessionId && root.rec.runtime !== 'claude' ? { preview: root.preview } : {}), ...(root?.rec.view?.readOnly ? { canSend: false } : {}) };
   }
 
   // The thread list: the root, then its subagents depth-first, newest first.

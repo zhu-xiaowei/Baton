@@ -125,7 +125,13 @@ const watcher = defineRuntimeWatcher({
     };
     interaction.settled = kick;
     const names = new Set(catalog.watchPaths().map((p) => path.basename(p)));
-    return fs.watch(path.dirname(DB_FILE), (_type, name) => { if (names.has(name)) kick(); });
+    let late = null;
+    return fs.watch(path.dirname(DB_FILE), (_type, name) => {
+      if (!names.has(name)) return;
+      kick();
+      // A WAL write is seen just before its commit becomes visible: look once more after it (as Hermes).
+      late ||= setTimeout(() => { late = null; kick(); }, 50);
+    });
   },
 });
 
