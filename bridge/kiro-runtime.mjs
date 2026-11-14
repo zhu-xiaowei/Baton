@@ -248,7 +248,7 @@ async function setDashboardTitle(id, title) {
       fs.renameSync(tmp, DASHBOARD);
       return;
     } finally {
-      if (owner().token === token) fs.rmSync(lock, { recursive: true, force: true });
+      try { if (owner().token === token) fs.rmSync(lock, { recursive: true, force: true }); } catch {} // as the TUI: a lock already gone or taken is no failure
     }
   }
   throw new Error('The Kiro session list is busy; try again.');
