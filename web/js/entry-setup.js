@@ -210,6 +210,7 @@ setNativeTabTitle('Settings');
   function resetConnect() {
     tokenRequest = null;
     document.querySelectorAll('.connect .code-block').forEach(function (block) {
+      if (paired && block.dataset.panel === 'install') return;  // public, never expires
       block.classList.add('masked');
       block.querySelector('.text').textContent = '••••••••••••••••••••••••••••••••';
       block.querySelector('.code-btn').innerHTML = EYE;
@@ -236,6 +237,14 @@ setNativeTabTitle('Settings');
     if (block.classList.contains('masked')) reveal(button);
     else copyText(button, block.querySelector('.text').textContent);
   };
+
+  // A paired account's install command is public (this server's /install, no credential): shown as it is.
+  if (paired) {
+    var install = document.querySelector('[data-panel="install"]');
+    install.querySelector('.text').textContent = connectText('install', '');
+    install.classList.remove('masked');
+    install.querySelector('.code-btn').innerHTML = COPY_ICON;
+  }
 
   window.selectConnectTab = function (tab) {
     document.querySelectorAll('.connect-tabs .platform-option').forEach(function (button) {
