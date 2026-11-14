@@ -89,11 +89,11 @@
   .account-actions .chev { color: var(--text-muted); font-size: 22px; line-height: 1; }
   #appsList .agent-thread-row { cursor: default; display: flex; align-items: center; gap: 10px; }
   #appsList .agent-thread-copy { flex: 1; }
-  .phrase { margin: 4px 0 16px; padding: 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--canvas); }
+  .phrase { position: relative; margin: 4px 0 16px; padding: 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--canvas); }
   .phrase[hidden] { display: none; }
   .phrase p { margin: 0; font-family: 'SF Mono', 'Fira Code', monospace; font-size: 13px; line-height: 1.7; color: var(--text-primary); word-spacing: 2px; user-select: all; }
-  /* Floated: only the first lines make room for it, the rest use the full width. */
-  .phrase .code-btn { position: static; float: right; margin: -4px -4px 4px 8px; display: flex; align-items: center; justify-content: center; min-width: 30px; min-height: 28px; }
+  /* Over the text's top-right corner; the text keeps the full width. */
+  .phrase .code-btn { position: absolute; top: 6px; right: 6px; display: flex; align-items: center; justify-content: center; min-width: 30px; min-height: 28px; }
   .app-remove { flex: 0 0 auto; padding: 4px 10px; border: 1px solid var(--border); border-radius: 6px; background: transparent; color: var(--danger); font-size: 12px; cursor: pointer; }
   .app-self { flex: 0 0 auto; color: var(--text-muted); font-size: 12px; }
   .version-value { color: var(--text-secondary); font-size: 13px; }
