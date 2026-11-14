@@ -243,6 +243,30 @@ Done:
   the turnId live only); the command list is `/api/command`, asked again once if a cold directory lists nothing; without the service a
   private unregistered `opencode serve` (resumes nothing) lists it once per directory and exits, cached by file signature for 5 min.
 
+### Kiro (H5, kiro-cli 3.x v3 engine): `bridge/kiro.mjs`, `bridge/kiro-runtime.mjs`
+- `kiro.mjs` (also loaded by the workers; top-level files because the Bridge package and its updater carry only
+  root `*.mjs` and `project/`): catalog of `$KIRO_HOME/sessions/<hash16>/<id>/messages.jsonl`
+  (+ `session.json`, `sub-executions/*.jsonl` as children; the v2 engine's `sessions/cli` is not read), titles as the
+  `/sessions` dashboard shows them (dashboard renames, placeholder → first prompt line). Status: a lease whose pid
+  is alive and started before the lease was taken + open turn → running, open approval → needs_input. History is
+  one row per line, by line number; the turn id Baton sends as `userMessageTag` (and `steer-<id>`) becomes
+  `nativeId: live:user:<turnId>` / `live:interrupt:<turnId>`; Kiro's steering injections and `[STEERING …]` notes hide.
+- `kiro-runtime.mjs` (in `OPTIONAL_RUNTIMES` when kiro-cli 3.x has unpacked its engine, `<data dir>/kiro-cli/kas` (`$XDG_DATA_HOME` honoured); the binary is located at first use, a miss is kept too): a Baton turn runs `kiro-cli acp --agent-engine=v3` (`session/load` with `noReplay`, or
+  `session/new` + the user's `chat.defaultModel`); it exits when Done (`session/close` → EOF). A send during a turn
+  waits until that turn's prompt is stored (`turn_start`), then uses `_session/steer`, so the order holds; sends that
+  arrive while a turn ends wait for it, then the first opens the next connection and the rest steer into it (one connection per Session); interrupt sends `session/cancel` once the turn started (≤ 2 s). Text streams from ACP
+  (`replayId` = stored Say id); every row, including tool cards (a stream block, then the row), comes from the
+  jsonl drain, so live and history match. Approvals map by option kind; "for this session" is `allow_always`
+  plus a session grant (`capability(resource)`, ws.mjs `_grants`) answered again in later processes;
+  Skill loads are allowed. `heldElsewhere`: another client's live lease (takeover SIGTERMs that pid). Commands: the
+  ACP `available_commands_update` of the last turn in that cwd. `fs.watch`: `sessions/` recursive and `session-leases/`
+  (inotify cost is the sessions tree only); their parent (`$KIRO_HOME`, or its parent while it is missing), not recursive, only until both exist. Deleting
+  and recreating `sessions/` or `session-leases/` while the Bridge runs is not followed (restart). Delete runs `kiro-cli chat --delete-session`.
+  Rename: `_kiro/session/rename` from a short ACP process (writes session.json, ≤ 80 characters), then the
+  `/sessions` dashboard title in `dashboard-meta.json` as kiro-cli's TUI writes it (its `.lock` dir protocol); refused
+  while Baton's turn or another client holds the Session; returns the title the catalog then shows (re-read at once:
+  Node's recursive watch misses a file replaced twice).
+
 ### Git Graph + Commit/Push: COMPLETE
 - Git page header shows `project › branch ↑N ↓M` from the existing porcelain status; the branch text is display-only.
 - Graph (below Changes, collapsed by default) draws real parent topology with an incremental lane layout

@@ -29,6 +29,9 @@ const OPTIONAL_RUNTIMES = [
   ['./hermes-runtime.mjs', () => fs.existsSync(path.join(process.env.HERMES_HOME || path.join(os.homedir(), '.hermes'), 'state.db'))],
   ['./opencode-runtime.mjs', () => fs.existsSync(path.join(process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local/share'), 'opencode/opencode.db'))],
   ['./pi-runtime.mjs', () => fs.existsSync(process.env.PI_CODING_AGENT_DIR || path.join(os.homedir(), '.pi', 'agent'))],
+  // kiro-cli 3.x unpacks its v3 engine (KAS) here on first run; Kiro IDE and 2.x do not.
+  ['./kiro-runtime.mjs', () => [process.env.XDG_DATA_HOME || `${os.homedir()}/.local/share`, `${os.homedir()}/Library/Application Support`]
+    .some((dir) => fs.existsSync(`${dir}/kiro-cli/kas`))],
 ];
 
 export async function registerInstalledRuntimes(list = OPTIONAL_RUNTIMES) {
