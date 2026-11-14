@@ -755,7 +755,7 @@ function connect() {
       limited: limitedRequest,
       streams: { terminal: terminalStream, preview: previewStream },
       handlers: {
-        home: async params => { historyService.warm(); await registerLateRuntimes(); return sessionIndex.home(params.revision); },
+        home: async params => { await registerLateRuntimes(); historyService.warm(); return sessionIndex.home(params.revision); },
         projects: params => sessionIndex.projects(params),
         sessions: params => sessionIndex.sessions(params),
         // Subscribing here, before the file is read, leaves no gap between the page and the pushes.
