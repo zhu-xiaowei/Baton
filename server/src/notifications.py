@@ -60,7 +60,9 @@ class PushDevice(BaseModel):
 def register_device(body: PushDevice, request: Request):
     if not _relay_configured():
         raise HTTPException(503, "iOS push is not configured on this server.")
-    _table().put_item(Item={**body.key(_account(request)), "ttl": int(time.time()) + 30 * 86400})
+    # The token, so removing the device also removes its alerts.
+    _table().put_item(Item={**body.key(_account(request)), "tokenHash": request.state.auth.get("tokenHash", ""),
+                            "ttl": int(time.time()) + 30 * 86400})
     return {"ok": True}
 
 

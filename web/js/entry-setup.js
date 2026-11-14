@@ -65,7 +65,12 @@ setNativeTabTitle('Settings');
   // of a self-hosted, API-key account).
   var paired = state.KEY.indexOf('bt_') === 0;
   var listing = null;
-  if (paired) devices().then(function (body) { listing = body; document.querySelector('.account-actions').hidden = !body.hosted; }, function () {});
+  if (paired) devices().then(function (body) {
+    listing = body;
+    document.querySelector('.account-actions').hidden = !body.hosted;
+    // A paired App of a self-hosted stack has no install command it could show (the public one is hosted only).
+    if (!body.hosted) { document.querySelector('[data-tab="install"]').hidden = true; window.selectConnectTab('url'); }
+  }, function () {});
 
   // Text content only (the device's own name); never inside an attribute.
   function esc(text) { var el = document.createElement('span'); el.textContent = text; return el.innerHTML; }

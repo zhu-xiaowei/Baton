@@ -856,6 +856,8 @@ function connect() {
   socket.on('unexpected-response', (_req, res) => {
     if (_ws !== socket) return;
     console.error(`[ws] unexpected-response: ${res.statusCode}`);
+    // A paired computer's token is refused only once it was removed (or its account deleted), maybe while it was off.
+    if (res.statusCode === 401 && _config?.accounts) { void handleMessage({ action: 'device_removed' }); return; }
     let body = '';
     res.on('data', (chunk) => body += chunk);
     res.on('end', () => {

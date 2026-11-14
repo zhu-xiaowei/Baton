@@ -70,6 +70,7 @@ class Table:
 @pytest.fixture
 def api(monkeypatch):
     monkeypatch.setattr(auth, '_table', Table())
+    monkeypatch.setattr('api_key.current_key', lambda: 'deploykey')
     monkeypatch.setenv('OPEN_REGISTRATION', 'true')
     import bridge_ws
     monkeypatch.setattr(bridge_ws, '_init', lambda: None)
@@ -95,6 +96,8 @@ def join_computer(api, approver, name='Mac'):
 def test_two_accounts_pair_remove_rotate_recover_and_delete_apart(api):
     a, b = register(api, A, 'secret-a', 'iPhone')['token'], register(api, B, 'secret-b', 'Pixel')['token']
     register(api, A, 'other', status=409)
+    import api_key
+    register(api, api_key.account_id('deploykey'), 'squatter', status=409)  # the self-host account
     # An App code works once and only for its account.
     api('/api/pair/create', {'code': 'app-code-0000000000000', 'sealed': SEALED}, a)
     api('/api/pair/create', {'code': 'app-code-0000000000000', 'sealed': SEALED}, b, status=409)
@@ -113,8 +116,10 @@ def test_two_accounts_pair_remove_rotate_recover_and_delete_apart(api):
     api('/api/pair/approve', {'code': api('/api/pair/start', {'deviceName': 'Mac'})['code'], 'sealed': SEALED}, a, status=409)
     pc = join_computer(api, mac['token'], 'PC')  # a computer adds another one for an App (pair_approve)
     assert [t['deviceName'] for t in api('/api/bridge/devices', None, b)['apps']] == ['Pixel']
-    # Logout; removing a computer needs K' in the same request and ends the old joinSecret at once.
+    # Logout; a code the leaving device made is void; removing a computer needs K' in the same request.
+    api('/api/pair/create', {'code': 'app-code-0000000000009', 'sealed': SEALED}, ipad['token'])
     api('/api/tokens/revoke', {}, ipad['token'])
+    api('/api/pair/claim', {'code': 'app-code-0000000000009', 'deviceName': 'thief'}, status=404)
     api('/api/bridge/devices', None, ipad['token'], status=401)
     api('/api/bridge/delete-device', {'deviceName': 'Mac'}, a, status=400)
     rotation = {'joinSecret': 'secret-a1'.ljust(24, '0'), 'fp': FP0, 'next': '1' * 16, 'sealed': SEALED}
@@ -146,7 +151,11 @@ def test_limits(api, monkeypatch):
         api('/api/account/recover', {'joinSecret': 'n' * 24, 'deviceName': 'p'}, ip='8.8.8.8', status=403 if n < 5 else 429)
     owner = register(api, 'e' * 16, 'owner')['token']
     monkeypatch.setattr('accounts.MAX_BRIDGES', 1)
-    join_computer(api, owner)
+    starts = [api('/api/pair/start', {'deviceName': 'Mac'}) for _ in range(2)]  # both approved before either joins
+    for start in starts:
+        api('/api/pair/approve', {'code': start['code'], 'sealed': SEALED}, owner)
+    api('/api/pair/wait', {'code': starts[0]['code'], 'poll': starts[0]['poll']})
+    api('/api/pair/wait', {'code': starts[1]['code'], 'poll': starts[1]['poll']}, status=409)
     api('/api/pair/approve', {'code': api('/api/pair/start', {'deviceName': 'PC'})['code'], 'sealed': SEALED}, owner, status=409)
     monkeypatch.setenv('BRIDGE_IMAGES_BUCKET', 'bucket')
     monkeypatch.setattr(boto3, 'client', lambda *a, **k: SimpleNamespace(generate_presigned_url=lambda *a, **k: 'https://s3/b'))

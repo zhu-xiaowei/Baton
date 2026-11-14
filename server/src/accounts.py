@@ -38,7 +38,7 @@ class Body(BaseModel):
     code: str = Field("", pattern=r"^([\w-]{22,64})?$")
     poll: str = Field("", pattern=r"^([\w-]{22,64})?$")
     sealed: str = Field("", pattern=r"^([\w+/=-]{40,200})?$")
-    deviceName: str = Field("", max_length=64)
+    deviceName: str = ""
     id: str = Field("", pattern=r"^([0-9a-f]{12})?$")
     rotation: Optional[Rotation] = None
 
@@ -102,7 +102,7 @@ def _token_keys(account, digest):
 
 
 def _issue(account, kind, name):
-    token = "bt_" + secrets.token_urlsafe(32)
+    token, name = "bt_" + secrets.token_urlsafe(32), name[:64]
     index, listed = _token_keys(account, auth.token_hash(token))
     # Listed first: a token whose index write failed is visible and removable, never a hidden credential.
     _table().put_item(Item={**listed, "kind": kind, "deviceName": name, "createdAt": int(time.time())})
@@ -120,11 +120,12 @@ def _pair_key(code):
 
 
 def _take(code, condition, values):
-    # Deleted on use: a code works once.
+    # Deleted on use: a code works once. One made or approved by a device that has since left is void.
     old = _conditional(lambda: _table().delete_item(
         Key=_pair_key(code), ReturnValues="ALL_OLD", ConditionExpression=f"attribute_exists(pk) AND #ttl > :now AND {condition}",
         ExpressionAttributeNames={"#ttl": "ttl"}, ExpressionAttributeValues={":now": int(time.time()), **values}))
-    if not old:
+    by = old and old["Attributes"].get("by")
+    if not old or (by and not _table().get_item(Key={"pk": f"TOKEN#{by}", "sk": "-"}).get("Item")):
         raise HTTPException(404, GONE)
     return old["Attributes"]
 
@@ -141,12 +142,29 @@ def _joined(row, kind, name, **extra):
             "head": _meta(row["accountId"]).get("head", ""), **extra}
 
 
+def _room_for(account, name):
+    # A name is the computer's identity: a second one with it would take the first one's place.
+    computers = [row.get("deviceName") for row in _token_rows(account) if row["kind"] == "bridge"]
+    if _open() and len(computers) >= MAX_BRIDGES:
+        raise HTTPException(409, f"This account already has {MAX_BRIDGES} computers.")
+    if name in computers:
+        raise HTTPException(409, f"A computer named {name} is already in this account; reinstall with another name.")
+
+
+def _self_hosted(account):
+    import api_key  # KeyUnavailable propagates: a 503, never a guess
+    return account in (os.environ.get("ACCOUNT_ID"), api_key.account_id(api_key.current_key()))
+
+
 @router.post("/account/register")
 def register(body: Body, request: Request):
     _need(body, "accountId", "joinSecret", "fp", "deviceName")
     if not _open():
         raise HTTPException(404, "Registration is closed on this server.")
     _rate(f"register#{_ip(request)}", 5)
+    import devices
+    if _self_hosted(body.accountId) or devices.list_devices(body.accountId):
+        raise HTTPException(409, "Account exists.")
     if _conditional(lambda: _table().put_item(Item={
             "pk": f"ACCOUNT#{body.accountId}", "sk": "META", "joinSecretHash": _sha(body.joinSecret), "head": body.fp,
             "createdAt": int(time.time())}, ConditionExpression="attribute_not_exists(pk)")) is False:
@@ -174,7 +192,7 @@ def pair_create(body: Body, request: Request):
     caller = request.state.auth
     _ensure_meta(caller)
     if _conditional(lambda: _table().put_item(Item={**_pair_key(body.code), "kind": "app", "accountId": caller["accountId"],
-            "sealed": body.sealed, "ttl": int(time.time()) + PAIR_SECONDS}, ConditionExpression="attribute_not_exists(pk)")) is False:
+            "by": caller.get("tokenHash", ""), "sealed": body.sealed, "ttl": int(time.time()) + PAIR_SECONDS}, ConditionExpression="attribute_not_exists(pk)")) is False:
         raise HTTPException(409, "Code in use.")
     return {"expiresIn": PAIR_SECONDS, "web": os.environ.get("WEB_URL", "")}
 
@@ -200,18 +218,12 @@ def pair_approve(body: Body, request: Request):
     _need(body, "code", "sealed")
     caller = request.state.auth
     _ensure_meta(caller)
-    computers = [row.get("deviceName") for row in _token_rows(caller["accountId"]) if row["kind"] == "bridge"]
-    if _open() and len(computers) >= MAX_BRIDGES:
-        raise HTTPException(409, f"This account already has {MAX_BRIDGES} computers.")
-    # The name is the computer's identity: a second one with it would take the first one's place.
-    name = (_table().get_item(Key=_pair_key(body.code), ConsistentRead=True).get("Item") or {}).get("deviceName")
-    if name in computers:
-        raise HTTPException(409, f"A computer named {name} is already in this account; reinstall with another name.")
+    _room_for(caller["accountId"], (_table().get_item(Key=_pair_key(body.code), ConsistentRead=True).get("Item") or {}).get("deviceName"))
     row = _conditional(lambda: _table().update_item(
-        Key=_pair_key(body.code), ReturnValues="ALL_NEW", UpdateExpression="SET accountId = :account, sealed = :sealed, approvedBy = :by",
+        Key=_pair_key(body.code), ReturnValues="ALL_NEW", UpdateExpression="SET accountId = :account, sealed = :sealed, approvedBy = :by, #by = :token",
         ConditionExpression="attribute_exists(pk) AND kind = :bridge AND #ttl > :now AND attribute_not_exists(accountId)",
-        ExpressionAttributeNames={"#ttl": "ttl"}, ExpressionAttributeValues={":account": caller["accountId"], ":sealed": body.sealed,
-                                                                              ":bridge": "bridge", ":by": caller.get("deviceName") or "Baton", ":now": int(time.time())}))
+        ExpressionAttributeNames={"#ttl": "ttl", "#by": "by"}, ExpressionAttributeValues={":account": caller["accountId"], ":sealed": body.sealed,
+            ":bridge": "bridge", ":by": caller.get("deviceName") or "Baton", ":token": caller.get("tokenHash", ""), ":now": int(time.time())}))
     if not row:
         raise HTTPException(404, GONE)
     return {"deviceName": row["Attributes"]["deviceName"]}
@@ -227,6 +239,7 @@ def pair_wait(body: Body):
     if "accountId" not in row:
         return {"pending": True}
     row = _take(body.code, "pollHash = :poll AND attribute_exists(accountId)", {":poll": _sha(body.poll)})
+    _room_for(row["accountId"], row["deviceName"])  # again: other codes may have been approved meanwhile
     return _joined(row, "bridge", row["deviceName"], approvedBy=row["approvedBy"])
 
 
@@ -261,6 +274,8 @@ def _rotate_and_revoke(account, meta, rotation, digests):
     (table.meta.client) serializes them itself."""
     table = _table()
     chain = [entry for entry in meta.get("rotations", []) if entry["fp"] != rotation.fp][-(MAX_ROTATIONS - 1):]
+    if rotation.next == rotation.fp or any(entry["fp"] == rotation.next for entry in chain):
+        raise HTTPException(409, "A new account key is required.")
     update = {"TableName": table.name, "Key": {"pk": f"ACCOUNT#{account}", "sk": "META"}, "ConditionExpression": "head = :fp",
               "UpdateExpression": "SET joinSecretHash = :hash, head = :next, rotations = :chain",
               "ExpressionAttributeValues": {":hash": _sha(rotation.joinSecret), ":next": rotation.next, ":fp": rotation.fp,
@@ -287,17 +302,22 @@ def remove(caller, rotation, digests, notice=None):
         raise HTTPException(400, "Removing a device needs a new account key.")
     if hosted:
         _rotate_and_revoke(account, meta, rotation, digests)
-    for digest in [] if hosted else digests:
-        for key in _token_keys(account, digest):
-            _table().delete_item(Key=key)
-    for digest in digests:
-        _close(account, token_hash=digest, notice=notice)
+    _drop(account, digests, notice, rows=not hosted)
     bridge_ws = _ws()
     for item in bridge_ws._query_connections(account, "bridge") if hosted else []:
         try:
             bridge_ws._post_to_connection(os.environ.get("WS_API_ENDPOINT", ""), item["connectionId"], {"action": "account_rotated"})
         except Exception:
             pass
+
+
+def _drop(account, digests, notice=None, rows=True):
+    """Tokens (unless already gone in the rotation), the push registrations made with them, their sockets."""
+    pushes = _table().query(KeyConditionExpression=Key("pk").eq(f"PUSH_DEVICE#{account}"))["Items"]
+    for digest in digests:
+        for key in (_token_keys(account, digest) if rows else []) + [p for p in pushes if p.get("tokenHash") == digest]:
+            _table().delete_item(Key={"pk": key["pk"], "sk": key["sk"]})
+        _close(account, token_hash=digest, notice=notice)
 
 
 def computer_tokens(account, name):
@@ -309,10 +329,7 @@ def revoke(body: Body, request: Request):
     # No id: log out. An id: remove another App of the account (a lost phone).
     caller = request.state.auth
     if not body.id:
-        if caller.get("tokenHash"):
-            for key in _token_keys(caller["accountId"], caller["tokenHash"]):
-                _table().delete_item(Key=key)
-            _close(caller["accountId"], token_hash=caller["tokenHash"])
+        _drop(caller["accountId"], [caller["tokenHash"]] if caller.get("tokenHash") else [])
         return {"ok": True}
     digest = next((row["sk"][6:] for row in _token_rows(caller["accountId"]) if row["sk"][6:18] == body.id and row["kind"] == "app"), None)
     if not digest or digest == caller.get("tokenHash"):

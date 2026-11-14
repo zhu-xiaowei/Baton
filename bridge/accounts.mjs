@@ -68,7 +68,8 @@ export function approveJoin(config, url) {
 export async function rotatedKey(config) {
   const { rotations = [] } = await call(config, '/api/bridge/devices');
   let k = Buffer.from(config.accountKey, 'base64');
-  for (let entry; (entry = rotations.find((candidate) => candidate.fp === fingerprint(k)));) {
+  // At most one step per entry: a chain that loops back cannot hang this loop.
+  for (let step = 0, entry; step < rotations.length && (entry = rotations.find((candidate) => candidate.fp === fingerprint(k))); step++) {
     const next = openRotation(k, entry.sealed, entry.fp);
     if (next?.length !== 32) break;
     k = next;
