@@ -89,7 +89,6 @@ HeadlessProc = {
   cwd,
   busy,           // whether a turn is currently generating (for UI status / serialization)
   queue,          // messages arriving while busy are queued and fed in order after the turn ends
-  lastActiveAt,   // for idle reaping
   turnId,         // correlation id of the current turn
 }
 ```
@@ -111,17 +110,15 @@ would spawn a second `--resume` process writing the same jsonl as the first → 
 | Permissions | **Default `--permission-prompt-tool stdio` without bypass** — whatever permissions the user configured apply (zero intrusion). See Section 6.5 |
 | Display/persistence | Complete stream lines = real-time authority, `text_delta` = typewriter preview; runtime-owned JSONL lines are not pushed again |
 | Preview rendering | Fault-tolerant full markdown re-render (see Section 5) |
-| On-demand start | **No pre-start**; spawn only when a new message arrives and no process exists (spawn→init ready in ≤30s, then reused for the same session) |
-| Idle reaping | Periodic `reap`: `lastActiveAt` exceeds **idleTTL (default 10min)** and not busy → close stdin, process exits cleanly (jsonl kept) |
-| Count cap | **Default 16 processes**; over the cap, LRU evicts the least recently active idle process; busy processes are never reaped/evicted |
+| On-demand start | **No pre-start**; spawn only when a new message arrives and no process exists (spawn→init ready in ≤30s); messages sent before the Session is Done reuse it |
+| Exit | **Session Done** (checked at each `result`: no queued input, no background task, no unanswered `control_request`) → close stdin, process exits cleanly (jsonl kept); no idle reap, no cap |
 
 ### Single-Writer Constraint (two layers)
 1. **Internal**: only one headless process per session (guaranteed by the pool) → eliminates double writes from "us starting several".
 2. **External**: a daemon agent can be taken over after `claude stop`. A terminal/VS Code process holding the session
    has no lock, so Bridge asks (`claude_active_writer`, same modal as Codex) and terminates it on confirmation; it
-   never reloads the jsonl, so its next write would fork. An idle pooled process that missed a turn appended by
-   another client (unseen user/assistant uuid after its last idle size) is closed and resumed again before the send.
-   A terminal opening the session while a Baton turn runs is still undetected.
+   never reloads the jsonl, so its next write would fork. A Baton process exits once the Session is Done, so the
+   next send always resumes from the jsonl. A terminal opening the session while a Baton turn runs is still undetected.
 
 ## 3. Data Flow
 
@@ -129,9 +126,9 @@ would spawn a second `--resume` process writing the same jsonl as the first → 
 ```
 App doSend()  ──direct RPC send_message {sessionId|projectHash, text, turnId}──►
 Bridge requestSendMessage → handleSendMessage → pool.send(sessionId|new, cwd, text, callbacks):
-  ┌─ process exists and idle → write user message to stdin directly
-  ├─ process exists and busy → enqueue, feed after the turn ends
-  └─ no process → spawn persistent process (new: no --resume; existing: --resume <id>), keep stdin open
+  ┌─ process exists (turn, background task or prompt still open) → write to its stdin; busy → fed after the turn
+  ├─ previous process still exiting → wait for its exit
+  └─ no process → spawn (new: --session-id; existing: --resume <id> + session grants/--model/--effort), keep stdin open
   parse stdout line by line (see Section 6):
     system/init                → verify session_id + cwd
     content_block_delta/text   → onDelta(turnId, text) → WS stream_delta (typewriter preview)
@@ -172,25 +169,18 @@ Persisted: CC writes jsonl (history is read from it on demand)
 - Other headless failures: `stream_end{error}` → read-only fallback; after reconnect, the history load rebuilds from the Bridge
   `history` reply and uses the Session status in the same reply to settle the spinner.
 
-## 3.5 Process Lifecycle (on-demand start + idle reaping, derived from litter ClaudePool)
-
-**No pre-start, no pile of persistent processes**. Parameters and mechanisms copied from litter `crates/baton-bridge/src/pool/` +
-`bridge-core/src/pool.rs` (verified against the source):
+## 3.5 Process Lifecycle (on-demand start, exit when Done)
 
 | Phase | Behavior |
 |---|---|
-| **Start** | Spawn only when there is a new message and the session has no process; `system/init` ready in ≤30s (`initTimeout`), then reused for the same session |
-| **Reuse** | Later messages for the same session go directly into the existing process's stdin (idle: send directly / busy: enqueue) |
-| **Keep-alive** | Every send/receive refreshes `lastActiveAt`; a process generating a turn is marked `busy` (litter's `active`) |
-| **Reap** | Periodic `reapIdle()`: `now - lastActiveAt >= idleTTL (default 10min)` and not busy → close stdin, process exits cleanly, jsonl kept |
-| **Cap** | Default max 16 processes; when a new acquire exceeds the cap, LRU evicts the least recently active idle process; **busy processes are never reaped/evicted** |
+| **Start** | Spawn only when there is a new message and the session has no process; `system/init` ready in ≤30s (`initTimeout`) |
+| **Reuse** | Messages sent while a turn runs, a background task runs or a prompt waits go into the same process's stdin |
+| **Exit** | Session Done (design §6.6): `result` with no queued input, `backgroundTasks === 0`, no unanswered `control_request` → close stdin (no signal), CC exits; a send that arrives meanwhile waits for the exit, then spawns `--resume`. With background tasks, CC's report-back turn's `result` is checked the same way |
 | **Crash** | Process exits unexpectedly → removed from pool; the next message re-spawns as "no process" (with `--resume` to continue) |
 
-Key points:
-- **Reap = close stdin** (not kill); CC gets EOF and exits cleanly, jsonl fully flushed → the next `--resume` continues seamlessly.
-- An idle process uses very little (waiting on stdin, no CPU); the 10min TTL ensures "send a burst → read → automatically disperse".
-- Constants live in `headless.mjs`: `HEADLESS_IDLE_TTL_MS` / `HEADLESS_MAX_PROCS` /
-  `HEADLESS_INIT_TIMEOUT_MS`, currently 10min / 16 / 30s.
+Every send after Done is a new process, so settings, MCP and CLAUDE.md changes apply to the next message.
+Session-only choices come back as spawn flags: grants through `--allowedTools`, and `/model` / `/effort` through
+`--model` / `--effort` with the value CC's `get_settings` reports right after the command (in memory, dropped with the Session).
 
 ## 4. Status Ownership and Takeover
 
@@ -248,7 +238,7 @@ claude -p
   --include-partial-messages
   --verbose
 cwd = session/project directory (existing session: projectHashToPath(); new: the project path the user selected)
-stdin kept open → process persistent; idle reaping closes stdin → process exits
+stdin kept open → process persistent; closing stdin when the Session is Done → process exits
 ```
 Each message writes one JSON line to stdin:
 ```
@@ -282,7 +272,7 @@ The three status determinations (running / finished / permission) were measured 
 - **Success check (litter `events.rs:1006`)**: `is_error === false && subtype === "success"` → normal end.
   Otherwise (`is_error` or `subtype !== "success"`, e.g. `error_max_turns`) → emit an error notice.
 - `result` arrives → busy=false + `stream_end`; when `is_error` is true, `stream_end{error}`, and the frontend preview shows an error state.
-- **Process does not exit** (persistent pipe) and keeps waiting for the next stdin; the process only truly exits on idle reaping (stdin closed) or a crash.
+- **Process does not exit** (persistent pipe) and keeps waiting for the next stdin; the process only truly exits when the Session is Done (stdin closed) or on a crash.
 
 ### Permissions: default stdio passes through user configuration (no bypass)
 
@@ -374,7 +364,7 @@ independent of arrival order:
 
 | File | Change |
 |---|---|
-| `bridge/headless.mjs` | **ClaudePool**: `Map<sessionId, HeadlessProc>`; `send(sessionId,cwd,text,cb)` (spawn/reuse/queue), `reapIdle()` (periodic reaping), LRU cap, crash removal; readline dispatch of stdout (incl. `control_request`); stdin writes user messages + `control_response` |
+| `bridge/headless.mjs` | **ClaudePool**: `Map<sessionId, HeadlessProc>`; `send(sessionId,cwd,text,cb)` (spawn/reuse/queue), exit when Done, crash removal; readline dispatch of stdout (incl. `control_request`); stdin writes user messages + `control_response` |
 | `bridge/ws.mjs` | `handleSendMessage` calls `pool.send(...)`; daemon agent takeover; `control_request` → permission_request; App's permission_reply → allow/deny (or deny + answer for requires_user_interaction); new regular sessions pre-generate a UUID and start with `--session-id` |
 | `web/js/streaming.js` | `TurnEventQueue → StreamCoordinator → StreamingDomRenderer`, responsible for reordering, node state and DOM respectively |
 | `web/js/ws.js` | Feed all active-turn events into the unified queue, and locate the user question by `turnId` |
@@ -405,7 +395,7 @@ The entry point is the `send_message` request; inside the Bridge it uses `pool.s
 `ClaudePool = Map<sessionId, HeadlessProc>`, **routed by sessionId**, naturally isolated:
 - One independent process per session, running in parallel without interference.
 - Multiple web pages viewing the **same** session → all subscribe to the same sessionId → server broadcast → all receive the same stream_delta (multi-device sync).
-- Pool cap 16, over the cap LRU evicts the longest idle; each process is reaped automatically after 10min idle.
+- A process exits when its Session is Done; there is no cap or idle reap.
 - No special logic needed for "multiple sessions" — Map key isolation, consistent with the existing per-sessionId subscription model.
 
 ### Completed Steps
@@ -420,7 +410,7 @@ The entry point is the `send_message` request; inside the Bridge it uses `pool.s
   → allow/deny; requires_user_interaction (AskUserQuestion/ExitPlanMode) → deny + answer via plain message (measured approach).
 - [x] **Step 3 — new sessions via headless**: Bridge pre-generates the sessionId, spawns with `--session-id`,
   replies `send_message_result` first, then starts streaming.
-- [x] **Step 4 — lifecycle + failure fallback**: `reapIdle` (10min) + LRU cap (16) + crash re-spawn;
+- [x] **Step 4 — lifecycle + failure fallback**: exit when Done (H6 replaced the 10min reap + LRU cap) + crash re-spawn;
   when CC refuses or fails, a clear error is returned and the session stays read-only.
 - [x] **Step 5 — tmux retirement**: `projectHashToPath` moved into `session.mjs`, interrupt goes through headless,
   `tmux.mjs`, Stall Rescue, `streamMode` and the old command output path are all deleted.
@@ -433,16 +423,14 @@ The entry point is the `send_message` request; inside the Bridge it uses `pool.s
 - [x] Rich markdown (code blocks/tables/lists/links/inline code) streaming re-render doesn't break layout; after landing it matches production rendering
 - [x] headless fails midway → preview doesn't hang; send bubble state correct
 - [x] **Multi-device/rapid sends in one session** → reuse the same process (single writer), messages serialized, jsonl doesn't fork
-- [x] **Idle reaping** → process exits automatically after session idle exceeds TTL, jsonl complete
-- [x] **Send after reaping** → automatic `--resume` restart, context continues
-- [x] **Over the cap** → LRU evicts idle processes; busy processes are not evicted
+- [x] **Session Done** → process exits; background tasks and unanswered prompts keep it until they end
+- [x] **Send after Done** → automatic `--resume` restart, context continues
 - [x] **Ordinary tool permission** → control_request → popup → allow/deny takes effect
 - [x] **AskUserQuestion (incl. multiple questions)** → complete questions pushed to App → user answers → deny+answer returned → CC accepts and continues
 - [x] **ExitPlanMode** → plan pushed to App → approve/reject correct
 - [x] **Sessions with defaultMode:bypassPermissions** → ordinary tools don't pop up, AskUserQuestion still interactive
 
-Bridge status handoff and frontend streaming/queue scenarios have automated regression tests. `ClaudePool` idle reap/LRU
-is currently covered mainly by real runs and implementation review; standalone process lifecycle unit tests can be added later; this does not affect Phase 2E's completed status.
+Bridge status handoff, frontend streaming/queue scenarios and the `ClaudePool` exit-when-Done rule have automated regression tests.
 
 ## 11. Streaming Granularity & Real-Time Benchmarks (real runs on local CC 2.1.204 + EC2 2.1.206)
 
@@ -528,10 +516,10 @@ tmux, Stall Rescue, capture-pane command output and `streamMode` are all deleted
 |---|---|
 | JSONL watching and persistence | `watcher.mjs` / `extract.mjs` push new rows; `history-service.mjs` reads history from the files; headless real-time frames are not persisted |
 | External session status | `session.mjs` combines processes, daemon roster and JSONL to derive terminal/VS Code/agent status |
-| Web interaction | `headless.mjs` `ClaudePool` handles sending, streaming, queue, interrupt, permissions, idle reap and LRU |
+| Web interaction | `headless.mjs` `ClaudePool` handles sending, streaming, queue, interrupt, permissions and exit when Done |
 
-Status ownership precedence is: busy pool-owned > roster-active daemon > external process/JSONL. An idle pool
-only keeps a reusable process and does not prevent the terminal from later updating status to running or `needs_input`; structured
+Status ownership precedence is: busy pool-owned > roster-active daemon > external process/JSONL. A process waiting only
+on background tasks does not prevent the terminal from later updating status to running or `needs_input`; structured
 `AskUserQuestion`/`ExitPlanMode` are detected precisely, while questions ending in plain text remain a known limitation of external status.
 
 The primary slash command catalog comes from a separate, no-session-persistence headless `initialize` control request, directly reusing
