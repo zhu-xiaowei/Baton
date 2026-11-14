@@ -159,8 +159,21 @@ setNativeTabTitle('Settings');
   };
 
   window.deleteAccount = async function () {
-    if (!await confirmDialog('Delete account?', [[false, 'Cancel'], [true, 'Delete', true]], false,
-      'Every device leaves the account and its Bridge uninstalls itself; files on your computers are kept.')) return;
+    var answer = confirmDialog('Delete account?', [[false, 'Cancel'], [true, 'Delete', true]], false,
+      'This cannot be undone. Every phone, browser and computer leaves the account, each Bridge uninstalls itself, '
+      + 'and the recovery phrase stops working. Files and sessions on your computers are kept.');
+    // Armed after 5 s, like removing a computer on home.
+    var button = Array.from(document.querySelectorAll('.modal-overlay .modal-btn.confirm')).pop();
+    var left = 5;
+    button.classList.add('danger');
+    button.disabled = true;
+    button.textContent = 'Delete (5)';
+    var timer = setInterval(function () {
+      button.disabled = --left > 0;
+      button.textContent = left > 0 ? 'Delete (' + left + ')' : 'Delete';
+      if (!left) clearInterval(timer);
+    }, 1000);
+    if (!await answer) return;
     try {
       await apiPost('/api/account/delete');
       logout();
