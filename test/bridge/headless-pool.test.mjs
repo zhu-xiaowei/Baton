@@ -27,6 +27,7 @@ require('readline').createInterface({ input: process.stdin })
   .on('line', (line) => {
     const msg = JSON.parse(line);
     out({ type: 'system', subtype: 'init', session_id: 'sid' });
+    if (msg.message.content[0].text === 'bg') out({ type: 'system', subtype: 'background_tasks_changed', tasks: [{ task_id: 'a1' }] });
     out({ type: 'result', subtype: 'success', user_message_uuids: [msg.uuid] });
   })
   .on('close', () => process.exit(0));
@@ -41,29 +42,28 @@ async function turn(pool, key, text) {
   await finished;
   return pool.procs.get(key);
 }
+const emit = (proc, o) => proc._onLine(JSON.stringify(o));
+const exited = (proc) => new Promise((resolve) => (proc.dead ? resolve() : proc.proc.once('close', resolve)));
 
-test('a process with background tasks is not reaped until they end', async (t) => {
-  const pool = new ClaudePool({ bin: fakeClaude(t), idleTtl: 60_000 });
+test('a Done session exits; background tasks and prompts keep it until they end', async (t) => {
+  const pool = new ClaudePool({ bin: fakeClaude(t) });
   t.after(() => pool.shutdownAll());
-  const proc = await turn(pool, 'sid', 'one');
-  proc.lastActiveAt = 1;
-  proc._onLine(JSON.stringify({ type: 'system', subtype: 'background_tasks_changed', tasks: [{ task_id: 'a1' }] }));
-  proc.lastActiveAt = 1;
-  pool.reapIdle();
-  assert.equal(pool.procs.get('sid'), proc, 'a background agent keeps its process');
-  // The turn CC starts when the task ends is measured from the end of the task.
-  proc._onLine(JSON.stringify({ type: 'system', subtype: 'background_tasks_changed', tasks: [] }));
-  pool.reapIdle();
-  assert.equal(pool.procs.get('sid'), proc);
-  proc.lastActiveAt = 1;
-  pool.reapIdle();
+  const first = await turn(pool, 'sid', 'one');
+  assert.equal(first, undefined, 'the result ended the process');
+  const proc = await turn(pool, 'sid', 'bg');
+  emit(proc, { type: 'control_request', request_id: 'r1', request: { subtype: 'can_use_tool', tool_name: 'Monitor' } });
+  emit(proc, { type: 'system', subtype: 'background_tasks_changed', tasks: [] });
+  emit(proc, { type: 'result', subtype: 'success' }); // CC's report-back turn
+  assert.equal(pool.procs.get('sid'), proc, 'a waiting prompt keeps its process');
+  pool.replyControl('sid', 'r1', { behavior: 'allow', updatedInput: {} });
   assert.equal(pool.procs.has('sid'), false);
+  await exited(proc);
 });
 
 test('the result of a turn CC started itself does not finish a waiting message', async (t) => {
   const pool = new ClaudePool({ bin: fakeClaude(t) });
   t.after(() => pool.shutdownAll());
-  const proc = await turn(pool, 'sid', 'one');
+  const proc = await turn(pool, 'sid', 'bg');
   const results = [];
   let done;
   const finished = new Promise((resolve) => { done = resolve; });
@@ -83,42 +83,22 @@ test('a permission asked after the turn ended reaches the pool', async (t) => {
   const asked = [];
   const pool = new ClaudePool({ bin: fakeClaude(t), onControlRequest: (sid, req) => asked.push([sid, req.request_id]) });
   t.after(() => pool.shutdownAll());
-  const proc = await turn(pool, 'sid', 'one');
+  const proc = await turn(pool, 'sid', 'bg');
   // A background agent, or a turn CC started itself, asks with no pool turn bound.
   proc._onLine(JSON.stringify({ type: 'control_request', request_id: 'r1', request: { subtype: 'can_use_tool', tool_name: 'Monitor' } }));
   assert.deepEqual(asked, [['sid', 'r1']]);
 });
 
-test('an unanswered permission keeps its process until answered, and goes with it', async (t) => {
+test('a process dying with an unanswered prompt clears it', async (t) => {
   const exits = [];
-  const pool = new ClaudePool({ bin: fakeClaude(t), idleTtl: 60_000, onExit: (sid, hadPrompts) => exits.push([sid, hadPrompts]) });
+  const pool = new ClaudePool({ bin: fakeClaude(t), onExit: (sid, hadPrompts) => exits.push([sid, hadPrompts]) });
   t.after(() => pool.shutdownAll());
-  const proc = await turn(pool, 'sid', 'one');
-  proc._onLine(JSON.stringify({ type: 'control_request', request_id: 'r1', request: { subtype: 'can_use_tool', tool_name: 'Monitor' } }));
-  proc.lastActiveAt = 1;
-  pool.reapIdle();
-  pool._evictLru();
-  assert.equal(pool.procs.get('sid'), proc, 'a waiting prompt keeps its process');
-  assert.equal(pool.replyControl('sid', 'r1', { behavior: 'allow', updatedInput: {} }), true);
-  pool.reapIdle();
-  assert.equal(pool.procs.has('sid'), false, 'answered, the idle process is reaped again');
-
-  const next = await turn(pool, 'sid', 'two');
+  const next = await turn(pool, 'sid', 'bg');
   next._onLine(JSON.stringify({ type: 'control_request', request_id: 'r2', request: { subtype: 'can_use_tool', tool_name: 'Monitor' } }));
   const closed = new Promise((resolve) => next.proc.on('close', resolve));
   next.proc.kill();
   await closed;
   assert.deepEqual(exits, [['sid', true]], 'a process dying with a prompt clears it');
-});
-test('an idle process notices only rows another client appended', () => {
-  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'cc-')), 's.jsonl');
-  const row = (uuid) => fs.appendFileSync(file, JSON.stringify({ type: 'user', uuid }) + '\n');
-  const pool = new ClaudePool({ bin: '/nonexistent/claude' });
-  const proc = { sessionFile: file, seenUuids: new Set(['own']), unanswered: new Set(), fileSize: 0 };
-  row('own'); assert.equal(pool._appendedElsewhere(proc), false);
-  const cli = JSON.stringify({ type: 'user', uuid: 'cli' }) + '\n';
-  fs.appendFileSync(file, cli.slice(0, 9)); assert.equal(pool._appendedElsewhere(proc), false);
-  fs.appendFileSync(file, cli.slice(9)); assert.equal(pool._appendedElsewhere(proc), true); pool.shutdownAll();
 });
 test('a held Claude session asks first, and takeover stops only the confirmed pid', async () => {
   let live = true; const deps = { findWriter: () => live && { pid: 42, canTerminate: true }, kill: (_, sig) => { if (sig) live = false; else if (!live) throw new Error('ESRCH'); } };
