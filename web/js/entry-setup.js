@@ -129,12 +129,12 @@ setNativeTabTitle('Settings');
   window.showRecoveryPhrase = function () {
     document.getElementById('phraseNote').textContent = phraseNote;
     phraseDialog.querySelector('.phrase').hidden = true;
-    phraseDialog.querySelector('.cancel').hidden = false;
+    phraseDialog.querySelector('.cancel').style.display = '';
     document.getElementById('phraseShow').textContent = 'Show';
     showCenteredModal(phraseDialog);
   };
   window.closePhrase = function () {
-    document.getElementById('phraseWords').innerHTML = '';
+    document.getElementById('phraseWords').textContent = '';
     hideCenteredModal(phraseDialog);
   };
   window.loadPhrase = async function (button) {
@@ -142,12 +142,12 @@ setNativeTabTitle('Settings');
     button.innerHTML = '<span class="spinner"></span>';
     button.disabled = true;
     try {
-      var words = (await toPhrase(fromBase64((await viaComputer('recovery_key')).k))).split(' ');
-      document.getElementById('phraseWords').innerHTML = words.map(function (word) { return '<li>' + word + '</li>'; }).join('');
+      // Shown as it is pasted: words separated by spaces, no numbers.
+      document.getElementById('phraseWords').textContent = await toPhrase(fromBase64((await viaComputer('recovery_key')).k));
       phraseDialog.querySelector('.phrase .code-btn').innerHTML = COPY_ICON;
       phraseDialog.querySelector('.phrase').hidden = false;
       document.getElementById('phraseNote').textContent = 'To get the account back on a new phone or browser, open Baton and paste these words into the sign-in field (where a Start URL goes).';
-      phraseDialog.querySelector('.cancel').hidden = true;
+      phraseDialog.querySelector('.cancel').style.display = 'none';
       button.textContent = 'Done';
     } catch (e) {
       button.textContent = 'Show';
@@ -155,7 +155,7 @@ setNativeTabTitle('Settings');
     } finally { button.disabled = false; }
   };
   window.copyPhrase = function (button) {
-    copyText(button, Array.from(document.querySelectorAll('#phraseWords li'), function (li) { return li.textContent; }).join(' '));
+    copyText(button, document.getElementById('phraseWords').textContent);
   };
 
   window.deleteAccount = async function () {

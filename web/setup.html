@@ -91,7 +91,7 @@
   #appsList .agent-thread-copy { flex: 1; }
   .phrase { position: relative; margin: 4px 0 16px; padding: 12px 44px 12px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--canvas); }
   .phrase[hidden] { display: none; }
-  .phrase ol { columns: 2; column-gap: 16px; margin: 0; padding-left: 26px; font-family: 'SF Mono', 'Fira Code', monospace; font-size: 13px; line-height: 1.75; color: var(--text-primary); }
+  .phrase p { margin: 0; font-family: 'SF Mono', 'Fira Code', monospace; font-size: 13px; line-height: 1.7; color: var(--text-primary); word-spacing: 2px; user-select: all; }
   .phrase .code-btn { position: absolute; top: 8px; right: 8px; display: flex; align-items: center; justify-content: center; min-width: 30px; min-height: 28px; }
   .app-remove { flex: 0 0 auto; padding: 4px 10px; border: 1px solid var(--border); border-radius: 6px; background: transparent; color: var(--danger); font-size: 12px; cursor: pointer; }
   .app-self { flex: 0 0 auto; color: var(--text-muted); font-size: 12px; }
@@ -203,7 +203,7 @@
   <div class="modal-box" role="dialog" aria-modal="true" aria-label="Recovery phrase">
     <div class="modal-title">Recovery phrase</div>
     <div class="modal-desc" id="phraseNote">Anyone with these 24 words can reach your computers. Keep them private; removing a device changes them.</div>
-    <div class="phrase" hidden><ol id="phraseWords"></ol><button class="code-btn" type="button" title="Copy" onclick="copyPhrase(this)"></button></div>
+    <div class="phrase" hidden><p id="phraseWords"></p><button class="code-btn" type="button" title="Copy" onclick="copyPhrase(this)"></button></div>
     <div class="modal-actions">
       <button class="modal-btn cancel" type="button" onclick="closePhrase()">Cancel</button>
       <button class="modal-btn confirm" type="button" id="phraseShow" onclick="loadPhrase(this)">Show</button>
