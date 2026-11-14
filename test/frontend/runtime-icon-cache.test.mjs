@@ -7,7 +7,7 @@ import { JSDOM } from 'jsdom';
 const indexHtml = readFileSync(new URL('../../web/index.html', import.meta.url), 'utf8');
 const styleSource = readFileSync(new URL('../../web/css/style.css', import.meta.url), 'utf8');
 const cacheSource = indexHtml.slice(indexHtml.indexOf('  var runtimeIconCacheKey ='), indexHtml.indexOf('  function runtimeIcon(s)'));
-const cacheKey = 'baton-runtime-icons-v2';
+const cacheKey = 'baton-runtime-icons-v4';
 const assets = {
   claude: readFileSync(new URL('../../web/public/assets/claude-code.svg', import.meta.url), 'utf8'),
   codex: readFileSync(new URL('../../web/public/assets/codex.svg', import.meta.url), 'utf8'),
