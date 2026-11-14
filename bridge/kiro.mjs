@@ -116,10 +116,6 @@ function scan(file, from, onLine) {
 const newState = () => ({ offset: 0, lines: 0, users: 0, first: '', title: '', cwd: '', model: '', open: false,
   pending: 0, question: '', metaMs: 0, parentId: '', reason: '' });
 
-// A session Kiro migrated from the v2 store keeps its model only in the v2 file.
-const v2Model = (file) => readJson(path.join(ROOT, 'cli', `${path.basename(path.dirname(file))}.json`))?.session_state?.rts_model_state?.model_info?.model_id || '';
-const readJson = (file) => { try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return null; } };
-
 function readMeta(file, where, state) {
   const metaFile = path.join(path.dirname(file), 'session.json');
   let m;
@@ -129,7 +125,7 @@ function readMeta(file, where, state) {
     m = JSON.parse(fs.readFileSync(metaFile, 'utf8'));
     state.metaMs = st.mtimeMs;
   } catch { return; } // mid-rename: the next change reads it
-    Object.assign(state, { cwd: m.workspacePaths?.[0] || m.rootPaths?.[0] || '', title: titleText(m.title), model: m.modelId || v2Model(file),
+    Object.assign(state, { cwd: m.workspacePaths?.[0] || m.rootPaths?.[0] || '', title: titleText(m.title), model: m.modelId || '',
       parentId: m.parentSessionId || m._meta?.kiro?.serverSession?.ownerSessionId || '', reason: typeof m.createdReason === 'string' ? m.createdReason : '' });
 }
 
