@@ -123,4 +123,6 @@ export function uninstallBridge({ platform = process.platform, home = os.homedir
     run('schtasks', ['/Delete', '/TN', 'Baton Presence', '/F']);
   }
   fs.rmSync(path.join(home, '.baton-bridge', 'config.json'), { force: true });
+  // The Pi status extension the Bridge installed (pi-runtime.mjs).
+  fs.rmSync(path.join(process.env.PI_CODING_AGENT_DIR || path.join(home, '.pi', 'agent'), 'extensions', 'baton-bridge-status.js'), { force: true });
 }
