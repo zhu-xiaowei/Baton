@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import kiro, { CLIENT, HOME, LEASES, ROOT, KiroReader, mapTool, parse, readLease, sessionFile } from './kiro.mjs';
+import kiro, { CLIENT, DASHBOARD, alive, HOME, LEASES, ROOT, KiroReader, canonicalId, mapTool, parse, readLease, sessionFile } from './kiro.mjs';
 import { RpcStdio } from './rpc-stdio.mjs';
 import { finishProcess, sessionProcess } from './turn-process.mjs';
 import { StreamFramer } from './stream-framer.mjs';
@@ -221,6 +221,39 @@ function changed(full) {
   void reportStatus(rec);
 }
 
+// The /sessions dashboard title, as kiro-cli's TUI writes it (session-bookmarks in tui.js): under its lock (a
+// dir with owner.json renamed into place; a dead owner's lock is taken over, a malformed one moved aside;
+// 250 ms at most), the title leaves every entry of the session and goes on its own, then an atomic rewrite.
+async function setDashboardTitle(id, title) {
+  const lock = `${DASHBOARD}.lock`;
+  const owner = () => JSON.parse(fs.readFileSync(path.join(lock, 'owner.json'), 'utf8'));
+  for (const end = Date.now() + 250; Date.now() <= end; await new Promise((resolve) => setTimeout(resolve, 10))) {
+    const token = `${process.pid}-${Date.now()}-${Math.random()}`;
+    try {
+      fs.mkdirSync(`${lock}.${token}.tmp`, { mode: 0o700 });
+      fs.writeFileSync(path.join(`${lock}.${token}.tmp`, 'owner.json'), JSON.stringify({ pid: process.pid, token }), { flag: 'wx', mode: 0o600 });
+      fs.renameSync(`${lock}.${token}.tmp`, lock);
+    } catch {
+      fs.rmSync(`${lock}.${token}.tmp`, { recursive: true, force: true });
+      try { if (!alive(owner().pid)) fs.rmSync(lock, { recursive: true, force: true }); } catch { try { fs.renameSync(lock, `${lock}.stale-${token}`); fs.rmSync(`${lock}.stale-${token}`, { recursive: true, force: true }); } catch {} }
+      continue;
+    }
+    try {
+      const data = JSON.parse(fs.existsSync(DASHBOARD) ? fs.readFileSync(DASHBOARD, 'utf8') : '{}') || {};
+      for (const [key, entry] of Object.entries(data)) if (canonicalId(key) === canonicalId(id)) delete entry.title;
+      (data[id] ||= { bookmarked: false, tags: [] }).title = title.replace(/\s+/g, ' ').trim();
+      const kept = Object.fromEntries(Object.entries(data).filter(([, e]) => e.bookmarked || e.tags?.length || e.archived || e.title));
+      const tmp = path.join(path.dirname(DASHBOARD), `.dashboard-meta.json.${process.pid}.${token.slice(-8)}.tmp`);
+      fs.writeFileSync(tmp, JSON.stringify(kept, null, 2), { flag: 'wx', mode: 0o600 });
+      fs.renameSync(tmp, DASHBOARD);
+      return;
+    } finally {
+      if (owner().token === token) fs.rmSync(lock, { recursive: true, force: true });
+    }
+  }
+  throw new Error('The Kiro session list is busy; try again.');
+}
+
 // Kiro's own rename (`_kiro/session/rename`) from a short process, which only writes session.json. A process
 // holding the Session (another client's, or Baton's own turn) would write its title back, so that is refused.
 async function rename(id, name, project) {
@@ -232,12 +265,13 @@ async function rename(id, name, project) {
     await c.ready;
     const result = await c.rpc.request('_kiro/session/rename', { sessionId: id, title: name, sessionSource: 'local' }, { timeoutMs: 30_000 });
     if (!result?.success) throw new Error('Kiro did not rename the session.');
+    await setDashboardTitle(id, name); // kiro-cli's `/sessions rename` writes both; this one only once Kiro accepted
     // Node's recursive watch misses a replaced (renamed-over) file it saw once, so read the new title now.
     changed(path.join(path.dirname(rec.file), 'session.json'));
   } finally {
     close(c);
   }
-  return name;
+  return sessionIndex.view(recOf(id)).preview; // what Kiro stored (session.json keeps at most 80 characters)
 }
 
 async function deleteSession(id) {

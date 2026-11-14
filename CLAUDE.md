@@ -262,8 +262,10 @@ Done:
   ACP `available_commands_update` of the last turn in that cwd. `fs.watch`: `sessions/` recursive and `session-leases/`
   (inotify cost is the sessions tree only); their parent (`$KIRO_HOME`, or its parent while it is missing), not recursive, only until both exist. Deleting
   and recreating `sessions/` or `session-leases/` while the Bridge runs is not followed (restart). Delete runs `kiro-cli chat --delete-session`.
-  Rename: `_kiro/session/rename` from a short ACP process (writes session.json), refused while Baton's turn or
-  another client holds the Session; the title is re-read at once (Node's recursive watch misses a file replaced twice).
+  Rename: `_kiro/session/rename` from a short ACP process (writes session.json, ≤ 80 characters), then the
+  `/sessions` dashboard title in `dashboard-meta.json` as kiro-cli's TUI writes it (its `.lock` dir protocol); refused
+  while Baton's turn or another client holds the Session; returns the title the catalog then shows (re-read at once:
+  Node's recursive watch misses a file replaced twice).
 
 ### Git Graph + Commit/Push: COMPLETE
 - Git page header shows `project › branch ↑N ↓M` from the existing porcelain status; the branch text is display-only.

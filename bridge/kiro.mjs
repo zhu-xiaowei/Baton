@@ -13,7 +13,7 @@ export const HOME = process.env.KIRO_HOME || path.join(os.homedir(), '.kiro');
 export const ROOT = path.join(HOME, 'sessions');
 export const LEASES = path.join(HOME, 'session-leases');
 export const CLIENT = 'baton-bridge';
-const DASHBOARD = path.join(ROOT, 'dashboard-meta.json');
+export const DASHBOARD = path.join(ROOT, 'dashboard-meta.json');
 const CHUNK = 1 << 20;
 const PREFIX = 4096;
 const HEAD = /^\{"id":"(?:[^"\\]|\\.)*","timestamp":"[^"]*","payload":\{"type":"(\w+)"/;
@@ -73,7 +73,7 @@ function promptHead(text) {
 // Kiro titles are one line of at most 80 characters; anything else gets the usual preview cut.
 const titleText = (value, text = String(value ?? '').trim()) => (/[\r\n]/.test(text) || text.length > 200 ? previewText(text) : text);
 
-const canonicalId = (id) => /^(?:sess_)?([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i.exec(id)?.[1]?.toLowerCase() ?? id;
+export const canonicalId = (id) => /^(?:sess_)?([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i.exec(id)?.[1]?.toLowerCase() ?? id;
 
 // Dashboard renames (the first entry per session wins), re-read when the file changes.
 let dashboard = { key: null, names: new Map() };
@@ -177,6 +177,8 @@ function startedMs(pid) {
 }
 
 // A lease is held while its pid runs; a pid reused since started after the lease was taken.
+export const alive = (pid) => startedMs(pid) != null;
+
 export function readLease(file) {
   try {
     const lease = JSON.parse(fs.readFileSync(file, 'utf8'));
