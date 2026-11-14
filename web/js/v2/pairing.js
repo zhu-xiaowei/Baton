@@ -28,6 +28,9 @@ export function deviceName() {
   return `${browser} on ${os}`;
 }
 
+// This App's own random id (kept until its storage is cleared): joining again replaces its earlier entry.
+const me = () => ({ deviceName: deviceName(), install: localStorage.baton_install ||= crypto.randomUUID() });
+
 async function post(server, path, body, key) {
   const response = await fetch(server + path, { method: 'POST', body: JSON.stringify(body),
     headers: { 'Content-Type': 'application/json', ...(key ? { 'x-api-key': key } : {}) } });
@@ -40,14 +43,14 @@ async function post(server, path, body, key) {
 export async function signInWithLink(link) {
   let token, raw, added = '';
   if (link.kind === 'c') {
-    const reply = await post(link.server, '/api/pair/claim', { code: link.code, deviceName: deviceName() });
+    const reply = await post(link.server, '/api/pair/claim', { code: link.code, ...me() });
     raw = await openPair(link.t, reply.sealed, link.code);
     // The server names the account's current key (`head`, a fingerprint): K must be that key.
     if (raw?.length !== 32 || (reply.head && (await accountOf(raw)).fp !== reply.head)) throw new Error('This code does not match its account.');
     token = reply.token;
   } else {
     raw = crypto.getRandomValues(new Uint8Array(32));
-    token = (await post(link.server, '/api/account/register', { ...await accountOf(raw), deviceName: deviceName() })).token;
+    token = (await post(link.server, '/api/account/register', { ...await accountOf(raw), ...me() })).token;
     added = (await post(link.server, '/api/pair/approve', { code: link.code, sealed: await sealPair(link.t, raw, link.code) }, token)).deviceName;
   }
   await saveAccountKey(link.server, raw);
@@ -55,7 +58,7 @@ export async function signInWithLink(link) {
 }
 
 export async function recoverAccount(server, raw) {
-  const { token } = await post(server, '/api/account/recover', { joinSecret: (await accountOf(raw)).joinSecret, deviceName: deviceName() });
+  const { token } = await post(server, '/api/account/recover', { joinSecret: (await accountOf(raw)).joinSecret, ...me() });
   await saveAccountKey(server, raw);
   return token;
 }

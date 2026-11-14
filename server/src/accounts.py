@@ -39,6 +39,7 @@ class Body(BaseModel):
     poll: str = Field("", pattern=r"^([\w-]{22,64})?$")
     sealed: str = Field("", pattern=r"^([\w+/=-]{40,200})?$")
     deviceName: str = ""
+    install: str = Field("", pattern=r"^[\w-]{0,64}$")  # an App's own random id: joining again replaces its token
     id: str = Field("", pattern=r"^([0-9a-f]{12})?$")
     rotation: Optional[Rotation] = None
 
@@ -101,11 +102,12 @@ def _token_keys(account, digest):
     return [{"pk": f"TOKEN#{digest}", "sk": "-"}, {"pk": f"ACCOUNT#{account}", "sk": f"TOKEN#{digest}"}]
 
 
-def _issue(account, kind, name):
-    token, name = "bt_" + secrets.token_urlsafe(32), name[:64]  # a display name; a computer's is checked at pair/start
+def _issue(account, kind, name, install=""):
+    token, name, install = "bt_" + secrets.token_urlsafe(32), name[:64], install and _sha(install)
+    _drop(account, [row["sk"][6:] for row in _token_rows(account) if install and row.get("install") == install])
     index, listed = _token_keys(account, auth.token_hash(token))
     # Listed first: a token whose index write failed is visible and removable, never a hidden credential.
-    _table().put_item(Item={**listed, "kind": kind, "deviceName": name, "createdAt": int(time.time())})
+    _table().put_item(Item={**listed, "kind": kind, "deviceName": name, "install": install, "createdAt": int(time.time())})
     _table().put_item(Item={**index, "kind": kind, "deviceName": name, "accountId": account})
     return token
 
@@ -137,8 +139,8 @@ def _ensure_meta(caller):
                                                      "createdAt": int(time.time())}, ConditionExpression="attribute_not_exists(pk)"))
 
 
-def _joined(row, kind, name, **extra):
-    return {"token": _issue(row["accountId"], kind, name), "accountId": row["accountId"], "sealed": row["sealed"],
+def _joined(row, kind, name, install="", **extra):
+    return {"token": _issue(row["accountId"], kind, name, install), "accountId": row["accountId"], "sealed": row["sealed"],
             "head": _meta(row["accountId"]).get("head", ""), **extra}
 
 
@@ -171,7 +173,7 @@ def register(body: Body, request: Request):
         raise HTTPException(409, "Account exists.")
     # accountId is fixed at registration while K (and joinSecret) rotate: recovery finds it from joinSecret.
     _table().put_item(Item={"pk": f"JOIN#{_sha(body.joinSecret)}", "sk": "-", "accountId": body.accountId})
-    return {"token": _issue(body.accountId, "app", body.deviceName)}
+    return {"token": _issue(body.accountId, "app", body.deviceName, body.install)}
 
 
 @router.post("/account/recover")
@@ -183,7 +185,7 @@ def recover(body: Body, request: Request):
     if not account or not hmac.compare_digest(_meta(account).get("joinSecretHash", ""), digest):
         raise HTTPException(403, "Recovery phrase does not match an account.")
     _rate(f"recover#{account}", 5)
-    return {"token": _issue(account, "app", body.deviceName), "accountId": account}
+    return {"token": _issue(account, "app", body.deviceName, body.install), "accountId": account}
 
 
 @router.post("/pair/create")
@@ -200,7 +202,7 @@ def pair_create(body: Body, request: Request):
 @router.post("/pair/claim")
 def pair_claim(body: Body):
     _need(body, "code", "deviceName")
-    return _joined(_take(body.code, "kind = :app", {":app": "app"}), "app", body.deviceName)
+    return _joined(_take(body.code, "kind = :app", {":app": "app"}), "app", body.deviceName, body.install)
 
 
 @router.post("/pair/start")

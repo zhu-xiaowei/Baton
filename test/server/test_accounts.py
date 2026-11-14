@@ -115,6 +115,10 @@ def test_two_accounts_pair_remove_rotate_recover_and_delete_apart(api):
     api('/api/pair/wait', {'code': start['code'], 'poll': start['poll']}, status=404)
     api('/api/pair/approve', {'code': api('/api/pair/start', {'deviceName': 'Mac'})['code'], 'sealed': SEALED}, a, status=409)
     pc = join_computer(api, mac['token'], 'PC')  # a computer adds another one for an App (pair_approve)
+    for code in ('app-code-0000000000007', 'app-code-0000000000008'):  # the same App joining twice keeps one entry
+        api('/api/pair/create', {'code': code, 'sealed': SEALED}, a)
+        twin = api('/api/pair/claim', {'code': code, 'deviceName': 'Mini', 'install': 'mini-1'})
+    assert [t['deviceName'] for t in api('/api/bridge/devices', None, twin['token'])['apps']].count('Mini') == 1
     assert [t['deviceName'] for t in api('/api/bridge/devices', None, b)['apps']] == ['Pixel']
     # Logout; a code the leaving device made is void; removing a computer needs K' in the same request.
     api('/api/pair/create', {'code': 'app-code-0000000000009', 'sealed': SEALED}, ipad['token'])
