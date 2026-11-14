@@ -1974,7 +1974,7 @@ async function refreshNewSessionRuntimes(nav) {
   var reply;
   try { reply = await window.bridgeRequest('ping', {}, state.appState.device); } catch (e) { return; }
   if (_navVersion !== nav || !Array.isArray(reply?.runtimes)) return;
-  var runtimes = Object.keys(RUNTIMES).filter(function (runtime) { return reply.runtimes.includes(runtime); });
+  var runtimes = inMenuOrder(reply.runtimes);
   if (!runtimes.length) return;
   try { localStorage.setItem(newSessionRuntimesKey(), JSON.stringify(runtimes)); } catch (e) {}
   var only = virtualProjectRuntimes(state.appState.project?.hash);
@@ -1986,6 +1986,10 @@ async function refreshNewSessionRuntimes(nav) {
   applyNewSessionRuntime(preferredNewSessionRuntime(runtimes, runtimes.includes(saved) ? saved : state.appState.runtime), false);
 }
 
+function inMenuOrder(runtimes) {
+  return Object.keys(RUNTIMES).filter(function (runtime) { return runtimes.includes(runtime); });
+}
+
 // The last ping's list, so the view opens on the saved runtime instead of flashing the fallback.
 function newSessionRuntimesKey() {
   return 'apeek_new_session_runtimes:' + String(state.appState.device || '');
@@ -1995,7 +1999,7 @@ function knownNewSessionRuntimes() {
   try {
     var runtimes = JSON.parse(localStorage.getItem(newSessionRuntimesKey()) || 'null');
     return Array.isArray(runtimes) && runtimes.length && runtimes.every(function (runtime) { return RUNTIMES[runtime]; })
-      ? Object.keys(RUNTIMES).filter(function (runtime) { return runtimes.includes(runtime); }) : null;
+      ? inMenuOrder(runtimes) : null;
   } catch (e) { return null; }
 }
 

@@ -925,10 +925,10 @@ let _lateRuntimes = null;
 export function registerLateRuntimes() {
   return _lateRuntimes ||= registerInstalledRuntimes().then(async (added) => {
     if (!added.length) return;
-    const { startRuntimeWatcher } = await import('./runtime-watcher-registry.mjs'); // static import would cycle via watcher.mjs
-    for (const adapter of added) if (adapter.watcher) startRuntimeWatcher(adapter.watcher, _config);
     await sessionIndex.readyPromise;
     await sessionIndex.warm();
+    const { startRuntimeWatcher } = await import('./runtime-watcher-registry.mjs'); // static import would cycle via watcher.mjs
+    for (const adapter of added) if (adapter.watcher) startRuntimeWatcher(adapter.watcher);
   }).finally(() => { _lateRuntimes = null; });
 }
 
