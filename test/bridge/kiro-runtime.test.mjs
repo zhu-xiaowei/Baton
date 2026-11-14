@@ -21,3 +21,17 @@ test('kiro: Baton turn ids become nativeIds, steering rows hide, an open approva
   assert.deepEqual((await reader.rows(0, 7)).map((r) => [r.nativeId, r.content[0].text]), [['live:user:T1', 'Hi'], ['live:user:T2', 'also'],
     [undefined, 'ok X'], ['live:interrupt:T1', '[Request interrupted by user]']]);
 });
+
+test('kiro: a watcher error (a dir gone mid-scan) is handled and the watch is armed again', async () => {
+  const opened = [];
+  const watch = fs.watch;
+  fs.watch = (...args) => { const w = watch(...args); opened.push(Object.assign(w, { recursive: !!args[1]?.recursive })); return w; };
+  const { default: kiro } = await import('../../bridge/kiro-runtime.mjs');
+  kiro.watcher.start(null);
+  const kiroWatches = () => opened.filter((w) => w.listenerCount('error')); // not Node's per-dir inner watchers
+  kiroWatches().find((w) => w.recursive).emit('error', Object.assign(new Error('ENOENT: scandir .lock.acquire'), { code: 'ENOENT' }));
+  await new Promise((resolve) => setTimeout(resolve, 1100));
+  assert.equal(kiroWatches().filter((w) => w.recursive).length, 2); // sessions/, then its replacement
+  fs.watch = watch;
+  kiroWatches().forEach((w) => w.close());
+});

@@ -337,15 +337,22 @@ export default defineRuntimeAdapter({
     // sessions/ (recursive) and session-leases/; their parents, not recursive, only until both exist.
     start(next) {
       config = next;
+      // Node's recursive watcher errors when a dir vanishes mid-scan (the TUI's .lock.acquire): drop it, arm again.
+      const watch = (key, ...args) => fs.watch(...args).on('error', (error) => {
+        console.error(`[kiro] watch ${key}: ${error.message}`);
+        watches[key]?.close();
+        watches[key] = null;
+        setTimeout(arm, 1000).unref();
+      });
       const arm = () => {
         if (!watches.sessions && fs.existsSync(ROOT)) {
-          watches.sessions = fs.watch(ROOT, { recursive: true }, (_event, name) => name && changed(path.join(ROOT, name)));
+          watches.sessions = watch('sessions', ROOT, { recursive: true }, (_event, name) => name && changed(path.join(ROOT, name)));
           kiro.catalog.files().forEach(changed); // written before the watch existed
         }
-        watches.leases ||= fs.existsSync(LEASES) && fs.watch(LEASES, (_event, name) => name?.endsWith('.lease') && reportStatus(recOf(name.slice(0, -6))));
+        watches.leases ||= fs.existsSync(LEASES) && watch('leases', LEASES, (_event, name) => name?.endsWith('.lease') && reportStatus(recOf(name.slice(0, -6))));
         // Until both exist: the Kiro home, or its parent while the home itself is missing.
         const dir = watches.sessions && watches.leases ? null : fs.existsSync(HOME) ? HOME : path.dirname(HOME);
-        if (watches.home?.dir !== dir) watches.home = (watches.home?.close(), dir && Object.assign(fs.watch(dir, arm), { dir }));
+        if (watches.home?.dir !== dir) watches.home = (watches.home?.close(), dir && Object.assign(watch('home', dir, arm), { dir }));
       };
       arm();
     },
