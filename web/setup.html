@@ -68,6 +68,30 @@
   .qr-frame.ready { visibility: visible; }
   .qr-frame canvas { max-width: 100%; height: auto; border-radius: 4px; display: block; }
   .logout-btn { font-size: 13px; }
+  a.add-device { color: inherit; text-decoration: none; }
+  .add-device strong { display: flex; align-items: center; gap: 10px; }
+  .add-device .scan-icon { width: 20px; height: 20px; color: var(--accent); }
+  .add-device .scan-icon[hidden] { display: none; }
+  .add-device .chev { color: var(--text-muted); font-size: 22px; line-height: 1; }
+  .connect-tabs { display: flex; width: 100%; }
+  .connect-tabs .platform-option { flex: 1; white-space: nowrap; }
+  .connect [hidden] { display: none !important; }
+  .connect .code-block { display: flex; align-items: center; gap: 8px; padding-right: 8px; }
+  .connect .code-block .text { flex: 1; min-width: 0; }
+  .connect .code-block.masked .text { color: var(--text-muted); }
+  .connect .code-btn { position: static; flex-shrink: 0; display: flex; align-items: center; justify-content: center; min-width: 32px; min-height: 28px; }
+  .connect .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid rgba(var(--spinner-rgb), 0.3); border-top-color: var(--spinner); border-radius: 50%; animation: spin 0.6s linear infinite; }
+  .qr-loading { display: flex; align-items: center; justify-content: center; height: 224px; }
+  .qr-wrap:has(.qr-frame.ready) .qr-loading { display: none; }
+  .qr-wrap:not(:has(.qr-frame.ready)) .qr-frame { display: none; }
+  .account-actions .setting-row { color: inherit; text-decoration: none; }
+  .account-actions .setting-row + .setting-row { border-top: 1px solid var(--border); margin-top: 14px; padding-top: 14px; }
+  .account-actions .chev { color: var(--text-muted); font-size: 22px; line-height: 1; }
+  .delete-account strong { color: var(--danger); }
+  #appsList .agent-thread-row { cursor: default; align-items: center; }
+  .app-remove { flex: 0 0 auto; padding: 4px 10px; border: 1px solid var(--border); border-radius: 6px; background: transparent; color: var(--danger); font-size: 12px; cursor: pointer; }
+  .app-self { flex: 0 0 auto; color: var(--text-muted); font-size: 12px; }
+  .version-value { color: var(--text-secondary); font-size: 13px; }
   .setting-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px; cursor: pointer; }
   div.setting-row { cursor: default; }
   .setting-row strong { font-size: 15px; font-weight: 600; }
@@ -103,36 +127,27 @@
 
 <div class="setup-bar">
   <span id="setupBackButton" class="setup-back-slot"></span>
-  <span class="title">Setup</span>
+  <span class="title">Settings</span>
   <span class="spacer"></span>
 </div>
 
 <div class="setup-content">
-<!-- Step 1: Install Bridge -->
-<div class="section">
-  <h2><span class="num">1</span> Install Bridge</h2>
-  <div class="platform-switch" role="group" aria-label="Bridge platform">
-    <button class="platform-option" data-platform="unix" onclick="selectInstallPlatform('unix')">macOS / Linux</button>
-    <button class="platform-option" data-platform="windows" onclick="selectInstallPlatform('windows')">Windows</button>
+<a class="section setting-row add-device" href="landing.html?add=1">
+  <strong><svg class="scan-icon" hidden viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 8V6a2 2 0 0 1 2-2h2M16 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-2M4 12h16"/></svg>Add device</strong>
+  <span class="chev" aria-hidden="true">›</span>
+</a>
+
+<!-- One 10-minute token serves all three tabs; nothing is requested until one is shown. -->
+<div class="section connect">
+  <div class="platform-switch connect-tabs" role="tablist">
+    <button class="platform-option active" data-tab="install" onclick="selectConnectTab('install')">Install Bridge</button>
+    <button class="platform-option" data-tab="url" onclick="selectConnectTab('url')">Start URL</button>
+    <button class="platform-option" data-tab="qr" onclick="selectConnectTab('qr')">QR code</button>
   </div>
-  <p class="hint" id="installHint" style="margin:0 0 10px">Run this command with Node.js installed.</p>
-  <div class="code-block" id="installCmd"><span id="installCmdText">Loading...</span><button class="code-btn" onclick="copyCmd(this)">Copy</button></div>
-  <p class="hint token-expiry"></p>
-</div>
-
-<!-- Step 2: Start URL — paste into another browser or the Baton app -->
-<div class="section">
-  <h2><span class="num">2</span> Start URL</h2>
-  <p class="hint" style="margin-bottom:10px">Paste this Start URL into a browser or the Baton app to sign in.</p>
-  <div class="code-block" id="qrUrlBlock"><span id="qrUrl">Loading...</span><button class="code-btn" onclick="copyUrl(this)">Copy</button></div>
-  <p class="hint token-expiry"></p>
-</div>
-
-<!-- Step 3: QR Code (scan version of the same Start URL) -->
-<div class="section">
-  <h2><span class="num">3</span> Scan QR Code</h2>
-  <p class="hint" style="margin-bottom:14px">Scan with the Baton app on your phone to sign in.</p>
-  <div class="qr-wrap">
+  <div class="code-block masked" data-panel="install"><span class="text" id="installCmdText">••••••••••••••••••••••••••••••••</span><button class="code-btn" onclick="revealConnect(this)" title="Show"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z"/><circle cx="12" cy="12" r="3"/></svg></button></div>
+  <div class="code-block masked" data-panel="url" hidden><span class="text" id="qrUrl">••••••••••••••••••••••••••••••••</span><button class="code-btn" onclick="revealConnect(this)" title="Show"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z"/><circle cx="12" cy="12" r="3"/></svg></button></div>
+  <div class="qr-wrap" data-panel="qr" hidden>
+    <div class="qr-loading"><span class="spinner"></span></div>
     <div class="qr-frame"><canvas id="qrCanvas" width="200" height="200"></canvas></div>
   </div>
 </div>
@@ -164,6 +179,24 @@
   <div class="text-size-stops" aria-hidden="true"></div>
 </section>
 
+<div class="section">
+  <div class="setting-row"><strong>Version</strong><span id="appVersion" class="version-value"></span></div>
+</div>
+
+<div class="section account-actions" hidden>
+  <a class="setting-row" href="#" onclick="openAppsSheet(); return false"><strong>Apps</strong><span class="chev" aria-hidden="true">›</span></a>
+  <a class="setting-row" href="#" onclick="showRecoveryPhrase(); return false"><strong>Recovery phrase</strong><span class="chev" aria-hidden="true">›</span></a>
+  <a class="setting-row delete-account" href="#" onclick="deleteAccount(); return false"><strong>Delete account</strong></a>
+</div>
+
+<!-- Phones, browsers and desktop Apps of the account; same sheet as the session's Subagents. -->
+<div id="appsSheet" class="modal-overlay agent-threads-overlay" style="display:none" onclick="if(event.target===this)closeAppsSheet()">
+  <div class="modal-box agent-threads-box" role="dialog" aria-modal="true" aria-label="Apps">
+    <div class="agent-threads-header"><div class="modal-title">Apps</div></div>
+    <div id="appsList" class="agent-threads-list"></div>
+  </div>
+</div>
+
 <!-- Logout -->
 <div style="text-align:center; margin-bottom:8px;">
   <button onclick="logout()"
@@ -171,8 +204,7 @@
     style="padding:8px 24px; background:transparent; border:1px solid var(--border); border-radius:8px; color:var(--danger); cursor:pointer;">Log out</button>
 </div>
 
-<!-- App version (iOS only — undefined elsewhere, hidden by default) -->
-<div id="appVersion" style="text-align:center; margin-bottom:32px; color:var(--text-muted); font-size:11px; display:none;"></div>
+
 </div>
 
 </body>

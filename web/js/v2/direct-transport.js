@@ -7,7 +7,7 @@
 import { state } from '../state.js';
 import { RpcAssembler, createHeaderSigner, decodeRpcPayload, fromBase64, openStreamMessage, packStreamMessage, rpcRequest,
   rpcRequestFrames, sealStreamMessage, streamFrame, toBase64, unpackStreamMessage } from '../../../bridge/direct-rpc-protocol.mjs';
-import { appKeys } from '../../../bridge/e2ee.mjs';
+import { appKeys, fingerprint, openRotation } from '../../../bridge/e2ee.mjs';
 import { loadAccountKey, saveAccountKey } from './account-key.js';
 import { setTransferAccess, setTransferKeys } from '../../../bridge/transfer-store.mjs';
 
@@ -428,7 +428,31 @@ async function sessionFor(device) {
 // Existing users have only the API key: the App takes K from a Bridge that has one (the smallest
 // fingerprint wins, so every App and Bridge converge), or creates it, and gives it to the Bridges
 // without it, which then join again with sealed sessions (docs/v2-accounts-e2ee-plan.md §9).
+// A paired App follows rotations (design §8): K' sealed under the K it holds, listed with /devices.
+async function followRotations(chain) {
+  let saved = await loadAccountKey(state.SERVER);
+  let changed = false;
+  for (let step = 0; saved?.key && step < chain.length; step++) {
+    const fp = await fingerprint(saved.key);
+    const entry = chain.find((candidate) => candidate.fp === fp);
+    const raw = entry && await openRotation(saved.key, entry.sealed, fp);
+    if (raw?.length !== 32) break;
+    saved = await saveAccountKey(state.SERVER, raw);
+    changed = true;
+  }
+  if (!changed) return;
+  keys = await appKeys(saved.key, saved.at);
+  window.dispatchEvent?.(new Event('baton-account-key'));
+  reconcile();
+}
+
+let rotationsCheckedAt = -Infinity;
 function migrate() {
+  // A paired App got K by pairing, never in clear: a Bridge with another K means a rotation to follow.
+  if (state.KEY.startsWith('bt_')) {
+    if (performance.now() - rotationsCheckedAt > STALL_MS) { rotationsCheckedAt = performance.now(); devices().catch(() => {}); }
+    return;
+  }
   if (migrating || performance.now() - migratedAt < STALL_MS) return;
   migrating = (async () => {
     const online = [...routes].filter(([, route]) => route.online);
@@ -547,6 +571,7 @@ export function devices() {
     if (!response.ok) throw new Error(response.status + ' ' + response.statusText);
     const body = await response.json();
     if (body.protocol === 2) updateRoutes(body);
+    if (body.rotations?.length) await followRotations(body.rotations);
     return body;
   })().finally(() => { devicesInflight = null; });
   return devicesInflight;

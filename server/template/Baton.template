@@ -33,6 +33,12 @@
       "Description": "Data account ID, pinned by install.sh so rotating the API key keeps the data",
       "Default": ""
     },
+    "OpenRegistration": {
+      "Type": "String",
+      "AllowedValues": ["false", "true"],
+      "Default": "false",
+      "Description": "Let anyone create an account by scanning a computer's QR code (hosted / multi-account stacks)"
+    },
     "ApiKeyName": {
       "Type": "String",
       "Description": "API key name; install.sh --rotate-key picks a new one, which replaces the key"
@@ -81,7 +87,10 @@
                 {
                   "Effect": "Allow",
                   "Action": "execute-api:ManageConnections",
-                  "Resource": { "Fn::Sub": "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WsApi}/*" }
+                  "Resource": [
+                    { "Fn::Sub": "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WsApi}/*" },
+                    { "Fn::Sub": "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${TerminalDirectApi}/*" }
+                  ]
                 },
                 {
                   "Effect": "Allow",
@@ -121,7 +130,10 @@
             "PUSH_RELAY_URL": { "Ref": "PushRelayUrl" },
             "APP_VERSION": { "Ref": "AppVersion" },
             "API_KEY_NAME": { "Ref": "ApiKeyName" },
-            "ACCOUNT_ID": { "Ref": "AccountId" }
+            "ACCOUNT_ID": { "Ref": "AccountId" },
+            "OPEN_REGISTRATION": { "Ref": "OpenRegistration" },
+            "WEB_URL": { "Fn::Sub": "https://${CDN.DomainName}" },
+            "ORIGIN_SECRET": { "Fn::Select": [2, { "Fn::Split": ["/", { "Ref": "AWS::StackId" }]}] }
           }
         },
         "MemorySize": 1024,
@@ -171,7 +183,7 @@
         "ResourceId": { "Ref": "ApiProxyResource" },
         "HttpMethod": "ANY",
         "AuthorizationType": "NONE",
-        "ApiKeyRequired": true,
+        "ApiKeyRequired": false,
         "Integration": {
           "Type": "AWS_PROXY",
           "IntegrationHttpMethod": "POST",
@@ -308,7 +320,7 @@
         }]
       }
     },
-    "ApiDeploymentV3": {
+    "ApiDeploymentV4": {
       "Type": "AWS::ApiGateway::Deployment",
       "Metadata": {
         "Note": "Bump this id (V3 -> V4 ...) and the ApiStage Ref after any API/CORS change, else it won't reach the stage."
@@ -322,7 +334,7 @@
       "Type": "AWS::ApiGateway::Stage",
       "Properties": {
         "RestApiId": { "Ref": "RestApi" },
-        "DeploymentId": { "Ref": "ApiDeploymentV3" },
+        "DeploymentId": { "Ref": "ApiDeploymentV4" },
         "StageName": "v1"
       }
     },
@@ -584,7 +596,8 @@
       "Properties": {
         "ApiId": { "Ref": "WsApi" },
         "StageName": "v1",
-        "AutoDeploy": true
+        "AutoDeploy": true,
+        "DefaultRouteSettings": { "ThrottlingRateLimit": 200, "ThrottlingBurstLimit": 400 }
       }
     },
     "WsHandler": {
@@ -732,6 +745,7 @@
               "Id": "api",
               "DomainName": { "Fn::Sub": "${RestApi}.execute-api.${AWS::Region}.amazonaws.com" },
               "OriginPath": "/v1",
+              "OriginCustomHeaders": [{ "HeaderName": "X-Baton-Origin", "HeaderValue": { "Fn::Select": [2, { "Fn::Split": ["/", { "Ref": "AWS::StackId" }]}] } }],
               "CustomOriginConfig": {
                 "OriginProtocolPolicy": "https-only",
                 "OriginKeepaliveTimeout": 60

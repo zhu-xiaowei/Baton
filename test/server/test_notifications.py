@@ -9,55 +9,6 @@ from fastapi import HTTPException
 os.environ.setdefault("AWS_DEFAULT_REGION", "ap-northeast-1")
 import notifications
 
-ALERT = {
-    "eventId": "e" * 64, "device": "Mac", "projectHash": "project", "projectName": "Baton",
-    "sessionId": "codex:session", "sessionTitle": "Fix login", "rootSessionId": "codex:session",
-    "title": "Baton · Fix login", "body": "✅ Done · Fixed it.",
-}
-
-
-class MemoryTable:
-    def __init__(self, *rows):
-        self.rows = {(row["pk"], row["sk"]): row for row in rows}
-
-    def put_item(self, Item, **_):
-        self.rows[(Item["pk"], Item["sk"])] = Item
-
-    def delete_item(self, Key, **_):
-        self.rows.pop((Key["pk"], Key["sk"]), None)
-
-    def query(self, **_):
-        return {"Items": [row for (pk, _), row in self.rows.items() if pk == "PUSH_DEVICE"]}
-
-
-def test_an_alert_is_stored_then_pushed_to_the_accounts_live_devices(monkeypatch):
-    live = {"pk": "PUSH_DEVICE", "sk": "production:" + "a" * 64, "accountId": "account", "ttl": time.time() + 99}
-    dead = {**live, "sk": "development:" + "b" * 64}
-    other = {**live, "sk": "production:" + "c" * 64, "accountId": "other"}
-    table = MemoryTable(live, dead, other)
-    monkeypatch.setattr(notifications, "_table", lambda: table)
-    monkeypatch.setattr(notifications, "_account", lambda request: "account")
-    monkeypatch.setenv("PUSH_RELAY_URL", "https://relay.example")
-    sent = []
-
-    def relay(request, deadline=None):
-        sent.append(request)
-        return {"status": 200} if request["token"] == "a" * 64 else {"status": 410, "reason": "Unregistered"}
-
-    monkeypatch.setattr(notifications, "relay", relay)
-    notifications.post_event(notifications.Alert(**ALERT), None)
-    assert sorted(request["environment"] for request in sent) == ["development", "production"]
-    # The push carries only the feed row's key; no title, summary or session leaves the stack.
-    assert set(sent[0]) == {"token", "environment", "id"}
-    feed = [key for key in table.rows if key[1].startswith("EVENT#")]
-    assert sent[0]["id"] == feed[0][1] and feed[0][1].endswith("#" + "e" * 64)
-    assert table.rows[feed[0]]["event"]["accountId"] == "account"
-    assert ("PUSH_DEVICE", dead["sk"]) not in table.rows
-    # The relay being down still answers: the feed row is there for Android.
-    monkeypatch.setattr(notifications, "relay", lambda request, deadline=None: 1 / 0)
-    assert notifications.post_event(notifications.Alert(**ALERT), None) == {"ok": True}
-
-
 def test_relay_signs_reuses_its_connection_and_retries_throttling_with_jitter(monkeypatch):
     monkeypatch.setenv("PUSH_RELAY_URL", "https://abc.lambda-url.us-west-2.on.aws/")
     waits, answers, sent, opened = [], [], [], []

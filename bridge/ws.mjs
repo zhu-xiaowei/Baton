@@ -44,6 +44,7 @@ import {
 } from './codex-commands.mjs';
 import { inspectCodexSession, resolveCodexSessionCwd } from './codex-session.mjs';
 import { updateSessionStatus, recentSessions } from './sync.mjs';
+import { approveJoin, createInvite, rotatedKey } from './accounts.mjs';
 import { BRIDGE_VERSION } from './version.mjs';
 import {
   PermissionQueue,
@@ -749,6 +750,7 @@ function connect() {
       key: _config.apiKey,
       accountKey: _config.accountKey ? Buffer.from(_config.accountKey, 'base64') : null,
       accountKeyAt: _config.accountKeyAt,
+      accounts: !!_config.accounts,
       saveAccountKey: (raw) => { Object.assign(_config, { accountKey: raw.toString('base64'), accountKeyAt: Date.now() }); saveConfig(_config); },
       sendControl: message => send(JSON.stringify(message)),
       subscribers: _subscribers,
@@ -793,10 +795,17 @@ function connect() {
         }), caller),
         create_project: params => createProject(params.projectPath, params.asAgent),
         delete_files: (params, caller) => collectFrames((send) => handleDeleteFiles({ ...params, progress: true }, { send }), caller),
+        // Pairing on behalf of an App, which never holds K in a form it could seal itself (plan D2).
+        // Caught up first, so the key it seals is the account's current one (`head`).
+        pair_invite: async () => { await catchUpAccountKey(); return createInvite(_config); },
+        pair_approve: async params => { await catchUpAccountKey(); return approveJoin(_config, params.link); },
+        // The recovery phrase is K: shown to an App of the account only (sealed like every reply).
+        recovery_key: () => ({ k: _config.accounts ? _config.accountKey : '' }),
         ping: () => ({ bridgeVersion: BRIDGE_VERSION, runtimes: runtimeAdapters.filter(adapter => adapter.features.create).map(adapter => adapter.runtime) }),
       },
     });
     _directRpc.start();
+    void catchUpAccountKey();
     void _checkUpdate?.();
     _heartbeatTimer = setInterval(sendHeartbeat, HEARTBEAT_INTERVAL);
     _pingTimer = setInterval(probeConnection, PING_INTERVAL);
@@ -848,6 +857,8 @@ function connect() {
   socket.on('unexpected-response', (_req, res) => {
     if (_ws !== socket) return;
     console.error(`[ws] unexpected-response: ${res.statusCode}`);
+    // A paired computer's token is refused only once it was removed (or its account deleted), maybe while it was off.
+    if (res.statusCode === 401 && _config?.accounts) { void handleMessage({ action: 'device_removed' }); return; }
     let body = '';
     res.on('data', (chunk) => body += chunk);
     res.on('end', () => {
@@ -894,9 +905,22 @@ function scheduleReconnect() {
   }, delay);
 }
 
+// Rotations (design §8) reach a hosted Bridge as K' sealed under its K, listed with /devices.
+async function catchUpAccountKey() {
+  if (!_config?.accounts || !_config.accountKey) return;
+  try {
+    const k = await rotatedKey(_config);
+    if (k) _directRpc?.setAccountKey(k);
+  } catch (error) { console.error(`[accounts] key rotation not applied: ${error.message}`); }
+}
+
 async function handleMessage(msg) {
   if (_directRpc?.handleControl(msg)) return;
   switch (msg.action) {
+    case 'account_rotated':
+      void catchUpAccountKey();
+      break;
+    case 'account_deleted':
     case 'device_removed':
       uninstallBridge();
       console.log('[ws] this device was removed from Baton and autostart is off; run a new install command from Setup to add it again');

@@ -7,7 +7,12 @@ import { harmonyBridge, harmonyCall } from './harmony.js';
 import { state } from './state.js';
 import './api.js';
 import { initMacosTabs, setNativeTabTitle } from './macos-tabs.js';
+import { parseLink, recoverAccount, signInWithLink, viaComputer } from './v2/pairing.js';
+import { fromPhrase } from './v2/recovery.js';
 import { initPageZoomShortcuts } from './page-zoom.js';
+import { mountBackButton } from './components/back-button.js';
+import { attachPageEdgeBackGesture } from './edge-back.js';
+import '../css/back-button.css';
 
 initMacosTabs();
 initPageZoomShortcuts();
@@ -39,6 +44,15 @@ setNativeTabTitle('Baton');
   var urlToken = urlParams.get('t');
   var urlKey = urlParams.get('key');
 
+  // A pairing link opened in a browser (a phone camera, a pasted link) is handled at once.
+  var pageLink = parseLink(location.href);
+  if (pageLink) {
+    history.replaceState(null, '', location.pathname + location.search);
+    releaseNativeSkeleton();
+    applyLink(pageLink, !!state.KEY).catch(function (e) { showError(errorMessage(e)); });
+    return;
+  }
+
   // Browser auto-login from a Start URL pointing at this origin.
   if (!isNativeApp && (urlToken || urlKey)) {
     showLoading('Connecting');
@@ -56,13 +70,25 @@ setNativeTabTitle('Baton');
     return;
   }
 
-  // Already signed in — for native we additionally need a saved server URL.
+  // Already signed in — for native we additionally need a saved server URL. Settings → Add device
+  // opens this page signed in (?add=1).
+  var adding = urlParams.has('add');
   if (state.KEY && (!isNativeApp || localStorage.getItem('_as'))) {
-    location.replace('index.html');
-    return;
+    if (!adding) {
+      location.replace('index.html');
+      return;
+    }
   }
 
   releaseNativeSkeleton();
+
+  if (adding) {
+    var leave = function () { if (history.length > 1) history.back(); else location.replace('setup.html'); };
+    var back = document.getElementById('addBackButton');
+    back.hidden = false;
+    mountBackButton(back, leave);
+    attachPageEdgeBackGesture(leave, ['.card']);
+  }
 
   // iOS keeps the keyboard open on taps that land on non-focusable areas.
   if ('ontouchstart' in window || navigator.maxTouchPoints > 0) {
@@ -103,6 +129,17 @@ setNativeTabTitle('Baton');
   // Parse a Start URL and route through the matching login flow.
   // Throws on malformed input or auth failure (caller handles UI).
   async function applyStartUrl(raw) {
+    var link = parseLink(raw);
+    if (link) return applyLink(link, adding);
+    if (adding) throw new Error('Log out first to join another account.');
+    if (raw.trim().split(/\s+/).length === 24) {
+      var k = await fromPhrase(raw);
+      if (!k) throw new Error('Check the recovery phrase: a word is wrong or missing.');
+      var recoveryServer = localStorage.getItem('_as') || localStorage.getItem('_ls') || state.SERVER;
+      setCredentials(await recoverAccount(recoveryServer, k), recoveryServer);
+      location.replace('index.html');
+      return;
+    }
     var server = '';
     var token = '';
     var key = '';
@@ -136,6 +173,7 @@ setNativeTabTitle('Baton');
       import('@tauri-apps/api/app').then(function (appMod) {
         return appMod.onBackButtonPress(function () {
           if (scanModule) window.__cancelScan();
+          else if (adding) history.back();
           else window.BatonAndroid.moveTaskToBack();
         });
       }).catch(function () {});
@@ -226,6 +264,34 @@ setNativeTabTitle('Baton');
     var data = await res.json();
     if (!data || !data.apiKey) throw new Error('Invalid response');
     return data.apiKey;
+  }
+
+  // Signed in, only a computer's code is accepted: an online computer of the account adds it. Then
+  // home shows it, with Settings and this page gone from the back stack.
+  async function applyLink(link, signedIn) {
+    showLoading('Connecting');
+    if (signedIn) {
+      if (link.kind !== 'j') throw new Error('Log out first to join another account.');
+      var reply = await viaComputer('pair_approve', { link: link.text });
+      return finishAdd(reply.deviceName);
+    }
+    var result = await signInWithLink(link);
+    setCredentials(result.token, link.server);
+    if (result.added) return finishAdd(result.added);
+    location.replace('index.html');
+  }
+
+  function finishAdd(name) {
+    sessionStorage.setItem('baton-added', name);
+    if (sessionStorage.getItem('baton-add-depth') === '2') { sessionStorage.removeItem('baton-add-depth'); history.go(-2); }
+    else location.replace('index.html');
+  }
+
+  function showError(text) {
+    hideLoading();
+    var errEl = document.getElementById('error');
+    errEl.textContent = text;
+    errEl.style.display = 'block';
   }
 
   // Validate key + cache wsUrl + route to setup if no devices yet, else index.

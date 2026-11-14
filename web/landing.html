@@ -79,10 +79,13 @@
     border-radius: 50%; animation: spin 0.7s linear infinite; margin-right: 8px;
   }
   @keyframes spin { to { transform: rotate(360deg); } }
+  .add-back { position: fixed; top: calc(var(--sat, env(safe-area-inset-top, 0px)) + 6px); left: 8px; width: 28px; height: 28px; display: flex; }
+  html.native-mobile .add-back { width: 44px; height: 44px; top: var(--sat, env(safe-area-inset-top, 0px)); left: 0; }
 </style>
 </head>
 <body>
 
+<span id="addBackButton" class="add-back" hidden></span>
 <div class="card">
   <div class="logo"><img src="assets/baton-logo.svg" alt=""></div>
   <h1>Baton</h1>
