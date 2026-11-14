@@ -69,7 +69,7 @@ setNativeTabTitle('Settings');
   var listing = null;
   if (paired) devices().then(function (body) {
     listing = body;
-    document.querySelector('.account-actions').hidden = !body.hosted;
+    document.querySelectorAll('.hosted-only').forEach(function (row) { row.hidden = !body.hosted; });
     // A paired App of a self-hosted stack has no install command it could show (the public one is hosted only).
     if (!body.hosted) { document.querySelector('[data-tab="install"]').hidden = true; window.selectConnectTab('url'); }
   }, function () {});
@@ -125,8 +125,9 @@ setNativeTabTitle('Settings');
 
   // Opened by Show phrase; Show loads it in place (an online computer holds K) and the dialog stays.
   var phraseDialog = document.getElementById('phraseDialog');
+  var phraseNote = document.getElementById('phraseNote').textContent;
   window.showRecoveryPhrase = function () {
-    document.getElementById('phraseNote').hidden = false;
+    document.getElementById('phraseNote').textContent = phraseNote;
     phraseDialog.querySelector('.phrase').hidden = true;
     phraseDialog.querySelector('.cancel').hidden = false;
     document.getElementById('phraseShow').textContent = 'Show';
@@ -145,7 +146,7 @@ setNativeTabTitle('Settings');
       document.getElementById('phraseWords').innerHTML = words.map(function (word) { return '<li>' + word + '</li>'; }).join('');
       phraseDialog.querySelector('.phrase .code-btn').innerHTML = COPY_ICON;
       phraseDialog.querySelector('.phrase').hidden = false;
-      document.getElementById('phraseNote').hidden = true;
+      document.getElementById('phraseNote').textContent = 'To get the account back on a new phone or browser, open Baton and paste these words into the sign-in field (where a Start URL goes).';
       phraseDialog.querySelector('.cancel').hidden = true;
       button.textContent = 'Done';
     } catch (e) {
