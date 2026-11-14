@@ -87,7 +87,8 @@
   .account-actions .setting-row[hidden] { display: none; }
   .account-actions .setting-row:not([hidden]) ~ .setting-row { border-top: 1px solid var(--border); margin-top: 14px; padding-top: 14px; }
   .account-actions .chev { color: var(--text-muted); font-size: 22px; line-height: 1; }
-  .danger-row strong { color: var(--danger); }
+  .center-action { display: block; text-align: center; color: var(--text-primary); text-decoration: none; font-size: 15px; font-weight: 500; }
+  .center-action[hidden] { display: none; }
   #appsList .agent-thread-row { cursor: default; display: flex; align-items: center; gap: 10px; }
   #appsList .agent-thread-copy { flex: 1; }
   .phrase { position: relative; margin: 4px 0 16px; padding: 12px 44px 12px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--canvas); }
@@ -188,9 +189,10 @@
   <a class="setting-row hosted-only" hidden href="#" onclick="openAppsSheet(); return false"><strong>Signed-in devices</strong><span class="chev" aria-hidden="true">›</span></a>
   <a class="setting-row hosted-only" hidden href="#" onclick="showRecoveryPhrase(); return false"><strong>Recovery phrase</strong><span class="chev" aria-hidden="true">›</span></a>
   <div class="setting-row"><strong>Version</strong><span id="appVersion" class="version-value"></span></div>
-  <a class="setting-row hosted-only danger-row" hidden href="#" onclick="deleteAccount(); return false"><strong>Delete account</strong></a>
-  <a class="setting-row danger-row" href="#" onclick="logout(); return false"><strong>Log out</strong></a>
 </div>
+<!-- Account-wide actions, one centered card each (as WeChat's Switch account / Log out). -->
+<a class="section center-action hosted-only" hidden href="#" onclick="deleteAccount(); return false">Delete account</a>
+<a class="section center-action" href="#" onclick="logout(); return false">Log out</a>
 
 <!-- Phones, browsers and desktop Apps of the account (computers are on home); same sheet as the Subagents. -->
 <div id="appsSheet" class="modal-overlay agent-threads-overlay" style="display:none" onclick="if(event.target===this)closeAppsSheet()">
