@@ -52,7 +52,7 @@ setNativeTabTitle('Settings');
     else location.href = 'index.html';
   }
 
-  // The scan icon shows where Add device can scan: the phone apps (as on the sign-in page).
+  // The scan icon shows where Add computer can scan: the phone apps (as on the sign-in page).
   var nativeApp = !location.origin.startsWith('http') || location.origin.includes('tauri.localhost');
   if ((nativeApp && ('ontouchstart' in window || navigator.maxTouchPoints > 0)) || window.harmonyBridge) {
     document.querySelector('.add-device .scan-icon').removeAttribute('hidden'); // an SVG has no .hidden property

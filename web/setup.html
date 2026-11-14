@@ -137,7 +137,7 @@
 
 <div class="setup-content">
 <a class="section setting-row add-device" href="landing.html?add=1">
-  <strong><svg class="scan-icon" hidden viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 8V6a2 2 0 0 1 2-2h2M16 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-2M4 12h16"/></svg>Add device</strong>
+  <strong><svg class="scan-icon" hidden viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 8V6a2 2 0 0 1 2-2h2M16 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-2M4 12h16"/></svg>Add computer</strong>
   <span class="chev" aria-hidden="true">›</span>
 </a>
 
@@ -185,7 +185,7 @@
 
 <!-- Rows marked hosted-only show for an account made by pairing (not a self-hosted, API-key one). -->
 <div class="section account-actions">
-  <a class="setting-row hosted-only" hidden href="#" onclick="openAppsSheet(); return false"><strong>Signed-in devices</strong><span class="chev" aria-hidden="true">›</span></a>
+  <a class="setting-row hosted-only" hidden href="#" onclick="openAppsSheet(); return false"><strong>Phones &amp; browsers</strong><span class="chev" aria-hidden="true">›</span></a>
   <a class="setting-row hosted-only" hidden href="#" onclick="showRecoveryPhrase(); return false"><strong>Recovery phrase</strong><span class="chev" aria-hidden="true">›</span></a>
   <div class="setting-row"><strong>Version</strong><span id="appVersion" class="version-value"></span></div>
   <a class="setting-row hosted-only" hidden href="#" onclick="deleteAccount(); return false"><strong>Delete account</strong><span class="chev" aria-hidden="true">›</span></a>
@@ -194,8 +194,8 @@
 
 <!-- Phones, browsers and desktop Apps of the account (computers are on home); same sheet as the Subagents. -->
 <div id="appsSheet" class="modal-overlay agent-threads-overlay" style="display:none" onclick="if(event.target===this)closeAppsSheet()">
-  <div class="modal-box agent-threads-box" role="dialog" aria-modal="true" aria-label="Signed-in devices">
-    <div class="agent-threads-header"><div class="modal-title">Signed-in devices</div></div>
+  <div class="modal-box agent-threads-box" role="dialog" aria-modal="true" aria-label="Phones &amp; browsers">
+    <div class="agent-threads-header"><div class="modal-title">Phones &amp; browsers</div></div>
     <div id="appsList" class="agent-threads-list"></div>
   </div>
 </div>

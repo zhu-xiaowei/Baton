@@ -70,7 +70,7 @@ setNativeTabTitle('Baton');
     return;
   }
 
-  // Already signed in — for native we additionally need a saved server URL. Settings → Add device
+  // Already signed in — for native we additionally need a saved server URL. Settings → Add computer
   // opens this page signed in (?add=1).
   var adding = urlParams.has('add');
   if (state.KEY && (!isNativeApp || localStorage.getItem('_as'))) {
