@@ -56,6 +56,8 @@ test('a Done session exits; background tasks and prompts keep it until they end'
   emit(proc, { type: 'result', subtype: 'success' }); // CC's report-back turn
   assert.equal(pool.procs.get('sid'), proc, 'a waiting prompt keeps its process');
   pool.replyControl('sid', 'r1', { behavior: 'allow', updatedInput: {} });
+  assert.equal(pool.procs.get('sid'), proc, 'the turn that asked still has to finish');
+  emit(proc, { type: 'result', subtype: 'success' });
   assert.equal(pool.procs.has('sid'), false);
   await exited(proc);
 });

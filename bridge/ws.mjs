@@ -248,7 +248,7 @@ export async function closeTerminalsForUpdate() {
   await new Promise(resolve => setTimeout(resolve, 1500));
 }
 
-// Idle pooled processes do not block terminal-driven status updates.
+// Only busy turns own status; a process waiting on background tasks does not.
 export function poolOwns(sessionId) { return _pool.isBusy(sessionId); }
 export function poolAwaitsAgents(sessionId) { return _pool.awaitsAgents(sessionId); }
 // Whether the last root write held its Done for background agents; a released hold is written.
@@ -1985,6 +1985,7 @@ export async function handleDeleteFiles(msg, {
       if (await remove(adapter, 'deleteSessionHistory', identity.nativeSessionId)) {
         deletedSessions++;
         _grants.forget(identity.sessionId);
+        _pool.sessionArgs.delete(identity.nativeSessionId);
       }
     }
     for (const ph of msg.projectHashes || []) {

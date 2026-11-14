@@ -63,6 +63,7 @@ class HeadlessProc {
     // Session grants live only in CC's memory; every resume gets them again.
     const allowed = this.sessionId ? this.pool.allowedTools(this.sessionId) : [];
     if (allowed.length) args.push('--allowedTools', ...allowed);
+    args.push(...Object.entries(this.pool.sessionArgs.get(this.sessionId) || {}).filter(([, value]) => value).flat());
     // --session-id (new) and --resume (existing) are mutually exclusive — both makes CC swallow stdin; createId wins.
     if (this.createId) args.push('--session-id', this.createId);
     else if (this.sessionId) args.push('--resume', this.sessionId);
@@ -206,7 +207,11 @@ class HeadlessProc {
         this.streamId = null;
       }
       // Before onResult, so a send it starts waits for this exit.
-      this.pool._exitIfDone(this);
+      const flag = { model: '--model', effort: '--effort' }[o.local_command];
+      if (!flag) this.pool._exitIfDone(this);
+      // /model and /effort last as long as the process; the next one gets CC's applied value.
+      else this.requestControl({ subtype: 'get_settings' }).then((s) => this.pool.sessionArgs.set(this.sessionId,
+        { ...this.pool.sessionArgs.get(this.sessionId), [flag]: s?.applied?.[o.local_command] }), () => {}).finally(() => this.pool._exitIfDone(this));
       cb?.onResult?.(sid, { ...o, consumedInputIds, continued: this.busy });
       return;
     }
@@ -348,11 +353,12 @@ export class ClaudePool {
     this._live = new Set();  // spawned and not yet exited, including Done ones still closing
     this._exiting = new Map();  // key → exit of its Done process; the next spawn waits for it
     this.allowedTools = opts.allowedTools || (() => []);  // sessionId → rules granted for the session
+    this.sessionArgs = new Map();  // sessionId → { '--model', '--effort' } chosen in the session
     this._onExit = opts.onExit || null;  // (sessionId, hadPrompts) => void, a busy or prompting proc exited
     this._onControlRequest = opts.onControlRequest || null;  // (sessionId, request) => void, asked with no pool turn
   }
 
-  // A Done process can exit long after its key was respawned; it must not drop the live one.
+  // An exiting process must not drop a newer one under its key.
   _remove(key, proc) { if (this.procs.get(key) === proc) this.procs.delete(key); }
 
   // EOF and wait for exit so the next --resume is the only writer.
@@ -521,7 +527,6 @@ export class ClaudePool {
     try { proc.stdin.write(JSON.stringify(env) + '\n'); }
     catch { return false; }
     proc.unanswered.delete(requestId);
-    this._exitIfDone(proc);
     return true;
   }
 

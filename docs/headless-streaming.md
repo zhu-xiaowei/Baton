@@ -110,16 +110,15 @@ would spawn a second `--resume` process writing the same jsonl as the first → 
 | Permissions | **Default `--permission-prompt-tool stdio` without bypass** — whatever permissions the user configured apply (zero intrusion). See Section 6.5 |
 | Display/persistence | Complete stream lines = real-time authority, `text_delta` = typewriter preview; runtime-owned JSONL lines are not pushed again |
 | Preview rendering | Fault-tolerant full markdown re-render (see Section 5) |
-| On-demand start | **No pre-start**; spawn only when a new message arrives and no process exists (spawn→init ready in ≤30s, then reused for the same session) |
-| Exit | **Session Done** (`result`, no queued input, no background task, no unanswered `control_request`) → close stdin, process exits cleanly (jsonl kept); no idle reap, no cap |
+| On-demand start | **No pre-start**; spawn only when a new message arrives and no process exists (spawn→init ready in ≤30s); messages sent before the Session is Done reuse it |
+| Exit | **Session Done** (checked at each `result`: no queued input, no background task, no unanswered `control_request`) → close stdin, process exits cleanly (jsonl kept); no idle reap, no cap |
 
 ### Single-Writer Constraint (two layers)
 1. **Internal**: only one headless process per session (guaranteed by the pool) → eliminates double writes from "us starting several".
 2. **External**: a daemon agent can be taken over after `claude stop`. A terminal/VS Code process holding the session
    has no lock, so Bridge asks (`claude_active_writer`, same modal as Codex) and terminates it on confirmation; it
-   never reloads the jsonl, so its next write would fork. An idle pooled process that missed a turn appended by
-   another client (unseen user/assistant uuid after its last idle size) is closed and resumed again before the send.
-   A terminal opening the session while a Baton turn runs is still undetected.
+   never reloads the jsonl, so its next write would fork. A Baton process exits once the Session is Done, so the
+   next send always resumes from the jsonl. A terminal opening the session while a Baton turn runs is still undetected.
 
 ## 3. Data Flow
 
@@ -127,9 +126,9 @@ would spawn a second `--resume` process writing the same jsonl as the first → 
 ```
 App doSend()  ──direct RPC send_message {sessionId|projectHash, text, turnId}──►
 Bridge requestSendMessage → handleSendMessage → pool.send(sessionId|new, cwd, text, callbacks):
-  ┌─ process exists and idle → write user message to stdin directly
-  ├─ process exists and busy → enqueue, feed after the turn ends
-  └─ no process → spawn persistent process (new: no --resume; existing: --resume <id>), keep stdin open
+  ┌─ process exists (turn, background task or prompt still open) → write to its stdin; busy → fed after the turn
+  ├─ previous process still exiting → wait for its exit
+  └─ no process → spawn (new: --session-id; existing: --resume <id> + session grants/--model/--effort), keep stdin open
   parse stdout line by line (see Section 6):
     system/init                → verify session_id + cwd
     content_block_delta/text   → onDelta(turnId, text) → WS stream_delta (typewriter preview)
@@ -179,8 +178,9 @@ Persisted: CC writes jsonl (history is read from it on demand)
 | **Exit** | Session Done (design §6.6): `result` with no queued input, `backgroundTasks === 0`, no unanswered `control_request` → close stdin (no signal), CC exits; a send that arrives meanwhile waits for the exit, then spawns `--resume`. With background tasks, CC's report-back turn's `result` is checked the same way |
 | **Crash** | Process exits unexpectedly → removed from pool; the next message re-spawns as "no process" (with `--resume` to continue) |
 
-Every send after Done is a new process, so settings, MCP and CLAUDE.md changes apply to the next message;
-session grants are passed again through `--allowedTools`.
+Every send after Done is a new process, so settings, MCP and CLAUDE.md changes apply to the next message.
+Session-only choices come back as spawn flags: grants through `--allowedTools`, and `/model` / `/effort` through
+`--model` / `--effort` with the value CC's `get_settings` reports right after the command (in memory, dropped with the Session).
 
 ## 4. Status Ownership and Takeover
 
@@ -518,8 +518,8 @@ tmux, Stall Rescue, capture-pane command output and `streamMode` are all deleted
 | External session status | `session.mjs` combines processes, daemon roster and JSONL to derive terminal/VS Code/agent status |
 | Web interaction | `headless.mjs` `ClaudePool` handles sending, streaming, queue, interrupt, permissions and exit when Done |
 
-Status ownership precedence is: busy pool-owned > roster-active daemon > external process/JSONL. An idle pool
-only keeps a reusable process and does not prevent the terminal from later updating status to running or `needs_input`; structured
+Status ownership precedence is: busy pool-owned > roster-active daemon > external process/JSONL. A process waiting only
+on background tasks does not prevent the terminal from later updating status to running or `needs_input`; structured
 `AskUserQuestion`/`ExitPlanMode` are detected precisely, while questions ending in plain text remain a known limitation of external status.
 
 The primary slash command catalog comes from a separate, no-session-persistence headless `initialize` control request, directly reusing
