@@ -122,7 +122,7 @@ const gcm = (k, name, usage) => derive(k, name, { name: 'AES-GCM', length: 256 }
 
 export async function accountOf(raw) {
   const k = await importAccountKey(raw);
-  return { accountId: hex(await bits(k, 'account', 64)), joinSecret: b64url(await bits(k, 'join')) };
+  return { accountId: hex(await bits(k, 'account', 64)), joinSecret: b64url(await bits(k, 'join')), fp: hex(await bits(k, 'fp', 64)) };
 }
 
 // One 32-byte key sealed with AES-GCM: nonce ‖ ciphertext ‖ tag, base64.

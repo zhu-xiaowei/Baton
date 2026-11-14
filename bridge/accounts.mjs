@@ -7,12 +7,11 @@ import qrcode from 'qrcode-terminal';
 import { CONFIG_PATH, saveConfig } from './config.mjs';
 import { fingerprint, openPair, openRotation, sealPair } from './e2ee-node.mjs';
 
-const POLL_MS = 2000;
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-async function call(config, path, body, fetchImpl) {
+async function call(config, path, body, fetchImpl = fetch) {
   const res = await fetchImpl(`${config.server}${path}`, {
-    method: 'POST', body: JSON.stringify(body), signal: AbortSignal.timeout(15_000),
+    method: body ? 'POST' : 'GET', body: body && JSON.stringify(body), signal: AbortSignal.timeout(15_000),
     headers: { 'Content-Type': 'application/json', ...(config.apiKey ? { 'x-api-key': config.apiKey } : {}) },
   });
   const reply = await res.json().catch(() => ({}));
@@ -20,12 +19,13 @@ async function call(config, path, body, fetchImpl) {
   return reply;
 }
 
-// `web`: where the App is served (the server's reply), else the API URL.
-const pairLink = (config, kind, code, t, web) => `${web || config.server}/landing.html#${kind}=${code}&t=${t.toString('base64url')}`;
+// `web` (the server's reply): where the App is served, which also serves its data socket.
+const link = (kind, code, t, web) => `${web}/landing.html#${kind}=${code}&t=${t.toString('base64url')}`;
+const sealed = (config, t, code) => sealPair(t, Buffer.from(config.accountKey, 'base64'), code);
 
-function show(print, link) {
-  qrcode.generate(link, { small: true }, (qr) => print(qr));
-  print(link);
+function show(print, url) {
+  qrcode.generate(url, { small: true }, (qr) => print(qr));
+  print(url);
 }
 
 // Resolves with the config to save once an App approved this computer; a new code every 10 minutes.
@@ -34,91 +34,75 @@ export async function join(config, { print = console.log, sleep = pause, fetchIm
     const t = randomBytes(16);
     const { code, poll, expiresIn, web } = await call(config, '/api/pair/start', { deviceName: config.deviceName }, fetchImpl);
     print('\nScan with the Baton app on your phone to add this computer:');
-    show(print, pairLink(config, 'j', code, t, web));
-    for (const end = Date.now() + expiresIn * 1000; Date.now() < end; await sleep(POLL_MS)) {
-      let reply;
-      try {
-        reply = await call(config, '/api/pair/wait', { code, poll }, fetchImpl);
-      } catch (error) {
-        if (error.status === 404) break;
-        continue;
-      }
+    show(print, link('j', code, t, web || config.server));
+    for (const end = Date.now() + expiresIn * 1000; Date.now() < end; await sleep(2000)) {
+      const reply = await call(config, '/api/pair/wait', { code, poll }, fetchImpl).catch((error) => (error.status === 404 ? null : { pending: true }));
+      if (!reply) break;
       if (reply.pending) continue;
       const k = openPair(t, reply.sealed, code);
       // The server names the account's current key (`head`, a fingerprint): K must be that key.
-      if (k?.length !== 32 || (reply.head && fingerprint(k) !== reply.head)) {
-        throw new Error('the server answered with a key that does not belong to the account; not joining');
-      }
+      if (k?.length !== 32 || (reply.head && fingerprint(k) !== reply.head)) throw new Error('the key received is not the account\'s; not joining');
       print(`Joined, approved by ${reply.approvedBy}`);
       return { ...config, apiKey: reply.token, accountKey: k.toString('base64'), accountKeyAt: Date.now(), accounts: true };
     }
   }
 }
 
-// A one-use link that adds a new App to this computer's account (also the App's `pair_invite` request).
-export async function createInvite(config, fetchImpl = fetch) {
+// A one-use link that adds a new App to this computer's account (`pair`, the App's `pair_invite`).
+export async function createInvite(config) {
   const t = randomBytes(16);
   const code = randomBytes(16).toString('base64url');
-  const k = Buffer.from(config.accountKey, 'base64');
-  const { expiresIn, web } = await call(config, '/api/pair/create', { code, sealed: sealPair(t, k, code) }, fetchImpl);
-  return { link: pairLink(config, 'c', code, t, web), expiresIn };
+  const { expiresIn, web } = await call(config, '/api/pair/create', { code, sealed: sealed(config, t, code) });
+  return { link: link('c', code, t, web || config.server), expiresIn };
 }
 
-// Adds the computer that printed `link` to this computer's account (`pair <link>`, the App's `pair_approve`).
-export async function approveJoin(config, link, fetchImpl = fetch) {
-  const { kind, code, t } = parseLink(link);
-  if (kind !== 'j') throw new Error('not a computer\'s join code');
-  const k = Buffer.from(config.accountKey, 'base64');
-  return call(config, '/api/pair/approve', { code, sealed: sealPair(t, k, code) }, fetchImpl);
+// Adds the computer that printed `url` to this computer's account (`pair <link>`, the App's `pair_approve`).
+export function approveJoin(config, url) {
+  const params = new URLSearchParams(String(url).split('#')[1] || '');
+  if (!params.get('j') || !params.get('t')) throw new Error('not a computer\'s join code');
+  const t = Buffer.from(params.get('t'), 'base64url');
+  return call(config, '/api/pair/approve', { code: params.get('j'), sealed: sealed(config, t, params.get('j')) });
 }
 
 // The newest K after rotations made while this computer was away or just now (`account_rotated`), or null.
-export async function rotatedKey(config, fetchImpl = fetch) {
-  const res = await fetchImpl(`${config.server}/api/bridge/devices`, { headers: { 'x-api-key': config.apiKey }, signal: AbortSignal.timeout(10_000) });
-  if (!res.ok) return null;
-  const { rotations = [] } = await res.json();
+export async function rotatedKey(config) {
+  const { rotations = [] } = await call(config, '/api/bridge/devices');
   let k = Buffer.from(config.accountKey, 'base64');
-  let changed = false;
-  for (let step = 0; step < rotations.length; step++) {
-    const entry = rotations.find((candidate) => candidate.fp === fingerprint(k));
-    const next = entry && openRotation(k, entry.sealed, entry.fp);
+  for (let entry; (entry = rotations.find((candidate) => candidate.fp === fingerprint(k)));) {
+    const next = openRotation(k, entry.sealed, entry.fp);
     if (next?.length !== 32) break;
     k = next;
-    changed = true;
   }
-  return changed ? k : null;
-}
-
-export function parseLink(link) {
-  const params = new URLSearchParams(String(link).split('#')[1] || '');
-  const kind = params.has('j') ? 'j' : params.has('c') ? 'c' : '';
-  if (!kind || !params.get('t')) throw new Error('not a Baton pairing link');
-  return { kind, code: params.get(kind), t: Buffer.from(params.get('t'), 'base64url') };
+  return k.toString('base64') === config.accountKey ? null : k;
 }
 
 export async function runPair() {
-  if (!process.stdout.isTTY && !process.argv[3]) {
-    console.error('Run `node ~/.baton-bridge/bridge.mjs pair` in a terminal: its QR code is shown only there.');
-    return 1;
-  }
+  const target = process.argv[3];
   let config;
   try { config = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8')); } catch {
     console.error('No Bridge config; run the install command first.');
     return 1;
   }
-  const link = process.argv[3];
-  if (config.accountKey && link) console.log(`Added ${(await approveJoin(config, link)).deviceName}`);
-  else if (config.accountKey) {
-    for (;;) {
-      const { link: invite, expiresIn } = await createInvite(config);
-      console.log('\nScan with the Baton app on a new phone, or open the link in a browser, to add it (Ctrl-C to stop):');
-      show(console.log, invite);
-      await pause(expiresIn * 1000);
-    }
-  } else if (!config.apiKey) saveConfig(await join(config));
-  else {
+  if (config.accountKey && target) {
+    console.log(`Added ${(await approveJoin(config, target)).deviceName}`);
+    return 0;
+  }
+  if (!process.stdout.isTTY) {
+    console.error('Run `node ~/.baton-bridge/bridge.mjs pair` in a terminal: its QR code is shown only there.');
+    return 1;
+  }
+  if (!config.accountKey && config.apiKey) {
     console.error('This computer has no account key yet; open the Baton app once, then try again.');
     return 1;
   }
-  return 0;
+  if (!config.accountKey) {
+    saveConfig(await join(config));
+    return 0;
+  }
+  for (;;) {
+    const { link: invite, expiresIn } = await createInvite(config);
+    console.log('\nScan with the Baton app on a new phone, or open the link in a browser, to add it (Ctrl-C to stop):');
+    show(console.log, invite);
+    await pause(expiresIn * 1000);
+  }
 }

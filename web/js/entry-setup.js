@@ -12,7 +12,7 @@ import { initMacosTabs, setNativeTabTitle } from './macos-tabs.js';
 import { initMobileNotifications, mountNotificationSettings } from './mobile-notifications.js';
 import { mountTextSizeSettings } from './text-size-settings.js';
 import { initPageZoomShortcuts } from './page-zoom.js';
-import { removeApp, viaComputer } from './v2/pairing.js';
+import { removeDevice, viaComputer } from './v2/pairing.js';
 import { devices } from './v2/direct-transport.js';
 import { toPhrase } from './v2/recovery.js';
 import { confirmDialog } from './components/confirm-dialog.js';
@@ -35,16 +35,18 @@ setNativeTabTitle('Settings');
   void initMobileNotifications();
   mountThemeSettings();
 
+  function fromIndex() {
+    var referrer = document.referrer ? new URL(document.referrer) : null;
+    return referrer && referrer.origin === location.origin && /\/(?:index\.html)?$/.test(referrer.pathname);
+  }
+
   function leaveSetup() {
     if (!(window.isTauri || window.__TAURI_INTERNALS__)) {
       location.href = 'index.html';
       return;
     }
     sessionStorage.setItem('baton-returning-home', '1');
-    var referrer = document.referrer ? new URL(document.referrer) : null;
-    var fromIndex = referrer && referrer.origin === location.origin
-      && /\/(?:index\.html)?$/.test(referrer.pathname);
-    if (fromIndex && history.length > 1) history.back();
+    if (fromIndex() && history.length > 1) history.back();
     else location.href = 'index.html';
   }
 
@@ -56,15 +58,12 @@ setNativeTabTitle('Settings');
 
   // After adding, the sign-in page returns to home past this page when home opened it.
   document.querySelector('.add-device').addEventListener('click', function () {
-    var referrer = document.referrer ? new URL(document.referrer) : null;
-    var fromIndex = referrer && referrer.origin === location.origin && /\/(?:index\.html)?$/.test(referrer.pathname);
-    sessionStorage.setItem('baton-add-depth', fromIndex && history.length > 2 ? '2' : '0');
+    sessionStorage.setItem('baton-add-depth', fromIndex() && history.length > 2 ? '2' : '0');
   });
 
-  // A paired account's own actions (design §7, §9).
+  // Only an account created by pairing has a recovery phrase, deletion and Apps to remove (not a paired App
+  // of a self-hosted, API-key account).
   var paired = state.KEY.indexOf('bt_') === 0;
-  // Only an account created by pairing has a recovery phrase, deletion and Apps to remove; a paired App
-  // of a self-hosted (API-key) account does not.
   var listing = null;
   if (paired) devices().then(function (body) { listing = body; document.querySelector('.account-actions').hidden = !body.hosted; }, function () {});
 
@@ -83,20 +82,21 @@ setNativeTabTitle('Settings');
     }).join('');
   }
 
+  // The Subagents sheet's open/close (app.js), which this page does not load.
+  var sheet = document.getElementById('appsSheet');
   window.openAppsSheet = function () {
-    var sheet = document.getElementById('appsSheet');
     renderApps();
     sheet.style.display = 'flex';
     void sheet.offsetWidth;
     sheet.classList.add('open');
     devices().then(function (body) { listing = body; renderApps(); }, function () {});
   };
-
   window.closeAppsSheet = function () {
-    var sheet = document.getElementById('appsSheet');
     sheet.classList.remove('open');
     setTimeout(function () { if (!sheet.classList.contains('open')) sheet.style.display = 'none'; }, 320);
   };
+
+  function failed(title, error) { return confirmDialog(title, [[true, 'OK', true]], true, error.message); }
 
   // A lost phone or browser: its token stops and the account key is replaced, as for a computer.
   document.getElementById('appsList').addEventListener('click', async function (event) {
@@ -107,12 +107,12 @@ setNativeTabTitle('Settings');
       'It is signed out at once and cannot reach your computers again; to use it again, add it with a new code.')) return;
     button.disabled = true;
     try {
-      await removeApp(button.dataset.id);
+      await removeDevice('/api/tokens/revoke', { id: button.dataset.id });
       listing = await devices();
       renderApps();
     } catch (e) {
       button.disabled = false;
-      await confirmDialog('Could not remove it', [[true, 'OK', true]], true, e.message);
+      await failed('Could not remove it', e);
     }
   });
 
@@ -123,7 +123,7 @@ setNativeTabTitle('Settings');
       var reply = await viaComputer('recovery_key');
       await confirmDialog('Recovery phrase', [[true, 'Done', true]], true, await toPhrase(fromBase64(reply.k)));
     } catch (e) {
-      await confirmDialog('Could not show the phrase', [[true, 'OK', true]], true, e.message);
+      await failed('Could not show the phrase', e);
     }
   };
 
@@ -134,16 +134,15 @@ setNativeTabTitle('Settings');
       await apiPost('/api/account/delete');
       logout();
     } catch (e) {
-      await confirmDialog('Could not delete the account', [[true, 'OK', true]], true, e.message);
+      await failed('Could not delete the account', e);
     }
   };
 
   mountBackButton(document.getElementById('setupBackButton'), leaveSetup);
   initSystemBack({ navigate: () => { leaveSetup(); return true; } });
 
-  // One 10-minute code serves the three tabs, requested only when one of them is shown. With the API
-  // key it is a start token, so the key never appears in the install command, Start URL or QR code; a
-  // paired App (device token) gets a one-use invite that an online computer seals K into.
+  // One 10-minute code serves the three tabs, requested only when one is shown: with the API key a start
+  // token (the key never appears in them), for a paired App a one-use invite an online computer seals K into.
   var platform = /Win/.test(navigator.platform) ? 'windows' : 'unix';
   var tokenRequest = null;
 
@@ -155,15 +154,11 @@ setNativeTabTitle('Settings');
     return tokenRequest;
   }
 
-  function installCommand(startUrl) {
-    var url = paired ? state.SERVER + '/install' : startUrl.replace('/?t=', '/auth/install?t=');
-    var windows = platform === 'windows';
-    if (paired) return windows ? "irm '" + url + "?platform=windows' | iex" : 'curl -sL ' + url + ' | bash';
-    return windows ? "irm '" + url + "&platform=windows' | iex" : 'curl -sL "' + url + '" | bash';
-  }
-
+  // A paired account installs with the public command; an API-key one with its start token.
   function connectText(panel, startUrl) {
-    return panel === 'url' ? startUrl : installCommand(startUrl);
+    if (panel === 'url') return startUrl;
+    var url = paired ? state.SERVER + '/install' : startUrl.replace('/?t=', '/auth/install?t=');
+    return platform === 'windows' ? "irm '" + url + (paired ? '?' : '&') + "platform=windows' | iex" : 'curl -sL "' + url + '" | bash';
   }
 
   function resetConnect() {

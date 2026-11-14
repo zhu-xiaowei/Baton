@@ -22,7 +22,7 @@ test('a computer joins with K sealed by an App under the QR code secret, and che
       return { ok: true, json: async () => reply };
     };
     const joining = join({ server: 'https://s/v1', deviceName: 'Mac' }, { print: (line) => printed.push(line), sleep: async () => {}, fetchImpl });
-    if (claimed !== head) { await assert.rejects(joining, /does not belong/); continue; }
+    if (claimed !== head) { await assert.rejects(joining, /not joining/); continue; }
     const config = await joining;
     assert.equal(config.apiKey, 'bt_x');
     assert.ok(Buffer.from(config.accountKey, 'base64').equals(k) && config.accounts && printed.at(-1).includes('iPhone'));
