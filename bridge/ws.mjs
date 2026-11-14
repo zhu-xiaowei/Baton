@@ -922,7 +922,8 @@ async function handleMessage(msg) {
     case 'account_deleted':
     case 'device_removed':
       uninstallBridge();
-      console.log('[ws] this device was removed from Baton and autostart is off; run a new install command from Setup to add it again');
+      console.log(msg.action === 'account_deleted' ? '[ws] the Baton account was deleted and autostart is off; run the install command again to start a new one'
+        : '[ws] this device was removed from Baton and autostart is off; run a new install command from Setup to add it again');
       // falls through: stop exactly like a replaced Bridge
     case 'bridge_replaced':
       if (msg.action === 'bridge_replaced') console.log('[ws] replaced by another Bridge for this device; stopping reconnects');
