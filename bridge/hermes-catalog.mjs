@@ -63,13 +63,16 @@ export const catalog = {
       sigs.set(s.id, sig);
       if (cursor?.sigs.get(s.id) !== sig || added.has(s.id)) changed.push(s);
     }
-    // Newest message per Session: one grouped scan at start, then only the changed Sessions.
-    const lastQuery = 'SELECT session_id, max(timestamp) AS ts FROM messages';
+    // Newest message and stored bytes per Session: one grouped scan at start, then only the changed Sessions.
+    // Like a transcript file's size: text, tool calls and reasoning once (the columns this version has).
+    const cols = select('messages', ['content', 'tool_calls', 'reasoning_details', 'reasoning_content', 'reasoning']).split(', ').filter(Boolean);
+    const bytes = cols.filter((c) => c !== 'reasoning' || !cols.includes('reasoning_content')).map((c) => `coalesce(length(CAST(${c === 'reasoning_content' && cols.includes('reasoning') ? 'coalesce(reasoning_content, reasoning)' : c} AS BLOB)), 0)`).join(' + ') || '0';
+    const lastQuery = `SELECT session_id, max(timestamp) AS ts, sum(${bytes}) AS bytes FROM messages`;
     const last = new Map((cursor ? changed.flatMap((s) => db.all(`${lastQuery} WHERE session_id = ?`, [s.id]))
-      : db.all(`${lastQuery} GROUP BY session_id`)).map((r) => [r.session_id, r.ts]));
+      : db.all(`${lastQuery} GROUP BY session_id`)).map((r) => [r.session_id, r]));
     const upserts = changed.map((s) => ({
-      id: s.id, size: s.message_count || 0, model: s.model || '', title: s.title || '', firstPrompt: s.title ? '' : firstPrompt(s.id),
-      ms: Math.round(Math.max(Number(last.get(s.id)) || 0, Number(s.last_activity_at) || 0, Number(s.started_at) || 0) * 1000),
+      id: s.id, size: last.get(s.id)?.bytes || 0, model: s.model || '', title: s.title || '', firstPrompt: s.title ? '' : firstPrompt(s.id),
+      ms: Math.round(Math.max(Number(last.get(s.id)?.ts) || 0, Number(s.last_activity_at) || 0, Number(s.started_at) || 0) * 1000),
       source: s.source || '', createdSource: s.created_source || '', cwd: s.git_repo_root || s.cwd || '',
       parent: s.parent_session_id || null, hidden: !!s.hidden, archived: !!s.archived, ended: s.ended_at != null,
     }));

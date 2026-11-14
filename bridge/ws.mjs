@@ -762,15 +762,16 @@ function connect() {
         // With `subscribe` this also does what opening with `subscribe` does, before the file is
         // read, so nothing falls between the page and the pushes.
         history: async (params, caller) => {
-          if (!params.subscribe) return historyService.history(params);
           // A refresh of an open page only renews its lease; the replay and prompt are for opening.
-          if (_subscribers.has(params.sessionId, caller.replyTo)) _subscribers.add(params.sessionId, caller.replyTo, caller.deflate, params.rootSessionId);
-          else subscribeCaller(params, caller);
-          return { ...await historyService.history(params), bridgeEpoch: BRIDGE_EPOCH };
+          if (params.subscribe && _subscribers.has(params.sessionId, caller.replyTo)) _subscribers.add(params.sessionId, caller.replyTo, caller.deflate, params.rootSessionId);
+          else if (params.subscribe) subscribeCaller(params, caller);
+          const reply = await historyService.history(params);
+          if (reply.preview && !_catalogTitles.has(params.sessionId)) _catalogTitles.set(params.sessionId, reply.preview);
+          return params.subscribe ? { ...reply, bridgeEpoch: BRIDGE_EPOCH } : reply;
         },
         subscribe: (params, caller) => subscribeCaller(params, caller),
         notify_seen: params => { _notifyChecks.get(params.eventId)?.(true); return {}; },
-        unsubscribe: (params, caller) => { _subscribers.remove(params.sessionId, caller.replyTo); return {}; },
+        unsubscribe: (params, caller) => { _subscribers.remove(params.sessionId, caller.replyTo); if (!_subscribers.targets(params.sessionId, { root: true }).length) _catalogTitles.delete(params.sessionId); return {}; },
         send_message: (params, caller) => requestSendMessage(params, caller),
         interrupt: async params => { await handleInterrupt(params); return { ok: true }; },
         permission_reply: params => { handlePermissionReply(params); return { ok: true }; },
@@ -932,6 +933,23 @@ function publishTitle(reply) {
   const event = { action: 'session_title_changed', sessionId: reply.sessionId, projectHash: reply.projectHash,
     device: reply.device, name: reply.name };
   _directRpc?.publish(event, _subscribers.targets(reply.sessionId, { root: true }));
+}
+
+// A changed catalog title (generated, or renamed outside Baton) goes to every page showing the Session.
+// Sessions enter on their first history read (Claude's never do: its titles arrive as rows).
+const _catalogTitles = new Map(); // root sessionId → catalog title at the last check
+let _titleCheck = null;
+sessionIndex.onDirty = () => { if (_subscribers.sessions.size || _catalogTitles.size) _titleCheck ||= setTimeout(publishCatalogTitles, 500); };
+function publishCatalogTitles() {
+  _titleCheck = null;
+  const { roots } = sessionIndex.catalog();
+  for (const [sessionId, name] of _catalogTitles) {
+    if (!_subscribers.targets(sessionId, { root: true }).length) { _catalogTitles.delete(sessionId); continue; }
+    const row = roots.find((r) => r.sessionId === sessionId);
+    if (!row?.preview || row.preview === name || !_config) continue;
+    _catalogTitles.set(sessionId, row.preview);
+    publishTitle({ sessionId, projectHash: row.project, device: _config.deviceName, name: row.preview });
+  }
 }
 
 sessionIndex.pendingDetail = pendingInteractionDetail;

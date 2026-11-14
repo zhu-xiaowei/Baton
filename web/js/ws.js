@@ -1978,6 +1978,14 @@ async function loadLatestMessages(sessionId, options = {}) {
     } finally {
       _suppressTurnEndRecovery = false;
     }
+    // The list's title (only non-Claude Sessions have one here), also for a page opened without it (a direct link).
+    if (data.preview && state.activeThreadId === state.rootSessionId
+      && data.preview !== state.appState.sessionPreview) {
+      state.appState.sessionPreview = state.rootSessionPreview = data.preview;
+      state._titleTier = 3;
+      updateBreadcrumb();
+      saveNav();
+    }
     updateTitleFromMessages();
     updateSendBtn();
     if (typeof updateSpinner === 'function') updateSpinner();

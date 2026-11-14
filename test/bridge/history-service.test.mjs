@@ -117,7 +117,11 @@ test('Sessions resolve to root, subagent and Codex child files; threads list roo
   const { rootSessionId, threads } = await service.threads({ sessionId: 'root' });
   assert.equal(rootSessionId, 'root');
   assert.deepEqual(threads.map((t) => [t.threadKind, t.canSend, t.parentSessionId]), [['main', true, undefined], ['subagent', false, 'root']]);
-  assert.equal((await service.history({ sessionId: 'root' })).status, 'running');
+  const claudeReply = await service.history({ sessionId: 'root' });
+  assert.equal(claudeReply.status, 'running');
+  assert.equal(claudeReply.preview, undefined, 'Claude titles come as rows');
+  rootRow.rec = { file: codexFile, runtime: 'codex', id: 'kid' };
+  assert.equal((await service.history({ sessionId: 'root' })).preview, 'Root', 'other runtimes get the list title');
 });
 
 test('the default service reads pages in a worker', async () => {

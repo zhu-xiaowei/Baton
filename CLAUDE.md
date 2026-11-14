@@ -188,6 +188,61 @@ Done:
   Delete (Session or project) refuses Sessions Baton or another process holds, then removes the Session folders
   (children too) and DSH's projcache entry. Rename appends dsh's own user `session/title` frame under the Session lock and updates its list cache (refused while in use; not on Windows).
 
+### Multi-harness H4: Pi (≥ 1.0)
+- Files: `pi-catalog.mjs` (catalog, current-branch history, row mapping; worker-safe), `pi-runtime.mjs` (detect,
+  adapter, watcher), `pi-interaction.mjs` (`pi --mode rpc`), `pi-approval-ext.mjs` (passed with `-e`),
+  `pi-status-ext.mjs` (installed). Listed in `OPTIONAL_RUNTIMES` when the agent dir exists; `pi` ≥ 1.0 is found on
+  first use; a JS entry (`.js` or a node shebang) runs as `<node ≥ 22.19> <realpath>` (`pickNode`), a wrapper
+  script runs as it is. An exception in the RPC event handler ends the turn, not the Bridge.
+- Catalog: `$PI_CODING_AGENT_DIR/sessions/**.jsonl` (default `~/.pi/agent`); project from the header `cwd`; title
+  `session_info.name` > first user text. History follows `parentId` from the last entry; an entry that does not
+  continue the previous one bumps the epoch (`historyReset`). Entry ids are read from the line head, or by
+  parsing the line when the id is not the second key (`custom`, `custom_message`). One `edit` call with N edits = N Edit cards (`<id>#i`).
+- Status: the Bridge installs `<agent dir>/extensions/baton-bridge-status.js` when its watcher starts (content
+  compared, atomic rename; removed on device removal). Every pi process writes
+  `~/.baton-bridge/pi-status/<sid>.<pid>.json` (`idle/running/waiting`; `waiting` = `ui_prompt_start` →
+  needs_input); a dead pid or another start time is stale. The same file holds the fork guard: a terminal whose
+  loaded leaf is not the file's last entry refuses input until `/baton-reload`.
+- Interaction: one process per Session, ended on `agent_settled` (never `agent_end`) by EOF. Sends during a turn are
+  `prompt{streamingBehavior:'steer'}`; interrupt = `clear_queue` + `abort` (the extension passes `ctx.signal`, so a
+  waiting dialog ends too). Each prompt starts with `<!--baton:<turnId>-->`; the approval extension strips it and
+  stores `batonTurnId` on the user message, so live and stored prompts are both `live:user:<turnId>`. Other rows:
+  uuid = nativeId (`pi:assistant:<ts>`, `pi:tool:<callId>`). Images go in the RPC `images` field. Tool calls are
+  streamed whole at `toolcall_end`, already mapped.
+- Dialogs: `baton:permission` confirm → `kind:'tool'`. A session grant is offered only for `<program> <plain
+  lowercase subcommand>` (`bash:git status`, applied to that pair only) or a non-bash tool name; any other bash
+  command (shell syntax, a bare program, a flag/path/file second, a wrapper like `sudo`) is asked every time.
+  Grants live in `~/.baton-bridge/pi-grants.json`, read by the extension on every call. `ask_user` (Baton's
+  tool; `multiple:true` rides on `input('baton:multiselect')` and answers a JSON array) and user-extension
+  select/confirm/input → `ask`. One edit call with several edits is approved on one joined diff.
+- Writer conflict: a status record of another live pid on the Session → `pi_active_writer` (only `mode:'tui'` may
+  be terminated). Delete and rename refuse while busy or held; rename appends a `session_info` entry on the last entry
+  (the catalog keeps its id, so nothing is re-read).
+
+### Multi-harness H1: OpenCode ≥ 2.2 (`bridge/opencode-*.mjs`)
+- Loaded whenever `~/.local/share/opencode/opencode.db` exists (one `OPTIONAL_RUNTIMES` line). A 1.x DB without
+  `session_v2` stays registered but lists nothing, starts no watcher and offers no create/send (delete is a no-op).
+  Catalog (`kind:'rows'`) and history read that DB read-only: `PRAGMA data_version`, then rows whose
+  max(time_updated, busy, idle, suspended, archived) moved; history lines are `RowIndex` positions; rows of the
+  turn after the last `idle` row (and running `!cmd` rows) are unstable. One row per block, like Claude's JSONL
+  (`<msgId>#b:<toolId|t0|r0>`, results `<msgId>#r:<toolId>`), live and in history; a tool row goes out at `tool.called`. Baton prompts carry
+  `metadata.baton.turnId` → nativeId `live:user:<turnId>`; files Baton attached are not shown twice.
+- The watcher (`fs.watch` on db/-wal, busy + pending) reports root status changes (external turns get
+  `localIdleSec`) and pushes rows other clients wrote; rows of a Baton turn come from the service events.
+  Busy that neither Baton, the service (`/api/session/active`) nor a non-service opencode process on that
+  session runs is an orphaned claim → Done.
+- Interaction goes through the user's own background service (`~/.local/state/opencode/service.json`); Baton
+  runs `opencode service start` only to send (it resumes suspended sessions), never to read. One `/api/event` SSE
+  per Baton turn, closed 120 s after the last ends. Sends never set `delivery` (OpenCode steers them into a running
+  turn). New sessions get `shell`/`edit: ask` rules and no title. Allow → `once`; "for this session" adds the
+  request's `save` patterns to the session's own rules; deny always carries a message (a bare reject cancels the
+  turn); forms map per field key (multiselect → array). A subagent's request joins its root's Baton turn and is
+  answered on the subagent's session (subscribe also fetches busy subagents' requests); one record per open request; every way it goes away (reply, reconcile with the service on subscribe / commit) settles it and tells the page. `heldElsewhere`: busy in the DB but not active in the service
+  → a live non-service opencode process with the id in its argv or the session cwd. Rename/delete use the service,
+  else `opencode api … --standalone`. `/name` is posted as a command first (404 → sent as text; its user row gets
+  the turnId live only); the command list is `/api/command`, asked again once if a cold directory lists nothing; without the service a
+  private unregistered `opencode serve` (resumes nothing) lists it once per directory and exits, cached by file signature for 5 min.
+
 ### Kiro (H5, kiro-cli 3.x v3 engine): `bridge/kiro.mjs`, `bridge/kiro-runtime.mjs`
 - `kiro.mjs` (also loaded by the workers; top-level files because the Bridge package and its updater carry only
   root `*.mjs` and `project/`): catalog of `$KIRO_HOME/sessions/<hash16>/<id>/messages.jsonl`
