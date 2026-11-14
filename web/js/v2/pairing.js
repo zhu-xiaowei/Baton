@@ -18,12 +18,14 @@ export function parseLink(text) {
     server: url.origin + url.pathname.replace(/\/[^/]*$/, '') };
 }
 
+// "iPhone" for the App, "Safari on iPhone" for a browser: how the account's device list tells them apart.
 export function deviceName() {
   const ua = navigator.userAgent;
-  if (/iPhone|Android/.test(ua)) return ua.match(/iPhone|Android/)[0];
-  if (/iPad|Macintosh/.test(ua) && navigator.maxTouchPoints > 1) return 'iPad';
-  const os = /Windows/.test(ua) ? 'Windows' : /Mac/.test(ua) ? 'Mac' : 'Linux';
-  return window.__TAURI_INTERNALS__ ? os : `Browser (${os})`;
+  const ipad = /iPad/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
+  const os = /iPhone/.test(ua) ? 'iPhone' : ipad ? 'iPad' : /Android/.test(ua) ? 'Android' : /Windows/.test(ua) ? 'Windows' : /Mac/.test(ua) ? 'Mac' : 'Linux';
+  if (window.__TAURI_INTERNALS__) return os;
+  const browser = /EdgiOS|Edg\//.test(ua) ? 'Edge' : /CriOS|Chrome\//.test(ua) ? 'Chrome' : /FxiOS|Firefox\//.test(ua) ? 'Firefox' : /Safari\//.test(ua) ? 'Safari' : 'Browser';
+  return `${browser} on ${os}`;
 }
 
 async function post(server, path, body, key) {

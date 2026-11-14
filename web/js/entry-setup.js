@@ -17,6 +17,8 @@ import { devices } from './v2/direct-transport.js';
 import { toPhrase } from './v2/recovery.js';
 import { confirmDialog } from './components/confirm-dialog.js';
 import { fromBase64 } from '../../bridge/direct-rpc-protocol.mjs';
+import { COPY_ICON } from './copy.js';
+import { showCenteredModal, hideCenteredModal } from './components/modal-viewport.js';
 
 initMacosTabs();
 initPageZoomShortcuts();
@@ -121,15 +123,38 @@ setNativeTabTitle('Settings');
     }
   });
 
-  window.showRecoveryPhrase = async function () {
-    if (!await confirmDialog('Show recovery phrase?', [[false, 'Cancel'], [true, 'Show', true]], false,
-      'Anyone with these 24 words can reach your computers. Keep them private; removing a computer changes them.')) return;
+  // Opened by Show phrase; Show loads it in place (an online computer holds K) and the dialog stays.
+  var phraseDialog = document.getElementById('phraseDialog');
+  window.showRecoveryPhrase = function () {
+    document.getElementById('phraseNote').hidden = false;
+    phraseDialog.querySelector('.phrase').hidden = true;
+    phraseDialog.querySelector('.cancel').hidden = false;
+    document.getElementById('phraseShow').textContent = 'Show';
+    showCenteredModal(phraseDialog);
+  };
+  window.closePhrase = function () {
+    document.getElementById('phraseWords').innerHTML = '';
+    hideCenteredModal(phraseDialog);
+  };
+  window.loadPhrase = async function (button) {
+    if (!phraseDialog.querySelector('.phrase').hidden) return window.closePhrase();
+    button.innerHTML = '<span class="spinner"></span>';
+    button.disabled = true;
     try {
-      var reply = await viaComputer('recovery_key');
-      await confirmDialog('Recovery phrase', [[true, 'Done', true]], true, await toPhrase(fromBase64(reply.k)));
+      var words = (await toPhrase(fromBase64((await viaComputer('recovery_key')).k))).split(' ');
+      document.getElementById('phraseWords').innerHTML = words.map(function (word) { return '<li>' + word + '</li>'; }).join('');
+      phraseDialog.querySelector('.phrase .code-btn').innerHTML = COPY_ICON;
+      phraseDialog.querySelector('.phrase').hidden = false;
+      document.getElementById('phraseNote').hidden = true;
+      phraseDialog.querySelector('.cancel').hidden = true;
+      button.textContent = 'Done';
     } catch (e) {
+      button.textContent = 'Show';
       await failed('Could not show the phrase', e);
-    }
+    } finally { button.disabled = false; }
+  };
+  window.copyPhrase = function (button) {
+    copyText(button, Array.from(document.querySelectorAll('#phraseWords li'), function (li) { return li.textContent; }).join(' '));
   };
 
   window.deleteAccount = async function () {
@@ -166,43 +191,44 @@ setNativeTabTitle('Settings');
     return platform === 'windows' ? "irm '" + url + (paired ? '?' : '&') + "platform=windows' | iex" : 'curl -sL "' + url + '" | bash';
   }
 
+  var EYE = document.querySelector('.connect .code-btn').innerHTML;
+
   function resetConnect() {
     tokenRequest = null;
     document.querySelectorAll('.connect .code-block').forEach(function (block) {
-      var btn = block.querySelector('.code-btn');
       block.classList.add('masked');
       block.querySelector('.text').textContent = '••••••••••••••••••••••••••••••••';
-      if (btn.dataset.icon) btn.innerHTML = btn.dataset.icon;
+      block.querySelector('.code-btn').innerHTML = EYE;
     });
     document.querySelector('.connect .qr-frame').classList.remove('ready');
-    if (!document.querySelector('[data-panel="qr"]').hidden) showQr();
+    if (!document.querySelector('[data-panel="qr"]').hidden) reveal(null);
   }
 
-  window.revealConnect = function (btn) {
-    var block = btn.parentElement;
-    if (!block.classList.contains('masked')) { copyText(btn, block.querySelector('.text').textContent); return; }
-    btn.dataset.icon = btn.dataset.icon || btn.innerHTML;
-    btn.innerHTML = '<span class="spinner"></span>';
-    btn.disabled = true;
-    // A paired App's install command needs no code.
-    (paired && block.dataset.panel === 'install' ? Promise.resolve('') : startToken()).then(function (startUrl) {
-      block.querySelector('.text').textContent = connectText(block.dataset.panel, startUrl);
-      block.classList.remove('masked');
-      btn.textContent = 'Copy';
-    }, function () { btn.innerHTML = btn.dataset.icon; }).finally(function () { btn.disabled = false; });
+  // One Show reveals all three tabs from the same code, so switching tabs never loads again.
+  function reveal(button) {
+    if (button) { button.innerHTML = '<span class="spinner"></span>'; button.disabled = true; }
+    startToken().then(function (startUrl) {
+      document.querySelectorAll('.connect .code-block').forEach(function (block) {
+        block.querySelector('.text').textContent = connectText(block.dataset.panel, startUrl);
+        block.classList.remove('masked');
+        block.querySelector('.code-btn').innerHTML = COPY_ICON;
+      });
+      drawQr(startUrl);
+    }, function () { if (button) button.innerHTML = EYE; }).finally(function () { if (button) button.disabled = false; });
+  }
+
+  window.revealConnect = function (button) {
+    var block = button.parentElement;
+    if (block.classList.contains('masked')) reveal(button);
+    else copyText(button, block.querySelector('.text').textContent);
   };
-
-  function showQr() {
-    if (document.querySelector('.connect .qr-frame.ready')) return;
-    startToken().then(drawQr, function () {});
-  }
 
   window.selectConnectTab = function (tab) {
     document.querySelectorAll('.connect-tabs .platform-option').forEach(function (button) {
       button.classList.toggle('active', button.dataset.tab === tab);
     });
     document.querySelectorAll('.connect [data-panel]').forEach(function (panel) { panel.hidden = panel.dataset.panel !== tab; });
-    if (tab === 'qr') showQr();
+    if (tab === 'qr' && !document.querySelector('.connect .qr-frame.ready')) reveal(null);
   };
 
   function drawQr(startUrl) {
@@ -233,7 +259,7 @@ setNativeTabTitle('Settings');
     navigator.clipboard.writeText(text).then(function () {
       btn.innerHTML = CHECK_ICON_SVG;
       btn.classList.add('copied');
-      setTimeout(function () { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 2000);
+      setTimeout(function () { btn.innerHTML = COPY_ICON; btn.classList.remove('copied'); }, 2000);
     });
   }
 
