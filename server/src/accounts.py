@@ -102,7 +102,7 @@ def _token_keys(account, digest):
 
 
 def _issue(account, kind, name):
-    token, name = "bt_" + secrets.token_urlsafe(32), name[:64]
+    token, name = "bt_" + secrets.token_urlsafe(32), name[:64]  # a display name; a computer's is checked at pair/start
     index, listed = _token_keys(account, auth.token_hash(token))
     # Listed first: a token whose index write failed is visible and removable, never a hidden credential.
     _table().put_item(Item={**listed, "kind": kind, "deviceName": name, "createdAt": int(time.time())})
@@ -206,6 +206,8 @@ def pair_claim(body: Body):
 @router.post("/pair/start")
 def pair_start(body: Body, request: Request):
     _need(body, "deviceName")
+    if len(body.deviceName) > 64:  # a computer connects by this name: it must fit its token row as it is
+        raise HTTPException(422, "Device name is too long (64 characters at most).")
     _rate(f"start#{_ip(request)}", 10)
     code, poll = secrets.token_urlsafe(16), secrets.token_urlsafe(16)
     _table().put_item(Item={**_pair_key(code), "kind": "bridge", "pollHash": _sha(poll), "deviceName": body.deviceName,

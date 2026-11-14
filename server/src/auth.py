@@ -36,8 +36,9 @@ def resolve(credential):
     digest = token_hash(credential)
     now = time.time()
     table = _system()
-    row = table.get_item(Key={"pk": f"TOKEN#{digest}", "sk": "-"}).get("Item")
-    if not row or not table.get_item(Key={"pk": f"ACCOUNT#{row['accountId']}", "sk": "META"}).get("Item"):
+    # Consistent reads: a token issued a moment ago must resolve (a refused paired Bridge uninstalls itself).
+    row = table.get_item(Key={"pk": f"TOKEN#{digest}", "sk": "-"}, ConsistentRead=True).get("Item")
+    if not row or not table.get_item(Key={"pk": f"ACCOUNT#{row['accountId']}", "sk": "META"}, ConsistentRead=True).get("Item"):
         return None
     result = {"accountId": row["accountId"], "kind": row["kind"], "deviceName": row.get("deviceName", ""),
               "tokenHash": digest}

@@ -11,7 +11,7 @@ def test_tokens_resolve_to_their_account_kind_and_role(monkeypatch):
     h = auth.token_hash('bt_phone')
     items = {(f'TOKEN#{h}', '-'): {'accountId': 'a1', 'kind': 'app'}, ('ACCOUNT#a1', 'META'): {'createdAt': 1}}
     monkeypatch.setattr(auth, '_table', SimpleNamespace(update_item=lambda **_: None,
-        get_item=lambda Key: {'Item': items[(Key['pk'], Key['sk'])]} if (Key['pk'], Key['sk']) in items else {}))
+        get_item=lambda Key, **_: {'Item': items[(Key['pk'], Key['sk'])]} if (Key['pk'], Key['sk']) in items else {}))
     phone = {'x-api-key': 'bt_phone'}
     assert call_app(main.app, '/api/bridge/devices')[0] == 401
     assert call_app(main.app, '/api/auth/start-token', {}, phone)[0] == 403
