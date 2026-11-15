@@ -650,11 +650,12 @@ Replaced the old tmux send-keys approach (deleted in Phase 2E). Full design: `do
 - New regular Session: Bridge mints a UUID, sends `send_message_result` first, then starts
   headless with `--session-id <id>` so the app subscribes before stream frames arrive.
 - Prewarm (`docs/api.md`): typing sends `prewarm` (first input, then ≤ every 10 s); Claude, Kiro and DSH
-  start the next turn's process early; unused 30 s after the last one it takes the Done exit, and an
-  expiring one is awaited, never reused. Claude keeps it in the pool (`warm`), bound to the Session
-  (`--resume` reads the transcript at spawn, so a size change since means a fresh process) or to a minted
-  new-Session ID (`--session-id` writes nothing before input); Kiro/DSH only `initialize`, per Session
-  folder (`turn-process.mjs` `prewarm`/`takeWarm`). Prewarm errors are logged, never thrown.
+  start the next turn's process early; unused 30 s after the last one it takes the Done exit. Claude keeps
+  it in the pool (`warm`; an exiting one is awaited, never reused), bound to the Session (`--resume` reads
+  the transcript at spawn, so a size change since means a fresh process) or to a minted new-Session ID
+  (`--session-id` writes nothing before input). Kiro/DSH keep one per Session folder, only `initialize`d
+  (no session or lock, so an old one may still be exiting), and skip a Session with a running turn.
+  Prewarm errors are logged, never thrown.
   An unused `--resume` still touches the jsonl mtime at spawn and appends `mode`/`cost-state` at exit
   (CC does both on any start; SIGTERM/INT/HUP write the same, SIGKILL leaves `sessions/<pid>.json`).
 - New Codex Session: Bridge calls `thread/start`, returns the storage Session ID, then starts the

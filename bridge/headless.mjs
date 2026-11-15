@@ -408,22 +408,19 @@ export class ClaudePool {
 
     while (this._exiting.has(key)) await this._exiting.get(key);
     let proc = this.procs.get(key);
-    if (proc?.warm) {
-      clearTimeout(proc.warm.timer);
-      const stale = fileSize(proc.warm.file) !== proc.warm.size;
+    const warm = proc?.warm;
+    if (warm) {
+      clearTimeout(warm.timer);
       proc.warm = null;
       // --resume read the transcript at spawn; another writer appended since, so it would fork.
-      if (stale) return (this._exitIfDone(proc), this.send(key, text, opts));
-      proc._writeTurn(text, streamId, cb);
-      return { sessionId: proc.sessionId, bgLocked: !(await proc.waitInit(this.initTimeout)) && proc.bgLocked };
+      if (fileSize(warm.file) !== warm.size) return (this._exitIfDone(proc), this.send(key, text, opts));
     }
-    if (!proc || proc.dead) {
-      // Fresh process. NOTE: `system/init` is emitted only AFTER the first stdin
+    if (!proc || proc.dead || warm) {
+      // Fresh (or prewarmed) process. NOTE: `system/init` is emitted only AFTER the first stdin
       // message is written — not on spawn. So write the turn immediately, then
       // await init just to resolve the sessionId for the return value.
-      proc = new HeadlessProc(this, key, opts.cwd, opts.resumeId, opts.createId);
-      this.procs.set(key, proc);
-      proc.spawn();
+      if (!warm) this.procs.set(key, proc = new HeadlessProc(this, key, opts.cwd, opts.resumeId, opts.createId));
+      if (!warm) proc.spawn();
       proc._writeTurn(text, streamId, cb);
       const ok = await proc.waitInit(this.initTimeout);
       if (!ok) return { sessionId: proc.sessionId, bgLocked: proc.bgLocked }; // died/timeout: onError already fired via _onClose
@@ -441,7 +438,7 @@ export class ClaudePool {
     if (proc && !proc.warm) return;
     if (!proc) {
       proc = Object.assign(new HeadlessProc(this, key, cwd, resumeId, createId), { warm: { file, size: fileSize(file) } });
-      proc.spawn(); // throws without a claude CLI, before the pool holds it
+      proc.spawn(); // throws without a claude CLI, so the pool never holds it
       this.procs.set(key, proc);
     }
     clearTimeout(proc.warm.timer);

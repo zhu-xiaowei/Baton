@@ -2385,8 +2385,7 @@ var restoreScrollFrame = null;
   });
   el.addEventListener('input', function () {
     resizeInputPreservingMessages();
-    // Typing (or a restored draft, which fires this too) lets the Bridge start the turn's process early:
-    // at once, then at most every 10 s. activeThreadId is set before the draft loads; wsSessionId may lag.
+    // Typing or a restored draft prewarms the turn's process: at once, then at most every 10 s (wsSessionId may lag a draft).
     var projectHash = state.appState.project && state.appState.project.hash;
     var params = state.appState.session === '__new__' ? { projectHash: projectHash, runtime: state.appState.runtime } : { sessionId: state.activeThreadId || state.wsSessionId, projectHash: projectHash };
     var key = (params.sessionId || '') + ':' + params.projectHash + ':' + params.runtime;

@@ -1774,8 +1774,7 @@ async function prewarmSession({ sessionId, projectHash, runtime }) {
   const { runtime: rt, nativeSessionId: id } = parseStorageSessionId(sessionId || '', runtime);
   const interaction = rt === 'claude' ? null : getRuntimeAdapter(rt).interaction;
   const cwd = (!interaction || interaction.prewarm) && projectHash && projectHashToPath(projectHash);
-  // A Session a terminal, the IDE or the daemon holds is left alone.
-  if (!cwd || (id && await (interaction ? interaction.heldElsewhere?.(id)
+  if (!cwd || (id && await (interaction ? interaction.heldElsewhere?.(id) // held by a terminal, the IDE or the daemon
     : getDaemonRunningSessionIds().has(id) || claudeSessionWriter(id, { ownPids: _pool.ownPids() })))) return;
   if (interaction) return interaction.prewarm(cwd, id);
   const key = id || _warmNewClaude.get(cwd) || _warmNewClaude.set(cwd, crypto.randomUUID()).get(cwd);

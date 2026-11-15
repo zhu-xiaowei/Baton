@@ -9,7 +9,7 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { BRIDGE_HOME } from './config.mjs';
 import { RpcStdio } from './rpc-stdio.mjs';
-import { finishProcess, prewarm, prewarmExit, sessionProcess, takeWarm } from './turn-process.mjs';
+import { finishProcess, PREWARM_MS, sessionProcess } from './turn-process.mjs';
 import { commonDirs, pickNode } from './runtime-bin.mjs';
 import { SessionGrants } from './session-grants.mjs';
 import { StreamFramer } from './stream-framer.mjs';
@@ -81,6 +81,7 @@ const isPrompt = (row) => row.type === 'user' && !String(row.uuid).startsWith('d
 class DshInteraction {
   constructor() {
     this.sessions = new Map(); // native id → { child, rpc, queue, current, callbacks, tags, controls, closing }
+    this.warm = new Map(); // cwd → a prewarmed process, initialized only (no session, no lock, nothing written)
     this.flush = async () => {}; // set by the watcher: read a Session's log to its end
     this.onIdle = () => {};
   }
@@ -99,11 +100,9 @@ class DshInteraction {
       label: /\0web(\0|$)/.test(cmd) ? 'A dsh web server (closing it ends every session it has open)' : 'Another dsh client' };
   }
 
-  // The process, initialized: all a prewarm runs (no session, no lock, nothing written).
   start(cwd, s) { return s.started ||= this._start(cwd, s); }
 
   async _start(cwd, s) {
-    await prewarmExit(`dsh:${cwd}`);
     const dsh = findDsh();
     if (!dsh) throw new Error('DeepSeek Harness needs dsh and Node.js 24.9 or newer on this computer.');
     Object.assign(s, { key: `dsh:${randomUUID()}`, queue: [], tags: [], controls: new Map(), tools: new Map() });
@@ -118,10 +117,16 @@ class DshInteraction {
   }
 
   prewarm(cwd, sid) {
+    if (this.owns(sid)) return; // a message during a turn queues in it
     const file = sid && findLog(sid);
     cwd = (file && (sessionIndex.records.get(file)?.state?.cwd || catalog.summarize(file).cwd)) || cwd; // as sendExisting
-    return prewarm(`dsh:${cwd}`, () => { const s = {}; this.start(cwd, s).catch((error) => console.error(`[dsh] prewarm: ${error.message}`)); return s; }, (s) => finishProcess(s.key));
+    const s = this.warm.get(cwd) || this.warm.set(cwd, {}).get(cwd);
+    this.start(cwd, s).catch((error) => console.error(`[dsh] prewarm: ${error.message}`));
+    clearTimeout(s.warmTimer);
+    s.warmTimer = setTimeout(() => this.warm.delete(cwd) && finishProcess(s.key), PREWARM_MS).unref();
   }
+
+  takeWarm(cwd) { const s = this.warm.get(cwd); this.warm.delete(cwd); clearTimeout(s?.warmTimer); return s?.rpc?.error ? null : s; }
 
   // A process for the Session (a prewarmed one if any), then `open` (session/new or session/resume).
   async spawn(cwd, s, open) {
@@ -136,7 +141,7 @@ class DshInteraction {
   }
 
   async create({ cwd, text, streamId, onCreated }) {
-    const s = takeWarm(`dsh:${cwd}`) || {};
+    const s = this.takeWarm(cwd) || {};
     await this.spawn(cwd, s, async () => {
       const res = await s.rpc.request('session/new', { cwd, mcpServers: [] }, { timeoutMs: 60_000 });
       s.sid = res.sessionId;
@@ -157,7 +162,7 @@ class DshInteraction {
         const file = findLog(sid);
         const cwd = file && (sessionIndex.records.get(file)?.state?.cwd || catalog.summarize(file).cwd);
         if (!cwd) throw new Error('Session not found on this device.');
-        this.sessions.set(sid, s = Object.assign(takeWarm(`dsh:${cwd}`) || {}, { sid }));
+        this.sessions.set(sid, s = Object.assign(this.takeWarm(cwd) || {}, { sid }));
         s.ready = this.spawn(cwd, s, () => s.rpc.request('session/resume', { sessionId: sid, cwd, mcpServers: [] }, { timeoutMs: 60_000 }));
       }
       if (s.closing) { await s.finished; continue; }
