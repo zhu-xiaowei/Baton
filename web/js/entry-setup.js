@@ -126,14 +126,20 @@ setNativeTabTitle('Settings');
   // Opened by Show phrase; Show loads it in place (an online computer holds K) and the dialog stays.
   var phraseDialog = document.getElementById('phraseDialog');
   var phraseNote = document.getElementById('phraseNote').textContent;
+  var phraseRun = 0;  // a load that finishes after close or reopen is dropped
+  phraseDialog.addEventListener('keydown', function (event) { if (event.key === 'Escape') window.closePhrase(); });
   window.showRecoveryPhrase = function () {
+    phraseRun++;
+    document.getElementById('phraseShow').disabled = false;
     document.getElementById('phraseNote').textContent = phraseNote;
     phraseDialog.querySelector('.phrase').hidden = true;
     phraseDialog.querySelector('.cancel').style.display = '';
     document.getElementById('phraseShow').textContent = 'Show';
     showCenteredModal(phraseDialog);
+    phraseDialog.querySelector('.modal-box').focus();
   };
   window.closePhrase = function () {
+    phraseRun++;
     document.getElementById('phraseWords').textContent = '';
     hideCenteredModal(phraseDialog);
   };
@@ -141,18 +147,22 @@ setNativeTabTitle('Settings');
     if (!phraseDialog.querySelector('.phrase').hidden) return window.closePhrase();
     button.innerHTML = '<span class="spinner"></span>';
     button.disabled = true;
+    var run = phraseRun;
     try {
+      var phrase = await toPhrase(fromBase64((await viaComputer('recovery_key')).k));
+      if (run !== phraseRun) return;
       // Shown as it is pasted: words separated by spaces, no numbers.
-      document.getElementById('phraseWords').textContent = await toPhrase(fromBase64((await viaComputer('recovery_key')).k));
+      document.getElementById('phraseWords').textContent = phrase;
       phraseDialog.querySelector('.phrase .code-btn').innerHTML = COPY_ICON;
       phraseDialog.querySelector('.phrase').hidden = false;
       document.getElementById('phraseNote').textContent = 'To get the account back on a new phone or browser, open Baton and paste these words into the sign-in field (where a Start URL goes).';
       phraseDialog.querySelector('.cancel').style.display = 'none';
       button.textContent = 'Done';
     } catch (e) {
+      if (run !== phraseRun) return;
       button.textContent = 'Show';
       await failed('Could not show the phrase', e);
-    } finally { button.disabled = false; }
+    } finally { if (run === phraseRun) button.disabled = false; }
   };
   window.copyPhrase = function (button) {
     copyText(button, document.getElementById('phraseWords').textContent);

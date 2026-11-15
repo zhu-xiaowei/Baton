@@ -104,7 +104,8 @@ def _token_keys(account, digest):
 
 def _issue(account, kind, name, install=""):
     token, name, install = "bt_" + secrets.token_urlsafe(32), name[:64], install and _sha(install)
-    _drop(account, [row["sk"][6:] for row in _token_rows(account) if install and row.get("install") == install])
+    if install:
+        _drop(account, [row["sk"][6:] for row in _token_rows(account) if row.get("install") == install])
     index, listed = _token_keys(account, auth.token_hash(token))
     # Listed first: a token whose index write failed is visible and removable, never a hidden credential.
     _table().put_item(Item={**listed, "kind": kind, "deviceName": name, "install": install, "createdAt": int(time.time())})
@@ -317,6 +318,8 @@ def remove(caller, rotation, digests, notice=None):
 
 def _drop(account, digests, notice=None, rows=True):
     """Tokens (unless already gone in the rotation), the push registrations made with them, their sockets."""
+    if not digests:
+        return
     pushes = _table().query(KeyConditionExpression=Key("pk").eq(f"PUSH_DEVICE#{account}"))["Items"]
     for digest in digests:
         for key in (_token_keys(account, digest) if rows else []) + [p for p in pushes if p.get("tokenHash") == digest]:

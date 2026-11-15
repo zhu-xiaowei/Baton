@@ -29,7 +29,8 @@ export function deviceName() {
 }
 
 // This App's own random id (kept until its storage is cleared): joining again replaces its earlier entry.
-const me = () => ({ deviceName: deviceName(), install: localStorage.baton_install ||= crypto.randomUUID() });
+const me = () => ({ deviceName: deviceName(), install: localStorage.baton_install ||= Array.from(crypto.getRandomValues(new Uint8Array(16)),
+  (byte) => byte.toString(16).padStart(2, '0')).join('') });  // not randomUUID: iOS 14 WebViews lack it
 
 async function post(server, path, body, key) {
   const response = await fetch(server + path, { method: 'POST', body: JSON.stringify(body),
