@@ -776,6 +776,7 @@ function connect() {
         unsubscribe: (params, caller) => { _subscribers.remove(params.sessionId, caller.replyTo); if (!_subscribers.targets(params.sessionId, { root: true }).length) _catalogTitles.delete(params.sessionId); return {}; },
         send_message: (params, caller) => requestSendMessage(params, caller),
         interrupt: async params => { await handleInterrupt(params); return { ok: true }; },
+        prewarm: params => { prewarmSession(params).catch((error) => console.error(`[ws] prewarm: ${error.message}`)); return {}; },
         permission_reply: params => { handlePermissionReply(params); return { ok: true }; },
         threads: params => historyService.threads(params),
         tool_details: async params => { await sessionIndex.readyPromise; return toolDetails(params, id => historyService.resolve(id)); },
@@ -1767,6 +1768,19 @@ async function newAdapterSession(
   }
 }
 
+const _warmNewClaude = new Map(); // cwd → Session id minted for a prewarmed first turn
+// App prewarm (the user is typing): start the next turn's process now; runtimes without one ignore it.
+async function prewarmSession({ sessionId, projectHash, runtime }) {
+  const { runtime: rt, nativeSessionId: id } = parseStorageSessionId(sessionId || '', runtime);
+  const interaction = rt === 'claude' ? null : getRuntimeAdapter(rt).interaction;
+  const cwd = (!interaction || interaction.prewarm) && projectHash && projectHashToPath(projectHash);
+  if (!cwd || (id && await (interaction ? interaction.heldElsewhere?.(id) // held by a terminal, the IDE or the daemon
+    : getDaemonRunningSessionIds().has(id) || claudeSessionWriter(id, { ownPids: _pool.ownPids() })))) return;
+  if (interaction) return interaction.prewarm(cwd, id);
+  const key = id || _warmNewClaude.get(cwd) || _warmNewClaude.set(cwd, crypto.randomUUID()).get(cwd);
+  return _pool.prewarm(key, id ? { cwd, resumeId: id, file: _claudeRuntime.findSessionFile(id) } : { cwd, createId: key });
+}
+
 // Send to an existing session (regular OR agent), taking a daemon-held agent over into the pool via stopDaemon + --resume. See docs/headless-streaming.md §takeover.
 async function handleHeadlessSend(
   sessionId,
@@ -1880,7 +1894,8 @@ async function newRegularSession(
   requestId,
   turnId,
 ) {
-  const sessionId = crypto.randomUUID();
+  const sessionId = _warmNewClaude.get(cwd) || crypto.randomUUID();
+  _warmNewClaude.delete(cwd);
   _sentPrompts.set(sessionId, text);
   sessionIndex.notePrompt(sessionId, text);
   const liveTurnId = resolveTurnId(sessionId, turnId);

@@ -91,6 +91,8 @@ export async function finishProcess(key, close) {
   clearTimeout(timer);
 }
 
+export const PREWARM_MS = 30_000; // an unused prewarmed process lives this long after the last prewarm
+
 // After a Bridge restart: kill recorded processes whose pid and start time still match.
 export function killLeftovers() {
   ledger = readLedger();

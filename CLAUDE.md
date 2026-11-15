@@ -649,6 +649,15 @@ Replaced the old tmux send-keys approach (deleted in Phase 2E). Full design: `do
 - A process exits once its Session is Done (design §6.6): after a `result` with no queued input, no background task and no unanswered `control_request`, the pool closes stdin (no signal) and the next message re-spawns with `--resume`, so settings and CLAUDE.md changes apply to it; session grants come back through `--allowedTools`, and `/model` / `/effort` through `--model` / `--effort` (CC's `get_settings` value after the command). No idle reap, no LRU cap. Background tasks (`background_tasks_changed`, CC ≥ 2.1.203) keep the process until CC's report-back turn ends; in `-p` mode `~/.claude/sessions/<pid>.json` reads `idle` while background work runs, and CC keeps running after EOF until that work ends. Once CC reports `user_message_uuids`, a `result` without them (a turn CC started itself) consumes no input. (No more `cleanStaleSessions` / `apeek_*` tmux naming — all deleted in Phase 2E.)
 - New regular Session: Bridge mints a UUID, sends `send_message_result` first, then starts
   headless with `--session-id <id>` so the app subscribes before stream frames arrive.
+- Prewarm (`docs/api.md`): typing sends `prewarm` (first input, then ≤ every 10 s); Claude, Kiro and DSH
+  start the next turn's process early; unused 30 s after the last one it takes the Done exit. Claude keeps
+  it in the pool (`warm`; an exiting one is awaited, never reused), bound to the Session (`--resume` reads
+  the transcript at spawn, so a size change since means a fresh process) or to a minted new-Session ID
+  (`--session-id` writes nothing before input). Kiro/DSH keep one per Session folder, only `initialize`d
+  (no session or lock, so an old one may still be exiting), and skip a Session with a running turn.
+  Prewarm errors are logged, never thrown.
+  An unused `--resume` still touches the jsonl mtime at spawn and appends `mode`/`cost-state` at exit
+  (CC does both on any start; SIGTERM/INT/HUP write the same, SIGKILL leaves `sessions/<pid>.json`).
 - New Codex Session: Bridge calls `thread/start`, returns the storage Session ID, then starts the
   first turn on the same cwd-scoped app-server client.
 - New background agent: Bridge launches `claude --bg`, resolves the full Session ID, and lets

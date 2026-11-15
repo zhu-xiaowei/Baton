@@ -7,15 +7,17 @@
 //
 // Lifecycle: spawned on send, EOF once the session is Done (CC exits cleanly, jsonl persists).
 
+import fs from 'node:fs';
 import { spawn, execFileSync } from 'child_process';
 import readline from 'readline';
 import { randomUUID } from 'node:crypto';
 import { requireClaudeBin, resolveClaudeBin } from './session.mjs';
 import { StreamFramer } from './stream-framer.mjs';
 import { userMessageUuidForTurnId } from './live-turn-stream.mjs';
-import { trackLeftover } from './turn-process.mjs';
+import { PREWARM_MS, trackLeftover } from './turn-process.mjs';
 
 export const HEADLESS_INIT_TIMEOUT_MS = 30_000;  // wait for system/init before first send
+const fileSize = (file) => { try { return fs.statSync(file).size; } catch { return -1; } };
 // One live claude process bound to a sessionId.
 // State machine: spawning → ready (idle|busy) → dead.
 class HeadlessProc {
@@ -345,6 +347,7 @@ export class ClaudePool {
   constructor(opts = {}) {
     this.procs = new Map();  // key → HeadlessProc
     this.initTimeout = opts.initTimeout ?? HEADLESS_INIT_TIMEOUT_MS;
+    this.prewarmMs = opts.prewarmMs ?? PREWARM_MS;
     this.bin = opts.bin || '';
     this.env = opts.env || null;
     this.trackLeftovers = !!opts.trackLeftovers;  // only the Bridge's own pool; tests must not touch the real ledger
@@ -405,13 +408,19 @@ export class ClaudePool {
 
     while (this._exiting.has(key)) await this._exiting.get(key);
     let proc = this.procs.get(key);
-    if (!proc || proc.dead) {
-      // Fresh process. NOTE: `system/init` is emitted only AFTER the first stdin
+    const warm = proc?.warm;
+    if (warm) {
+      clearTimeout(warm.timer);
+      proc.warm = null;
+      // --resume read the transcript at spawn; another writer appended since, so it would fork.
+      if (fileSize(warm.file) !== warm.size) return (this._exitIfDone(proc), this.send(key, text, opts));
+    }
+    if (!proc || proc.dead || warm) {
+      // Fresh (or prewarmed) process. NOTE: `system/init` is emitted only AFTER the first stdin
       // message is written — not on spawn. So write the turn immediately, then
       // await init just to resolve the sessionId for the return value.
-      proc = new HeadlessProc(this, key, opts.cwd, opts.resumeId, opts.createId);
-      this.procs.set(key, proc);
-      proc.spawn();
+      if (!warm) this.procs.set(key, proc = new HeadlessProc(this, key, opts.cwd, opts.resumeId, opts.createId));
+      if (!warm) proc.spawn();
       proc._writeTurn(text, streamId, cb);
       const ok = await proc.waitInit(this.initTimeout);
       if (!ok) return { sessionId: proc.sessionId, bgLocked: proc.bgLocked }; // died/timeout: onError already fired via _onClose
@@ -420,6 +429,20 @@ export class ClaudePool {
 
     proc._writeTurn(text, streamId, cb);
     return { sessionId: proc.sessionId, bgLocked: false };
+  }
+
+  // App prewarm: spawn before the send (CC writes no row before its first input); unused, it exits like Done.
+  async prewarm(key, { cwd, resumeId, createId, file }) {
+    while (this._exiting.has(key)) await this._exiting.get(key);
+    let proc = this.procs.get(key);
+    if (proc && !proc.warm) return;
+    if (!proc) {
+      proc = Object.assign(new HeadlessProc(this, key, cwd, resumeId, createId), { warm: { file, size: fileSize(file) } });
+      proc.spawn(); // throws without a claude CLI, so the pool never holds it
+      this.procs.set(key, proc);
+    }
+    clearTimeout(proc.warm.timer);
+    proc.warm.timer = setTimeout(() => { proc.warm = null; this._exitIfDone(proc); }, this.prewarmMs).unref();
   }
 
   // Read the same runtime-filtered catalogs used by Claude Code's TUI without

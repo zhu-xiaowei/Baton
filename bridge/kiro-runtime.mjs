@@ -7,7 +7,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import kiro, { CLIENT, DASHBOARD, alive, HOME, LEASES, ROOT, KiroReader, canonicalId, mapTool, parse, readLease, sessionFile } from './kiro.mjs';
 import { RpcStdio } from './rpc-stdio.mjs';
-import { finishProcess, sessionProcess } from './turn-process.mjs';
+import { finishProcess, PREWARM_MS, sessionProcess } from './turn-process.mjs';
 import { StreamFramer } from './stream-framer.mjs';
 import { findRuntimeBin } from './runtime-bin.mjs';
 import { BRIDGE_VERSION } from './version.mjs';
@@ -23,6 +23,7 @@ import { batonSessions, localIdleSec } from './presence.mjs';
 const conns = new Map(); // native id → { key, cwd, id, rpc, ready, loaded, turn }
 const drains = new Map(); // jsonl → { reader, from, busy, again }
 const commands = new Map(); // cwd → ACP available commands
+const warm = new Map(); // cwd → a prewarmed connection: initialized only (no session, no lease, nothing written)
 let bin = null;
 let config = null;
 let spawned = 0;
@@ -48,6 +49,8 @@ function connect(cwd) {
   })();
   return c;
 }
+
+const takeWarm = (cwd) => { const c = warm.get(cwd); warm.delete(cwd); clearTimeout(c?.warmTimer); return c?.rpc?.error ? null : c; };
 
 // session/close releases the lease at once; the process leaves a few seconds after EOF.
 function close(c) {
@@ -300,7 +303,7 @@ const kiroInteraction = defineInteractionAdapter({
       return;
     }
     if (!c) {
-      conns.set(id, c = connect(cwd));
+      conns.set(id, c = takeWarm(cwd) || connect(cwd));
       c.id = id;
       // History comes from the files, so the load does not replay it.
       c.loaded = c.ready.then(() => c.rpc.request('session/load', { sessionId: id, cwd, mcpServers: [], _meta: { kiro: { noReplay: true } } }, { timeoutMs: 60_000 }));
@@ -319,7 +322,7 @@ const kiroInteraction = defineInteractionAdapter({
   },
 
   async create({ cwd, text, streamId, onCreated }) {
-    const c = connect(cwd);
+    const c = takeWarm(cwd) || connect(cwd);
     try {
       await c.ready;
       const result = await c.rpc.request('session/new', { cwd, mcpServers: [] }, { timeoutMs: 60_000 });
@@ -338,6 +341,15 @@ const kiroInteraction = defineInteractionAdapter({
       close(c);
       throw error;
     }
+  },
+
+  prewarm(cwd, id) {
+    if (conns.has(id)) return; // a message during a turn steers into it
+    cwd = (id && recOf(id)?.state?.cwd) || cwd; // the key sendExisting uses, also in a linked worktree
+    const c = warm.get(cwd) || warm.set(cwd, connect(cwd)).get(cwd);
+    c.ready.catch((error) => console.error(`[kiro] prewarm: ${error.message}`));
+    clearTimeout(c.warmTimer);
+    c.warmTimer = setTimeout(() => warm.delete(cwd) && close(c), PREWARM_MS).unref();
   },
 
   // Kiro ignores a cancel that arrives before the turn starts.

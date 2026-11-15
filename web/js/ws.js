@@ -2344,6 +2344,7 @@ function interruptSession() {
   updateSendBtn();
 }
 var restoreScrollFrame = null;
+var prewarmed = { key: '', at: 0 };
 (function () {
   var el = document.getElementById('msg-input');
   // The HarmonyOS shell's tablet UA omits "Mobile", so the UA test below misses it.
@@ -2385,6 +2386,14 @@ var restoreScrollFrame = null;
   });
   el.addEventListener('input', function () {
     resizeInputPreservingMessages();
+    // Typing or a restored draft prewarms the turn's process: at once, then at most every 10 s (wsSessionId may lag a draft).
+    var projectHash = state.appState.project && state.appState.project.hash;
+    var params = state.appState.session === '__new__' ? { projectHash: projectHash, runtime: state.appState.runtime } : { sessionId: state.activeThreadId || state.wsSessionId, projectHash: projectHash };
+    var key = (params.sessionId || '') + ':' + params.projectHash + ':' + params.runtime;
+    if (params.projectHash && el.value.trim() && (key !== prewarmed.key || Date.now() - prewarmed.at >= 10000)) {
+      prewarmed = { key: key, at: Date.now() };
+      bridge.request(state.appState.device || '', 'prewarm', params).catch(function () {});
+    }
     // Typing changes only input controls. Runtime state changes update the
     // spinner through the existing no-argument updateSendBtn() calls.
     updateSendBtn({ skipSpinner: true });
@@ -2395,6 +2404,8 @@ var restoreScrollFrame = null;
     }
   });
   if (document.documentElement.classList.contains('macos-page-zoom') || window.batonPageZoom?.enabled) resizeInputPreservingMessages();
+  // A page load restores the draft before this module loads (app.js awaits loadViewerLibs after it).
+  if (el.value.trim()) el.dispatchEvent(new window.Event('input'));
 })();
 // Global Esc → interrupt the running turn, like CC. Bubble phase so overlays
 // that own Esc (slash popup handles it in capture phase; file/image viewers
@@ -2421,6 +2432,7 @@ var _sendOrder = 0;
 var _turnSendOrder = new Map();
 
 function doSend(fullText, displayText, images) {
+  prewarmed = { key: '', at: 0 }; // typing the next message prewarms at once
   if (restoreScrollFrame !== null) {
     cancelAnimationFrame(restoreScrollFrame);
     restoreScrollFrame = null;
