@@ -342,7 +342,10 @@ const kiroInteraction = defineInteractionAdapter({
   },
 
   // Only initialized: no session, no lease, nothing written.
-  prewarm: (cwd) => prewarm(`kiro:${cwd}`, () => { const c = connect(cwd); c.ready.catch(() => {}); return c; }, close),
+  prewarm(cwd, id) {
+    cwd = (id && recOf(id)?.state?.cwd) || cwd; // the key sendExisting uses, also in a linked worktree
+    return prewarm(`kiro:${cwd}`, () => { const c = connect(cwd); c.ready.catch((error) => console.error(`[kiro] prewarm: ${error.message}`)); return c; }, close);
+  },
 
   // Kiro ignores a cancel that arrives before the turn starts.
   async interrupt(id) {

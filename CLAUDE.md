@@ -650,14 +650,13 @@ Replaced the old tmux send-keys approach (deleted in Phase 2E). Full design: `do
 - New regular Session: Bridge mints a UUID, sends `send_message_result` first, then starts
   headless with `--session-id <id>` so the app subscribes before stream frames arrive.
 - Prewarm (`docs/api.md`): typing sends `prewarm` (first input, then ≤ every 10 s); Claude, Kiro and DSH
-  start the next turn's process early (`turn-process.mjs` `prewarm`/`takeWarm`, 30 s after the last one,
-  then a Done exit; an expiring one is awaited, never reused). Claude binds it to the Session
+  start the next turn's process early; unused 30 s after the last one it takes the Done exit, and an
+  expiring one is awaited, never reused. Claude keeps it in the pool (`warm`), bound to the Session
   (`--resume` reads the transcript at spawn, so a size change since means a fresh process) or to a minted
-  new-Session ID (`--session-id` writes nothing before input); Kiro/DSH only `initialize`, per folder.
+  new-Session ID (`--session-id` writes nothing before input); Kiro/DSH only `initialize`, per Session
+  folder (`turn-process.mjs` `prewarm`/`takeWarm`). Prewarm errors are logged, never thrown.
   An unused `--resume` still touches the jsonl mtime at spawn and appends `mode`/`cost-state` at exit
   (CC does both on any start; SIGTERM/INT/HUP write the same, SIGKILL leaves `sessions/<pid>.json`).
-- Existing-Session sends answer `send_message_result` after the fast checks, before the process
-  starts (all runtimes but Codex, whose writer check is `thread/resume`); later failures end the turn.
 - New Codex Session: Bridge calls `thread/start`, returns the storage Session ID, then starts the
   first turn on the same cwd-scoped app-server client.
 - New background agent: Bridge launches `claude --bg`, resolves the full Session ID, and lets

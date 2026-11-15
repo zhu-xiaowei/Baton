@@ -99,25 +99,29 @@ class DshInteraction {
       label: /\0web(\0|$)/.test(cmd) ? 'A dsh web server (closing it ends every session it has open)' : 'Another dsh client' };
   }
 
-  // The process, initialized; a prewarm (no session, no lock, nothing written) runs only this.
-  start(cwd, s) {
-    return s.started ||= (async () => {
-      await prewarmExit(`dsh:${cwd}`);
-      const dsh = findDsh();
-      if (!dsh) throw new Error('DeepSeek Harness needs dsh and Node.js 24.9 or newer on this computer.');
-      Object.assign(s, { key: `dsh:${randomUUID()}`, queue: [], tags: [], controls: new Map(), tools: new Map() });
-      s.child = await sessionProcess(s.key, dsh.node, [dsh.bin, '--profile', 'acp', '--patch', overlay()], { cwd, stdio: ['pipe', 'pipe', 'pipe', 'pipe'] });
-      s.rpc = new RpcStdio(s.child, {
-        onNotify: (method, params) => { if (method === 'session/update' && params.sessionId === s.sid) this.update(s, params.update); },
-        onRequest: (method, params) => this.approval(s, method, params),
-      });
-      this.questions(s);
-      const init = await s.rpc.request('initialize', { protocolVersion: 1, clientCapabilities: {} }, { timeoutMs: 60_000 });
-      s.vision = !!init?.agentCapabilities?.promptCapabilities?.image;
-    })();
+  // The process, initialized: all a prewarm runs (no session, no lock, nothing written).
+  start(cwd, s) { return s.started ||= this._start(cwd, s); }
+
+  async _start(cwd, s) {
+    await prewarmExit(`dsh:${cwd}`);
+    const dsh = findDsh();
+    if (!dsh) throw new Error('DeepSeek Harness needs dsh and Node.js 24.9 or newer on this computer.');
+    Object.assign(s, { key: `dsh:${randomUUID()}`, queue: [], tags: [], controls: new Map(), tools: new Map() });
+    s.child = await sessionProcess(s.key, dsh.node, [dsh.bin, '--profile', 'acp', '--patch', overlay()], { cwd, stdio: ['pipe', 'pipe', 'pipe', 'pipe'] });
+    s.rpc = new RpcStdio(s.child, {
+      onNotify: (method, params) => { if (method === 'session/update' && params.sessionId === s.sid) this.update(s, params.update); },
+      onRequest: (method, params) => this.approval(s, method, params),
+    });
+    this.questions(s);
+    const init = await s.rpc.request('initialize', { protocolVersion: 1, clientCapabilities: {} }, { timeoutMs: 60_000 });
+    s.vision = !!init?.agentCapabilities?.promptCapabilities?.image;
   }
 
-  prewarm(cwd) { prewarm(`dsh:${cwd}`, () => { const s = {}; this.start(cwd, s).catch(() => {}); return s; }, (s) => finishProcess(s.key)); }
+  prewarm(cwd, sid) {
+    const file = sid && findLog(sid);
+    cwd = (file && (sessionIndex.records.get(file)?.state?.cwd || catalog.summarize(file).cwd)) || cwd; // as sendExisting
+    return prewarm(`dsh:${cwd}`, () => { const s = {}; this.start(cwd, s).catch((error) => console.error(`[dsh] prewarm: ${error.message}`)); return s; }, (s) => finishProcess(s.key));
+  }
 
   // A process for the Session (a prewarmed one if any), then `open` (session/new or session/resume).
   async spawn(cwd, s, open) {

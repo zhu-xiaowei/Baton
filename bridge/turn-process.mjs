@@ -91,15 +91,14 @@ export async function finishProcess(key, close) {
   clearTimeout(timer);
 }
 
-// App prewarm: start() for the next takeWarm(key); unused `ms` after the last call, end() it before any restart.
+// App prewarm (Kiro, DSH): start() for the next takeWarm(key); unused PREWARM_MS after the last call, end() it before any restart.
 export const PREWARM_MS = 30_000;
 const warm = new Map(); // key → { value, timer, ending }
-export async function prewarm(key, start, end, ms = PREWARM_MS) {
+export async function prewarm(key, start, end) {
   await warm.get(key)?.ending;
-  const w = warm.get(key) || { value: start() };
+  const w = warm.get(key) || warm.set(key, { value: start() }).get(key);
   clearTimeout(w.timer);
-  w.timer = setTimeout(() => { w.ending = Promise.resolve(end(w.value)).finally(() => warm.delete(key)); }, ms).unref();
-  warm.set(key, w);
+  w.timer = setTimeout(() => { w.ending = Promise.resolve(end(w.value)).finally(() => warm.delete(key)); }, PREWARM_MS).unref();
 }
 export const prewarmExit = (key) => warm.get(key)?.ending; // a new process waits for an expired one to exit
 export function takeWarm(key) {

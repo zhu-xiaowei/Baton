@@ -2383,12 +2383,12 @@ var restoreScrollFrame = null;
     if (/Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || window.__BATON_NATIVE_MOBILE__) return;
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); updateSendBtn(); }
   });
-  var prewarmed = { key: '', at: 0 };
   el.addEventListener('input', function () {
     resizeInputPreservingMessages();
-    // Typing lets the Bridge start the turn's process early: at the first input, then at most every 10 s.
-    var isNew = state.appState.session === '__new__';
-    var params = isNew ? { projectHash: state.wsProjectHash, runtime: state.appState.runtime } : { sessionId: state.wsSessionId, projectHash: state.appState.project && state.appState.project.hash };
+    // Typing (or a restored draft, which fires this too) lets the Bridge start the turn's process early:
+    // at once, then at most every 10 s. activeThreadId is set before the draft loads; wsSessionId may lag.
+    var projectHash = state.appState.project && state.appState.project.hash;
+    var params = state.appState.session === '__new__' ? { projectHash: projectHash, runtime: state.appState.runtime } : { sessionId: state.activeThreadId || state.wsSessionId, projectHash: projectHash };
     var key = (params.sessionId || '') + ':' + params.projectHash + ':' + params.runtime;
     if (params.projectHash && el.value.trim() && (key !== prewarmed.key || Date.now() - prewarmed.at >= 10000)) {
       prewarmed = { key: key, at: Date.now() };
@@ -2429,7 +2429,9 @@ document.addEventListener('keydown', function (e) {
 var _sendOrder = 0;
 var _turnSendOrder = new Map();
 
+var prewarmed = { key: '', at: 0 };
 function doSend(fullText, displayText, images) {
+  prewarmed = { key: '', at: 0 }; // typing the next message prewarms at once
   if (restoreScrollFrame !== null) {
     cancelAnimationFrame(restoreScrollFrame);
     restoreScrollFrame = null;

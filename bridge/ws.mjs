@@ -776,7 +776,7 @@ function connect() {
         unsubscribe: (params, caller) => { _subscribers.remove(params.sessionId, caller.replyTo); if (!_subscribers.targets(params.sessionId, { root: true }).length) _catalogTitles.delete(params.sessionId); return {}; },
         send_message: (params, caller) => requestSendMessage(params, caller),
         interrupt: async params => { await handleInterrupt(params); return { ok: true }; },
-        prewarm: params => { void prewarmSession(params).catch(() => {}); return {}; },
+        prewarm: params => { prewarmSession(params).catch((error) => console.error(`[ws] prewarm: ${error.message}`)); return {}; },
         permission_reply: params => { handlePermissionReply(params); return { ok: true }; },
         threads: params => historyService.threads(params),
         tool_details: async params => { await sessionIndex.readyPromise; return toolDetails(params, id => historyService.resolve(id)); },
@@ -1486,8 +1486,6 @@ async function handleAdapterSend(adapter, identity, text, turnId, sendOptions = 
         ...(identity.runtime === 'claude' ? { userText: text } : {}),
       },
     );
-    // Acked before the process/resume/gateway starts (a later failure ends the turn); Codex finds a writer only in thread/resume.
-    if (identity.runtime !== 'codex' && !adapter.interaction.isBusy(identity.nativeSessionId)) ack(true);
     await adapter.interaction.sendExisting({
       sessionId: identity.sessionId,
       nativeSessionId: identity.nativeSessionId,
@@ -1779,9 +1777,9 @@ async function prewarmSession({ sessionId, projectHash, runtime }) {
   // A Session a terminal, the IDE or the daemon holds is left alone.
   if (!cwd || (id && await (interaction ? interaction.heldElsewhere?.(id)
     : getDaemonRunningSessionIds().has(id) || claudeSessionWriter(id, { ownPids: _pool.ownPids() })))) return;
-  if (interaction) return interaction.prewarm(cwd);
+  if (interaction) return interaction.prewarm(cwd, id);
   const key = id || _warmNewClaude.get(cwd) || _warmNewClaude.set(cwd, crypto.randomUUID()).get(cwd);
-  _pool.prewarm(key, id ? { cwd, resumeId: id, file: _claudeRuntime.findSessionFile(id) } : { cwd, createId: key });
+  return _pool.prewarm(key, id ? { cwd, resumeId: id, file: _claudeRuntime.findSessionFile(id) } : { cwd, createId: key });
 }
 
 // Send to an existing session (regular OR agent), taking a daemon-held agent over into the pool via stopDaemon + --resume. See docs/headless-streaming.md §takeover.
@@ -1836,7 +1834,6 @@ async function handleHeadlessSend(
       ack,
       { userInitiated: true, userText: text },
     );
-    ack(true); // before the process starts (see handleAdapterSend)
     let res = await _pool.send(sessionId, text, {
       cwd,
       resumeId: sessionId,
