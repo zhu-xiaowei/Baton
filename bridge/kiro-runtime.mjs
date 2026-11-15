@@ -7,7 +7,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import kiro, { CLIENT, DASHBOARD, alive, HOME, LEASES, ROOT, KiroReader, canonicalId, mapTool, parse, readLease, sessionFile } from './kiro.mjs';
 import { RpcStdio } from './rpc-stdio.mjs';
-import { finishProcess, sessionProcess } from './turn-process.mjs';
+import { finishProcess, prewarm, prewarmExit, sessionProcess, takeWarm } from './turn-process.mjs';
 import { StreamFramer } from './stream-framer.mjs';
 import { findRuntimeBin } from './runtime-bin.mjs';
 import { BRIDGE_VERSION } from './version.mjs';
@@ -37,6 +37,7 @@ const kiroBin = () => (bin ??= findRuntimeBin('kiro-cli', [], '3.0.0')?.bin || '
 function connect(cwd) {
   const c = { key: `kiro:${++spawned}`, cwd };
   c.ready = (async () => {
+    await prewarmExit(`kiro:${cwd}`);
     const child = await sessionProcess(c.key, await kiroBin(), ['acp', '--agent-engine=v3'], { cwd });
     c.rpc = new RpcStdio(child, { onNotify: (method, params) => notified(c, method, params), onRequest: (method, params) => requested(c, method, params) });
     child.once('exit', () => {
@@ -300,7 +301,7 @@ const kiroInteraction = defineInteractionAdapter({
       return;
     }
     if (!c) {
-      conns.set(id, c = connect(cwd));
+      conns.set(id, c = takeWarm(`kiro:${cwd}`) || connect(cwd));
       c.id = id;
       // History comes from the files, so the load does not replay it.
       c.loaded = c.ready.then(() => c.rpc.request('session/load', { sessionId: id, cwd, mcpServers: [], _meta: { kiro: { noReplay: true } } }, { timeoutMs: 60_000 }));
@@ -319,7 +320,7 @@ const kiroInteraction = defineInteractionAdapter({
   },
 
   async create({ cwd, text, streamId, onCreated }) {
-    const c = connect(cwd);
+    const c = takeWarm(`kiro:${cwd}`) || connect(cwd);
     try {
       await c.ready;
       const result = await c.rpc.request('session/new', { cwd, mcpServers: [] }, { timeoutMs: 60_000 });
@@ -339,6 +340,9 @@ const kiroInteraction = defineInteractionAdapter({
       throw error;
     }
   },
+
+  // Only initialized: no session, no lease, nothing written.
+  prewarm: (cwd) => prewarm(`kiro:${cwd}`, () => { const c = connect(cwd); c.ready.catch(() => {}); return c; }, close),
 
   // Kiro ignores a cancel that arrives before the turn starts.
   async interrupt(id) {

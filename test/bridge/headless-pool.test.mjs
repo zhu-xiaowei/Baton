@@ -62,6 +62,24 @@ test('a Done session exits; background tasks and prompts keep it until they end'
   await exited(proc);
 });
 
+test('a prewarmed process takes the send, exits unused, and is replaced after another writer appends', async (t) => {
+  const pool = new ClaudePool({ bin: fakeClaude(t), prewarmMs: 100 });
+  t.after(() => pool.shutdownAll());
+  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'prewarm-')), 'sid.jsonl');
+  fs.writeFileSync(file, '{}\n');
+  const warm = async (key) => (await pool.prewarm(key, { resumeId: key, file }), pool.procs.get(key));
+  const used = await warm('sid');
+  await turn(pool, 'sid', 'one');
+  assert.equal(used.inputs.size, 1, 'the send used the prewarmed process');
+  const unused = await warm('b');
+  await exited(unused);
+  assert.equal(pool.procs.has('b'), false, 'unused, it exits after the window');
+  const stale = await warm('c');
+  fs.appendFileSync(file, '{}\n');
+  await turn(pool, 'c', 'two');
+  assert.equal(stale.dead && stale.inputs.size, 0, 'a fresh process took the message');
+});
+
 test('the result of a turn CC started itself does not finish a waiting message', async (t) => {
   const pool = new ClaudePool({ bin: fakeClaude(t) });
   t.after(() => pool.shutdownAll());

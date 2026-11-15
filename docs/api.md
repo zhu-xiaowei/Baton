@@ -164,6 +164,7 @@ base64 `data` is deflated (`z: 1`) only for pages that sent `inflate: 1`
 | `unsubscribe` | `sessionId` | `{}` |
 | `send_message` | the `send_message` payload below, without `device` | the `send_message_result` fields below; sent with `ack` |
 | `interrupt` | `sessionId, turnId?, runtime?` | `{ ok }` |
+| `prewarm` | `sessionId, projectHash` (existing) or `projectHash, runtime` (new) | `{}`; see below |
 | `permission_reply` | the `permission_reply` payload below | `{ ok }` |
 | `list_commands` | `projectHash, runtime, knownRevision` | the catalog (`commands, skills, revision`) or `{ notModified, revision }` |
 | `list_command_options` | `projectHash, runtime, sessionId, commandName` | `{ commandName, options, error? }` |
@@ -655,6 +656,21 @@ the Claude transcript. The frontend stores `commandOutput` as the panel's copyab
 ephemeral local result without writing it to rollout history.
 
 Returned as the reply to the sender's `send_message` request.
+
+An existing Session's result is sent once the fast checks pass (input, another writer), before
+the process, resume or gateway starts; a later failure ends the turn with `stream_end.error`.
+Codex keeps its later result (its writer check is `thread/resume`), as do new Sessions whose
+ID comes from the runtime and turns added to a running one.
+
+#### prewarm
+
+The App sends it while the user types: at the first input, then at most every 10 s. Claude,
+Kiro and DSH start the next turn's process ahead of the send; it stays until 30 s after the
+last `prewarm` and then exits like a Done Session (stdin closed). Kiro and DSH only
+`initialize` it, per folder, with no Session, lease or lock. Claude starts `--resume <id>`, or
+`--session-id <id>` with a Bridge-minted ID that the next new Session uses; a transcript
+another writer extended in the meantime gets a fresh process. Sessions held elsewhere are left
+alone; other runtimes ignore it.
 
 ---
 

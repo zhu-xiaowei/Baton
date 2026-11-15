@@ -2383,8 +2383,17 @@ var restoreScrollFrame = null;
     if (/Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || window.__BATON_NATIVE_MOBILE__) return;
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); updateSendBtn(); }
   });
+  var prewarmed = { key: '', at: 0 };
   el.addEventListener('input', function () {
     resizeInputPreservingMessages();
+    // Typing lets the Bridge start the turn's process early: at the first input, then at most every 10 s.
+    var isNew = state.appState.session === '__new__';
+    var params = isNew ? { projectHash: state.wsProjectHash, runtime: state.appState.runtime } : { sessionId: state.wsSessionId, projectHash: state.appState.project && state.appState.project.hash };
+    var key = (params.sessionId || '') + ':' + params.projectHash + ':' + params.runtime;
+    if (params.projectHash && el.value.trim() && (key !== prewarmed.key || Date.now() - prewarmed.at >= 10000)) {
+      prewarmed = { key: key, at: Date.now() };
+      bridge.request(state.appState.device || '', 'prewarm', params).catch(function () {});
+    }
     // Typing changes only input controls. Runtime state changes update the
     // spinner through the existing no-argument updateSendBtn() calls.
     updateSendBtn({ skipSpinner: true });

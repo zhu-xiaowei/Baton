@@ -7,15 +7,17 @@
 //
 // Lifecycle: spawned on send, EOF once the session is Done (CC exits cleanly, jsonl persists).
 
+import fs from 'node:fs';
 import { spawn, execFileSync } from 'child_process';
 import readline from 'readline';
 import { randomUUID } from 'node:crypto';
 import { requireClaudeBin, resolveClaudeBin } from './session.mjs';
 import { StreamFramer } from './stream-framer.mjs';
 import { userMessageUuidForTurnId } from './live-turn-stream.mjs';
-import { trackLeftover } from './turn-process.mjs';
+import { PREWARM_MS, prewarm, takeWarm, trackLeftover } from './turn-process.mjs';
 
 export const HEADLESS_INIT_TIMEOUT_MS = 30_000;  // wait for system/init before first send
+const fileSize = (file) => { try { return fs.statSync(file).size; } catch { return -1; } };
 // One live claude process bound to a sessionId.
 // State machine: spawning → ready (idle|busy) → dead.
 class HeadlessProc {
@@ -345,6 +347,7 @@ export class ClaudePool {
   constructor(opts = {}) {
     this.procs = new Map();  // key → HeadlessProc
     this.initTimeout = opts.initTimeout ?? HEADLESS_INIT_TIMEOUT_MS;
+    this.prewarmMs = opts.prewarmMs ?? PREWARM_MS;
     this.bin = opts.bin || '';
     this.env = opts.env || null;
     this.trackLeftovers = !!opts.trackLeftovers;  // only the Bridge's own pool; tests must not touch the real ledger
@@ -404,6 +407,9 @@ export class ClaudePool {
     };
 
     while (this._exiting.has(key)) await this._exiting.get(key);
+    const warm = takeWarm(`claude:${key}`);
+    // --resume read the transcript at spawn; another writer appended since, so it would fork.
+    if (warm && fileSize(warm.file) !== warm.size) { this.procs.delete(key); await this._retire(warm); }
     let proc = this.procs.get(key);
     if (!proc || proc.dead) {
       // Fresh process. NOTE: `system/init` is emitted only AFTER the first stdin
@@ -420,6 +426,18 @@ export class ClaudePool {
 
     proc._writeTurn(text, streamId, cb);
     return { sessionId: proc.sessionId, bgLocked: false };
+  }
+
+  // App prewarm: spawn before the send (CC writes no row before its first input); unused, it exits like Done.
+  async prewarm(key, { cwd, resumeId, createId, file }) {
+    while (this._exiting.has(key)) await this._exiting.get(key);
+    if (this.procs.get(key)?.busy || this.procs.get(key)?.ready) return; // a prewarmed process is neither
+    prewarm(`claude:${key}`, () => {
+      const proc = Object.assign(new HeadlessProc(this, key, cwd, resumeId, createId), { file, size: fileSize(file) });
+      this.procs.set(key, proc);
+      proc.spawn();
+      return proc;
+    }, (proc) => (this._exitIfDone(proc), this._exiting.get(key)), this.prewarmMs);
   }
 
   // Read the same runtime-filtered catalogs used by Claude Code's TUI without

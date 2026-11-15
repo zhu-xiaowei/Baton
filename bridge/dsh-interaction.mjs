@@ -9,7 +9,7 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { BRIDGE_HOME } from './config.mjs';
 import { RpcStdio } from './rpc-stdio.mjs';
-import { finishProcess, sessionProcess } from './turn-process.mjs';
+import { finishProcess, prewarm, prewarmExit, sessionProcess, takeWarm } from './turn-process.mjs';
 import { commonDirs, pickNode } from './runtime-bin.mjs';
 import { SessionGrants } from './session-grants.mjs';
 import { StreamFramer } from './stream-framer.mjs';
@@ -99,20 +99,30 @@ class DshInteraction {
       label: /\0web(\0|$)/.test(cmd) ? 'A dsh web server (closing it ends every session it has open)' : 'Another dsh client' };
   }
 
-  // A process for the Session: initialize, then `open` (session/new or session/resume).
-  async spawn(cwd, s, open) {
-    const dsh = findDsh();
-    if (!dsh) throw new Error('DeepSeek Harness needs dsh and Node.js 24.9 or newer on this computer.');
-    Object.assign(s, { key: `dsh:${randomUUID()}`, queue: [], tags: [], controls: new Map(), tools: new Map() });
-    s.child = await sessionProcess(s.key, dsh.node, [dsh.bin, '--profile', 'acp', '--patch', overlay()], { cwd, stdio: ['pipe', 'pipe', 'pipe', 'pipe'] });
-    s.rpc = new RpcStdio(s.child, {
-      onNotify: (method, params) => { if (method === 'session/update' && params.sessionId === s.sid) this.update(s, params.update); },
-      onRequest: (method, params) => this.approval(s, method, params),
-    });
-    this.questions(s);
-    try {
+  // The process, initialized; a prewarm (no session, no lock, nothing written) runs only this.
+  start(cwd, s) {
+    return s.started ||= (async () => {
+      await prewarmExit(`dsh:${cwd}`);
+      const dsh = findDsh();
+      if (!dsh) throw new Error('DeepSeek Harness needs dsh and Node.js 24.9 or newer on this computer.');
+      Object.assign(s, { key: `dsh:${randomUUID()}`, queue: [], tags: [], controls: new Map(), tools: new Map() });
+      s.child = await sessionProcess(s.key, dsh.node, [dsh.bin, '--profile', 'acp', '--patch', overlay()], { cwd, stdio: ['pipe', 'pipe', 'pipe', 'pipe'] });
+      s.rpc = new RpcStdio(s.child, {
+        onNotify: (method, params) => { if (method === 'session/update' && params.sessionId === s.sid) this.update(s, params.update); },
+        onRequest: (method, params) => this.approval(s, method, params),
+      });
+      this.questions(s);
       const init = await s.rpc.request('initialize', { protocolVersion: 1, clientCapabilities: {} }, { timeoutMs: 60_000 });
       s.vision = !!init?.agentCapabilities?.promptCapabilities?.image;
+    })();
+  }
+
+  prewarm(cwd) { prewarm(`dsh:${cwd}`, () => { const s = {}; this.start(cwd, s).catch(() => {}); return s; }, (s) => finishProcess(s.key)); }
+
+  // A process for the Session (a prewarmed one if any), then `open` (session/new or session/resume).
+  async spawn(cwd, s, open) {
+    try {
+      await this.start(cwd, s);
       await open();
     } catch (error) {
       if (this.sessions.get(s.sid) === s) this.sessions.delete(s.sid);
@@ -122,7 +132,7 @@ class DshInteraction {
   }
 
   async create({ cwd, text, streamId, onCreated }) {
-    const s = {};
+    const s = takeWarm(`dsh:${cwd}`) || {};
     await this.spawn(cwd, s, async () => {
       const res = await s.rpc.request('session/new', { cwd, mcpServers: [] }, { timeoutMs: 60_000 });
       s.sid = res.sessionId;
@@ -143,7 +153,7 @@ class DshInteraction {
         const file = findLog(sid);
         const cwd = file && (sessionIndex.records.get(file)?.state?.cwd || catalog.summarize(file).cwd);
         if (!cwd) throw new Error('Session not found on this device.');
-        this.sessions.set(sid, s = { sid });
+        this.sessions.set(sid, s = Object.assign(takeWarm(`dsh:${cwd}`) || {}, { sid }));
         s.ready = this.spawn(cwd, s, () => s.rpc.request('session/resume', { sessionId: sid, cwd, mcpServers: [] }, { timeoutMs: 60_000 }));
       }
       if (s.closing) { await s.finished; continue; }

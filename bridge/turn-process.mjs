@@ -91,6 +91,24 @@ export async function finishProcess(key, close) {
   clearTimeout(timer);
 }
 
+// App prewarm: start() for the next takeWarm(key); unused `ms` after the last call, end() it before any restart.
+export const PREWARM_MS = 30_000;
+const warm = new Map(); // key → { value, timer, ending }
+export async function prewarm(key, start, end, ms = PREWARM_MS) {
+  await warm.get(key)?.ending;
+  const w = warm.get(key) || { value: start() };
+  clearTimeout(w.timer);
+  w.timer = setTimeout(() => { w.ending = Promise.resolve(end(w.value)).finally(() => warm.delete(key)); }, ms).unref();
+  warm.set(key, w);
+}
+export const prewarmExit = (key) => warm.get(key)?.ending; // a new process waits for an expired one to exit
+export function takeWarm(key) {
+  const w = warm.get(key);
+  if (!w || w.ending || !warm.delete(key)) return null;
+  clearTimeout(w.timer);
+  return w.value.rpc?.error ? null : w.value; // its process may have died meanwhile
+}
+
 // After a Bridge restart: kill recorded processes whose pid and start time still match.
 export function killLeftovers() {
   ledger = readLedger();
