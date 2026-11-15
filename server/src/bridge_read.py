@@ -4,11 +4,10 @@ Usage: app.include_router(read_router) in main.py
 """
 
 from fastapi import APIRouter, Request, Query, Response
-from pydantic import BaseModel, Field
 import os
 import re
-import api_key as deployment_key
 import devices
+from accounts import Body, _need, computer_tokens, remove
 
 read_router = APIRouter(prefix="/api/bridge")
 
@@ -26,7 +25,7 @@ def _connections():
 
 
 def _account_id(request: Request) -> str:
-    return deployment_key.account_id(request.headers.get("x-api-key", ""))
+    return request.state.auth["accountId"]
 
 
 def _ws_url():
@@ -35,14 +34,13 @@ def _ws_url():
     return endpoint.replace("https://", "wss://") if endpoint else ""
 
 
-class DeleteDeviceRequest(BaseModel):
-    deviceName: str = Field(min_length=1)
-
-
 @read_router.post("/delete-device")
-async def delete_device(req: DeleteDeviceRequest, raw: Request):
+async def delete_device(req: Body, raw: Request):
     """Remove a device: its Bridge is told to uninstall itself and disconnected, then its row goes."""
+    _need(req, "deviceName")
     account_id = _account_id(raw)
+    # Its token goes with the rotation; the Bridge is told to uninstall before its sockets close.
+    remove(raw.state.auth, req.rotation, computer_tokens(account_id, req.deviceName), notice="device_removed")
     endpoint = os.environ.get("WS_API_ENDPOINT", "")
     if endpoint:
         try:
@@ -76,6 +74,10 @@ async def get_devices(request: Request):
         "os": item.get("os", ""),
         "online": item["deviceName"] in online_devices,
     } for item in items if item.get("deviceName")]}
+    from accounts import _meta, list_tokens
+    meta = _meta(account_id)
+    result.update(apps=list_tokens(account_id), rotations=meta.get("rotations", []),
+                  hosted=bool(meta.get("joinSecretHash")), self=request.state.auth.get("tokenHash", "")[:12])
     if connections is not None:
         from direct_rpc_ws import rpc_info
         try:
@@ -150,6 +152,8 @@ fi
 VALIDATION_URL={_shell_literal(f"{server}/api/bridge/device-name/validate")}
 VALIDATION_KEY={_shell_literal(api_key)}
 validate_name() {{
+  # Without a credential (public install) there is no account yet; approval checks the name instead.
+  [ -z "$VALIDATION_KEY" ] && {{ printf '%s' "$1"; return 0; }}
   VALIDATION_URL="$VALIDATION_URL" VALIDATION_KEY="$VALIDATION_KEY" node -e '
     const [name, mode, current] = process.argv.slice(1);
     const url = new URL(process.env.VALIDATION_URL);
@@ -290,6 +294,7 @@ def _windows_install_script(url, server, api_key, name):
         "function Test-DeviceName([string]$candidate, [string]$mode, [string]$current = '') {",
         "  $uri = $validationUri + '?name=' + [uri]::EscapeDataString($candidate) + '&mode=' + $mode",
         "  if ($current) { $uri += '&current=' + [uri]::EscapeDataString($current) }",
+        "  if (-not $headers['x-api-key']) { return @{ ok = $true; name = $candidate } }",
         "  try { return Invoke-RestMethod -UseBasicParsing -Uri $uri -Headers $headers } catch {",
         f"    throw { _powershell_literal(DEVICE_NAME_CHECK_FAILED) }",
         "  }",
@@ -354,8 +359,11 @@ def _windows_install_script(url, server, api_key, name):
         "if ($npmExit -ne 0) { throw 'Bridge dependency installation failed.' }",
         f"$config = @{{ server = {server_value}; apiKey = {key_value}; deviceName = $deviceName; deviceDisplayName = $deviceDisplayName }}",
         "if ($existingConfig.bridgeId) { $config.bridgeId = [string]$existingConfig.bridgeId }",
+        # A public install keeps an earlier pairing; otherwise the computer joins an account first.
+        "if (-not $config.apiKey) { foreach ($k in 'apiKey', 'accountKey', 'accountKeyAt', 'accounts') { if ($existingConfig.$k) { $config[$k] = $existingConfig.$k } } }",
         "$utf8 = New-Object System.Text.UTF8Encoding($false)",
         "[System.IO.File]::WriteAllText($configPath, ($config | ConvertTo-Json), $utf8)",
+        "if (-not $config.apiKey) { & $nodePath (Join-Path $dir 'bridge.mjs') pair; if ($LASTEXITCODE -ne 0) { throw 'This computer has not joined an account.' } }",
         "$bridge = Join-Path $dir 'bridge-launcher.mjs'",
         "$logPath = Join-Path $dir 'bridge.log'",
         "Remove-Item $logPath -Force -ErrorAction SilentlyContinue",
@@ -500,7 +508,11 @@ def install_script(request: Request, api_key: str, name, platform: str):
         'const config={server:process.env.BATON_SERVER,apiKey:process.env.BATON_API_KEY,'
         'deviceName:process.env.BATON_DEVICE_NAME,deviceDisplayName:process.env.BATON_DEVICE_DISPLAY_NAME};'
         'if(existing.bridgeId)config.bridgeId=existing.bridgeId;'
+        'if(!config.apiKey)for(const k of ["apiKey","accountKey","accountKeyAt","accounts"])if(existing[k])config[k]=existing[k];'
         'fs.writeFileSync(p,JSON.stringify(config,null,2),{mode:0o600});fs.chmodSync(p,0o600);\' "$DIR/config.json"\n'
+        # A public install has no credential: the computer joins an account (QR code) before its service starts.
+        'node -e \'process.exit(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).apiKey?0:1)\' "$DIR/config.json" ||\n'
+        '  node "$DIR/bridge.mjs" pair\n'
         '\n'
         '# WSL: symlink Windows .claude directory so bridge can monitor Windows CC sessions\n'
         'if [ -n "$WSL_DISTRO_NAME" ]; then\n'

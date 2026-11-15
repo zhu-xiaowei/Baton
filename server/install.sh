@@ -10,6 +10,7 @@
 #   ./install.sh --region us-west-2 --profile myprofile
 #   ./install.sh --rotate-key                    # replace the API key; every device signs in again
 #   PUSH_RELAY_URL=https://… ./install.sh         # another iOS push relay, every deploy (docs/mobile-notifications.md)
+#   OPEN_REGISTRATION=true ./install.sh           # anyone may create an account by scanning (kept on later deploys)
 
 main() {
 set -euo pipefail
@@ -414,7 +415,7 @@ WS_ZIP=$(mktemp -t baton-ws-lambda.XXXX)
 rm -f "$WS_ZIP"
 WS_ZIP="$WS_ZIP.zip"
 WS_CODE_KEY="deploy/ws/${APP_VERSION}-$(date +%s)-$$.zip"
-(cd "$SRC_DIR" && zip -qr "$WS_ZIP" api_key.py bridge_ws.py devices.py direct_rpc_ws.py -x '*/__pycache__/*' '*.pyc')
+(cd "$SRC_DIR" && zip -qr "$WS_ZIP" api_key.py auth.py bridge_ws.py devices.py direct_rpc_ws.py -x '*/__pycache__/*' '*.pyc')
 aws s3 cp "$WS_ZIP" "s3://${S3_BUCKET}/${WS_CODE_KEY}" --region "$REGION" --only-show-errors
 rm -f "$WS_ZIP"
 fi
@@ -513,6 +514,11 @@ fi
 if [ "$ROTATE_KEY" != true ] && [ -n "${PUSH_RELAY_URL+x}" ]; then
   STACK_PARAMS+=("ParameterKey=PushRelayUrl,ParameterValue=$PUSH_RELAY_URL")
 fi
+if [ "$ROTATE_KEY" != true ] && [ -n "${OPEN_REGISTRATION:-}" ]; then
+  STACK_PARAMS+=("ParameterKey=OpenRegistration,ParameterValue=$OPEN_REGISTRATION")
+elif [ -n "$(stack_param OpenRegistration)" ] && [ "$(stack_param OpenRegistration)" != "None" ]; then
+  STACK_PARAMS+=("ParameterKey=OpenRegistration,UsePreviousValue=true")
+fi
 STACK_PARAMS+=(
   "ParameterKey=AccountId,ParameterValue=$DATA_ACCOUNT_ID"
   "ParameterKey=ApiKeyName,ParameterValue=$KEY_NAME"
@@ -536,6 +542,12 @@ else
   fi
 fi
 echo "  ${C_GREEN}✓${C_RESET} Stack ready"
+# Lambda creates its log groups itself, so their 7-day retention is set here rather than in the template.
+for FN in $(aws cloudformation describe-stack-resources --stack-name "$STACK_NAME" --region "$REGION" \
+    --query "StackResources[?ResourceType=='AWS::Lambda::Function'].PhysicalResourceId" --output text); do
+  aws logs create-log-group --log-group-name "/aws/lambda/$FN" --region "$REGION" 2>/dev/null || true
+  aws logs put-retention-policy --log-group-name "/aws/lambda/$FN" --retention-in-days 7 --region "$REGION" || true
+done
 
 # ===== Step 4: Fetch outputs =====
 echo "[4/4] Fetching outputs..."

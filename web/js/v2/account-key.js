@@ -26,3 +26,8 @@ export async function saveAccountKey(server, raw) {
   await store('readwrite', (keys) => keys.put(saved, server)).catch(() => memory.set(server, saved));
   return saved;
 }
+
+export const forgetAccountKey = (server) => {
+  memory.delete(server);
+  return store('readwrite', (keys) => keys.delete(server)).catch(() => {});
+};

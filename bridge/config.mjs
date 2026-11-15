@@ -71,8 +71,13 @@ export function loadConfig() {
       saveConfig(config);
     }
   } else {
-    console.error('Usage: node bridge.mjs --server URL --key API_KEY [--name DEVICE_NAME]');
+    console.error('Usage: node bridge.mjs --server URL --key API_KEY [--name DEVICE_NAME] | node bridge.mjs pair');
     process.exit(1);
+  }
+  if (!config.apiKey) {
+    // Exit 0, so the service manager does not restart it until the computer has joined.
+    console.error('This computer has not joined an account yet: run `node ~/.baton-bridge/bridge.mjs pair`.');
+    process.exit(0);
   }
   if (!/^[a-f0-9]{32}$/.test(config.bridgeId || '')) {
     config.bridgeId = randomBytes(16).toString('hex');

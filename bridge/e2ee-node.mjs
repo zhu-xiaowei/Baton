@@ -79,7 +79,7 @@ export function bridgeKeys(k, since = 0, exhausted = () => {}) {
   };
   return {
     pub: pubRaw.toString('base64'),
-    fp: hkdf(k, 'fp', 8).toString('hex'),
+    fp: fingerprint(k),
     session,
     byTag: touch,
     notifyKey: hkdf(k, 'notify'),
@@ -89,3 +89,28 @@ export function bridgeKeys(k, since = 0, exhausted = () => {}) {
       crypto.subtle.importKey('raw', hkdf(k, 'file-id'), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'])]).then(([key, id]) => ({ key, id, since }))),
   };
 }
+
+// Synchronous twins of e2ee.mjs accountOf / sealPair / openPair.
+export const accountOf = (k) => ({ accountId: hkdf(k, 'account', 8).toString('hex'), joinSecret: hkdf(k, 'join').toString('base64url'), fp: fingerprint(k) });
+
+// One 32-byte key sealed with AES-GCM: nonce ‖ ciphertext ‖ tag, base64.
+function sealKey(key, plain, aad) {
+  const nonce = randomBytes(12);
+  const cipher = createCipheriv('aes-256-gcm', key, nonce).setAAD(Buffer.from(aad));
+  return Buffer.concat([nonce, cipher.update(plain), cipher.final(), cipher.getAuthTag()]).toString('base64');
+}
+
+function openKey(key, sealed, aad) {
+  try {
+    const bytes = Buffer.from(sealed, 'base64');
+    const decipher = createDecipheriv('aes-256-gcm', key, bytes.subarray(0, 12)).setAAD(Buffer.from(aad));
+    decipher.setAuthTag(bytes.subarray(-16));
+    return Buffer.concat([decipher.update(bytes.subarray(12, -16)), decipher.final()]);
+  } catch { return null; }
+}
+
+export const sealPair = (t, k, code) => sealKey(hkdf(t, 'pair'), k, code);
+export const openPair = (t, sealed, code) => openKey(hkdf(t, 'pair'), sealed, code);
+export const fingerprint = (k) => hkdf(k, 'fp', 8).toString('hex');
+// `fp`: the old K's fingerprint, under which K' was sealed.
+export const openRotation = (k, sealed, fp) => openKey(hkdf(k, 'rotate'), sealed, fp);

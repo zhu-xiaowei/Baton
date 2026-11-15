@@ -11,8 +11,32 @@ import os
 import re
 
 import api_key as deployment_key
+import auth
 
 app = FastAPI()
+
+PUBLIC = {"/api/version", "/api/account/register", "/api/account/recover", "/api/pair/claim",
+          "/api/pair/start", "/api/pair/wait"}
+# Paths only some credential kinds may use: start-token hands out the deployment key, and an
+# install script embeds the caller's credential as the new Bridge's.
+KINDS = {"/api/auth/start-token": {"key"}, "/api/install": {"key", "bridge"}}
+
+
+@app.middleware("http")
+async def authenticate(request: Request, call_next):
+    path = request.url.path
+    if request.method == "OPTIONS" or not path.startswith("/api/") or path in PUBLIC:
+        return await call_next(request)
+    try:
+        resolved = auth.resolve(request.headers.get("x-api-key", ""))
+    except deployment_key.KeyUnavailable:
+        return JSONResponse({"error": "temporarily unavailable"}, status_code=503)
+    if not resolved:
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+    if resolved["kind"] not in KINDS.get(path, {resolved["kind"]}):
+        return JSONResponse({"error": "forbidden"}, status_code=403)
+    request.state.auth = resolved
+    return await call_next(request)
 
 
 @app.exception_handler(deployment_key.KeyUnavailable)
@@ -28,8 +52,10 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 
 from bridge_read import read_router, get_install, install_script
 from notifications import router as notifications_router
+from accounts import router as accounts_router
 app.include_router(read_router)
 app.include_router(notifications_router)
+app.include_router(accounts_router)
 
 # Short alias for install endpoint
 app.get("/api/install")(get_install)
@@ -100,6 +126,15 @@ async def install_with_token(request: Request, t: str = "", name: str = Query(No
     if isinstance(script, Response):
         script.headers["Cache-Control"] = "no-store"
     return script
+
+
+@app.get("/install")
+async def public_install(request: Request, name: str = Query(None), platform: str = ""):
+    """Hosted install command: no credential, the computer then joins an account by QR code."""
+    if os.environ.get("OPEN_REGISTRATION") != "true":
+        return Response(content="echo 'This server has no public install; copy the command from Setup.' >&2\nexit 1\n",
+                        media_type="text/plain", status_code=404)
+    return install_script(request, "", name, platform)
 
 
 # Serve web static files (landing, viewer, setup).
