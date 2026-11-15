@@ -2344,6 +2344,7 @@ function interruptSession() {
   updateSendBtn();
 }
 var restoreScrollFrame = null;
+var prewarmed = { key: '', at: 0 };
 (function () {
   var el = document.getElementById('msg-input');
   // The HarmonyOS shell's tablet UA omits "Mobile", so the UA test below misses it.
@@ -2403,6 +2404,8 @@ var restoreScrollFrame = null;
     }
   });
   if (document.documentElement.classList.contains('macos-page-zoom') || window.batonPageZoom?.enabled) resizeInputPreservingMessages();
+  // A page load restores the draft before this module loads (app.js awaits loadViewerLibs after it).
+  if (el.value.trim()) el.dispatchEvent(new window.Event('input'));
 })();
 // Global Esc → interrupt the running turn, like CC. Bubble phase so overlays
 // that own Esc (slash popup handles it in capture phase; file/image viewers
@@ -2428,7 +2431,6 @@ document.addEventListener('keydown', function (e) {
 var _sendOrder = 0;
 var _turnSendOrder = new Map();
 
-var prewarmed = { key: '', at: 0 };
 function doSend(fullText, displayText, images) {
   prewarmed = { key: '', at: 0 }; // typing the next message prewarms at once
   if (restoreScrollFrame !== null) {
