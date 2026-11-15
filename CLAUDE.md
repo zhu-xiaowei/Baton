@@ -188,6 +188,85 @@ Done:
   Delete (Session or project) refuses Sessions Baton or another process holds, then removes the Session folders
   (children too) and DSH's projcache entry. Rename appends dsh's own user `session/title` frame under the Session lock and updates its list cache (refused while in use; not on Windows).
 
+### Multi-harness H4: Pi (≥ 1.0)
+- Files: `pi-catalog.mjs` (catalog, current-branch history, row mapping; worker-safe), `pi-runtime.mjs` (detect,
+  adapter, watcher), `pi-interaction.mjs` (`pi --mode rpc`), `pi-approval-ext.mjs` (passed with `-e`),
+  `pi-status-ext.mjs` (installed). Listed in `OPTIONAL_RUNTIMES` when the agent dir exists; `pi` ≥ 1.0 is found on
+  first use; a JS entry (`.js` or a node shebang) runs as `<node ≥ 22.19> <realpath>` (`pickNode`), a wrapper
+  script runs as it is. An exception in the RPC event handler ends the turn, not the Bridge.
+- Catalog: `$PI_CODING_AGENT_DIR/sessions/**.jsonl` (default `~/.pi/agent`); project from the header `cwd`; title
+  `session_info.name` > first user text. History follows `parentId` from the last entry; an entry that does not
+  continue the previous one bumps the epoch (`historyReset`). Entry ids are read from the line head, or by
+  parsing the line when the id is not the second key (`custom`, `custom_message`). One `edit` call with N edits = N Edit cards (`<id>#i`).
+- Status: the Bridge installs `<agent dir>/extensions/baton-bridge-status.js` when its watcher starts (content
+  compared, atomic rename; removed on device removal). Every pi process writes
+  `~/.baton-bridge/pi-status/<sid>.<pid>.json` (`idle/running/waiting`; `waiting` = `ui_prompt_start` →
+  needs_input); a dead pid or another start time is stale. The same file holds the fork guard: a terminal whose
+  loaded leaf is not the file's last entry refuses input until `/baton-reload`.
+- Interaction: one process per Session, ended on `agent_settled` (never `agent_end`) by EOF. Sends during a turn are
+  `prompt{streamingBehavior:'steer'}`; interrupt = `clear_queue` + `abort` (the extension passes `ctx.signal`, so a
+  waiting dialog ends too). Each prompt starts with `<!--baton:<turnId>-->`; the approval extension strips it and
+  stores `batonTurnId` on the user message, so live and stored prompts are both `live:user:<turnId>`. Other rows:
+  uuid = nativeId (`pi:assistant:<ts>`, `pi:tool:<callId>`). Images go in the RPC `images` field. Tool calls are
+  streamed whole at `toolcall_end`, already mapped.
+- Dialogs: `baton:permission` confirm → `kind:'tool'`. A session grant is offered only for `<program> <plain
+  lowercase subcommand>` (`bash:git status`, applied to that pair only) or a non-bash tool name; any other bash
+  command (shell syntax, a bare program, a flag/path/file second, a wrapper like `sudo`) is asked every time.
+  Grants live in `~/.baton-bridge/pi-grants.json`, read by the extension on every call. `ask_user` (Baton's
+  tool; `multiple:true` rides on `input('baton:multiselect')` and answers a JSON array) and user-extension
+  select/confirm/input → `ask`. One edit call with several edits is approved on one joined diff.
+- Writer conflict: a status record of another live pid on the Session → `pi_active_writer` (only `mode:'tui'` may
+  be terminated). Delete and rename refuse while busy or held; rename appends a `session_info` entry on the last entry
+  (the catalog keeps its id, so nothing is re-read).
+
+### Multi-harness H1: OpenCode ≥ 2.2 (`bridge/opencode-*.mjs`)
+- Loaded whenever `~/.local/share/opencode/opencode.db` exists (one `OPTIONAL_RUNTIMES` line). A 1.x DB without
+  `session_v2` stays registered but lists nothing, starts no watcher and offers no create/send (delete is a no-op).
+  Catalog (`kind:'rows'`) and history read that DB read-only: `PRAGMA data_version`, then rows whose
+  max(time_updated, busy, idle, suspended, archived) moved; history lines are `RowIndex` positions; rows of the
+  turn after the last `idle` row (and running `!cmd` rows) are unstable. One row per block, like Claude's JSONL
+  (`<msgId>#b:<toolId|t0|r0>`, results `<msgId>#r:<toolId>`), live and in history; a tool row goes out at `tool.called`. Baton prompts carry
+  `metadata.baton.turnId` → nativeId `live:user:<turnId>`; files Baton attached are not shown twice.
+- The watcher (`fs.watch` on db/-wal, busy + pending) reports root status changes (external turns get
+  `localIdleSec`) and pushes rows other clients wrote; rows of a Baton turn come from the service events.
+  Busy that neither Baton, the service (`/api/session/active`) nor a non-service opencode process on that
+  session runs is an orphaned claim → Done.
+- Interaction goes through the user's own background service (`~/.local/state/opencode/service.json`); Baton
+  runs `opencode service start` only to send (it resumes suspended sessions), never to read. One `/api/event` SSE
+  per Baton turn, closed 120 s after the last ends. Sends never set `delivery` (OpenCode steers them into a running
+  turn). New sessions get `shell`/`edit: ask` rules and no title. Allow → `once`; "for this session" adds the
+  request's `save` patterns to the session's own rules; deny always carries a message (a bare reject cancels the
+  turn); forms map per field key (multiselect → array). A subagent's request joins its root's Baton turn and is
+  answered on the subagent's session (subscribe also fetches busy subagents' requests); one record per open request; every way it goes away (reply, reconcile with the service on subscribe / commit) settles it and tells the page. `heldElsewhere`: busy in the DB but not active in the service
+  → a live non-service opencode process with the id in its argv or the session cwd. Rename/delete use the service,
+  else `opencode api … --standalone`. `/name` is posted as a command first (404 → sent as text; its user row gets
+  the turnId live only); the command list is `/api/command`, asked again once if a cold directory lists nothing; without the service a
+  private unregistered `opencode serve` (resumes nothing) lists it once per directory and exits, cached by file signature for 5 min.
+
+### Kiro (H5, kiro-cli 3.x v3 engine): `bridge/kiro.mjs`, `bridge/kiro-runtime.mjs`
+- `kiro.mjs` (also loaded by the workers; top-level files because the Bridge package and its updater carry only
+  root `*.mjs` and `project/`): catalog of `$KIRO_HOME/sessions/<hash16>/<id>/messages.jsonl`
+  (+ `session.json`, `sub-executions/*.jsonl` as children; the v2 engine's `sessions/cli` is not read), titles as the
+  `/sessions` dashboard shows them (dashboard renames, placeholder → first prompt line). Status: a lease whose pid
+  is alive and started before the lease was taken + open turn → running, open approval → needs_input. History is
+  one row per line, by line number; the turn id Baton sends as `userMessageTag` (and `steer-<id>`) becomes
+  `nativeId: live:user:<turnId>` / `live:interrupt:<turnId>`; Kiro's steering injections and `[STEERING …]` notes hide.
+- `kiro-runtime.mjs` (in `OPTIONAL_RUNTIMES` when kiro-cli 3.x has unpacked its engine, `<data dir>/kiro-cli/kas` (`$XDG_DATA_HOME` honoured); the binary is located at first use, a miss is kept too): a Baton turn runs `kiro-cli acp --agent-engine=v3` (`session/load` with `noReplay`, or
+  `session/new` + the user's `chat.defaultModel`); it exits when Done (`session/close` → EOF). A send during a turn
+  waits until that turn's prompt is stored (`turn_start`), then uses `_session/steer`, so the order holds; sends that
+  arrive while a turn ends wait for it, then the first opens the next connection and the rest steer into it (one connection per Session); interrupt sends `session/cancel` once the turn started (≤ 2 s). Text streams from ACP
+  (`replayId` = stored Say id); every row, including tool cards (a stream block, then the row), comes from the
+  jsonl drain, so live and history match. Approvals map by option kind; "for this session" is `allow_always`
+  plus a session grant (`capability(resource)`, ws.mjs `_grants`) answered again in later processes;
+  Skill loads are allowed. `heldElsewhere`: another client's live lease (takeover SIGTERMs that pid). Commands: the
+  ACP `available_commands_update` of the last turn in that cwd. `fs.watch`: `sessions/` recursive and `session-leases/`
+  (inotify cost is the sessions tree only); their parent (`$KIRO_HOME`, or its parent while it is missing), not recursive, only until both exist. Deleting
+  and recreating `sessions/` or `session-leases/` while the Bridge runs is not followed (restart). Delete runs `kiro-cli chat --delete-session`.
+  Rename: `_kiro/session/rename` from a short ACP process (writes session.json, ≤ 80 characters), then the
+  `/sessions` dashboard title in `dashboard-meta.json` as kiro-cli's TUI writes it (its `.lock` dir protocol); refused
+  while Baton's turn or another client holds the Session; returns the title the catalog then shows (re-read at once:
+  Node's recursive watch misses a file replaced twice).
+
 ### Git Graph + Commit/Push: COMPLETE
 - Git page header shows `project › branch ↑N ↓M` from the existing porcelain status; the branch text is display-only.
 - Graph (below Changes, collapsed by default) draws real parent topology with an incremental lane layout
@@ -567,7 +646,7 @@ Replaced the old tmux send-keys approach (deleted in Phase 2E). Full design: `do
 
 ### Session Launch (headless)
 - Existing session with no live CC process → `_pool.send` spawns a headless `claude -p --resume <id>`; the persistent process becomes the single writer. No tmux, no wait-for-ready, no trust-dialog handling (headless inherits the folder's trust state).
-- Idle reap (10min) + LRU cap (16) manage the pool; a reaped session re-spawns with `--resume` on the next message, context intact and configuration reloaded. A process with background tasks (`background_tasks_changed`, CC ≥ 2.1.203) is neither reaped nor evicted, and the task ending restarts its idle clock; in `-p` mode `~/.claude/sessions/<pid>.json` reads `idle` while background work runs, and CC keeps running after EOF until that work ends. Once CC reports `user_message_uuids`, a `result` without them (a turn CC started itself) consumes no input. (No more `cleanStaleSessions` / `apeek_*` tmux naming — all deleted in Phase 2E.)
+- A process exits once its Session is Done (design §6.6): after a `result` with no queued input, no background task and no unanswered `control_request`, the pool closes stdin (no signal) and the next message re-spawns with `--resume`, so settings and CLAUDE.md changes apply to it; session grants come back through `--allowedTools`, and `/model` / `/effort` through `--model` / `--effort` (CC's `get_settings` value after the command). No idle reap, no LRU cap. Background tasks (`background_tasks_changed`, CC ≥ 2.1.203) keep the process until CC's report-back turn ends; in `-p` mode `~/.claude/sessions/<pid>.json` reads `idle` while background work runs, and CC keeps running after EOF until that work ends. Once CC reports `user_message_uuids`, a `result` without them (a turn CC started itself) consumes no input. (No more `cleanStaleSessions` / `apeek_*` tmux naming — all deleted in Phase 2E.)
 - New regular Session: Bridge mints a UUID, sends `send_message_result` first, then starts
   headless with `--session-id <id>` so the app subscribes before stream frames arrive.
 - New Codex Session: Bridge calls `thread/start`, returns the storage Session ID, then starts the
@@ -732,4 +811,4 @@ Under headless this can't happen: CC pushes the full `questions[]` up front via 
 - **Real-time Edit diff hydration lifecycle**: fixed the intermittent mobile state where an expanded `Edited` card showed only its border until session reload. Diff data now survives DOM replacement under a stable content key, initialization is tracked per element, visible tool nodes hydrate after every timeline mutation, and the registry is cleared at session boundaries. Keep regression coverage for replacement during lazy import, streaming adoption, fallback rendering, and session cleanup.
 - **VS Code CC status precision**: VS Code extension launches CC without `--resume` flag. CC ≥ 2.1.269 is matched exactly through its `~/.claude/sessions/<pid>.json` record; older versions (and Windows) fall back to the mtime heuristic (5 min timeout → completed).
 - **Unstructured terminal questions**: external terminal turns that end with plain assistant text do not expose a reliable waiting-for-input signal. Structured `AskUserQuestion` and `ExitPlanMode` are detected as `needs_input`.
-- **Concurrent regular-session control**: Claude has no lock for a normal terminal or VS Code session. A send to a session another live CC process holds (its `~/.claude/sessions/<pid>.json`) returns `claude_active_writer`; the App's takeover modal SIGTERMs that pid and then resumes. An idle pooled process that missed another client's turn is resumed again first. A terminal that opens the session while a Baton turn runs still forks it (undetected). Daemon agents are safe because Web takeover stops the roster worker first.
+- **Concurrent regular-session control**: Claude has no lock for a normal terminal or VS Code session. A send to a session another live CC process holds (its `~/.claude/sessions/<pid>.json`) returns `claude_active_writer`; the App's takeover modal SIGTERMs that pid and then resumes. A terminal that opens the session while a Baton turn runs still forks it (undetected). Daemon agents are safe because Web takeover stops the roster worker first.

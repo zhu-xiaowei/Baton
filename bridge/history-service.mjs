@@ -14,32 +14,38 @@ const WARM_MAX = 20;
 function workerPages() {
   let worker = null;
   let sequence = 0;
-  const pending = new Map();
   const call = (op, target, params) => {
+    // A runtime registered since the worker started: a new worker imports it; the old one finishes its requests.
+    if (worker && worker.modules !== runtimeModules().length) {
+      worker.retired = true;
+      if (!worker.pending.size) worker.terminate();
+      worker = null;
+    }
     if (!worker) {
-      const current = worker = new Worker(new URL('./history-worker.mjs', import.meta.url), { workerData: { runtimeModules: runtimeModules() } });
+      const current = worker = Object.assign(new Worker(new URL('./history-worker.mjs', import.meta.url), { workerData: { runtimeModules: runtimeModules() } }),
+        { pending: new Map(), modules: runtimeModules().length });
       const fail = (error) => {
-        if (worker !== current) return;
-        worker = null;
-        for (const request of pending.values()) request.reject(error);
-        pending.clear();
+        if (worker === current) worker = null;
+        for (const request of current.pending.values()) request.reject(error);
+        current.pending.clear();
       };
       current.on('error', fail);
       current.on('exit', () => fail(new Error('History reader stopped.')));
       current.on('message', ({ id, result, error }) => {
-        const request = pending.get(id);
+        const request = current.pending.get(id);
         if (!request) return;
-        pending.delete(id);
+        current.pending.delete(id);
         if (error) request.reject(new Error(error));
         else request.resolve(result);
-        if (!pending.size) current.unref();
+        if (!current.pending.size) current.retired ? current.terminate() : current.unref();
       });
     }
-    worker.ref();
+    const current = worker;
+    current.ref();
     return new Promise((resolve, reject) => {
       const id = ++sequence;
-      pending.set(id, { resolve, reject });
-      worker.postMessage({ id, op, target, params });
+      current.pending.set(id, { resolve, reject });
+      current.postMessage({ id, op, target, params });
     });
   };
   return { history: (target, params) => call('history', target, params), warm: (target) => call('warm', target),
@@ -78,14 +84,16 @@ export class HistoryService {
     const target = this.resolve(String(params.sessionId || ''));
     if (!target) throw new Error('unknown_session');
     const { status, ...file } = target;
-    // The root's subagent count: the App asks for `threads` only when there are some.
-    const rootId = String(params.rootSessionId || params.sessionId || '');
-    const root = this.index.snapshot().catalog.roots.find((row) => row.sessionId === rootId);
     const page = await this.pages.history(file, params);
     await runtimeDescriptor(file.runtime)?.withImages?.(page.messages); // storage access is on this thread
+    // The root's subagent count (the App asks for `threads` only when there are some) and title, as of now.
+    const rootId = String(params.rootSessionId || params.sessionId || '');
+    const root = this.index.snapshot().catalog.roots.find((row) => row.sessionId === rootId);
     // A Session Baton started whose transcript is still empty (a forked Skill): the prompt it sent.
     const sentPrompt = status === 'running' && !page.messages.length && !params.after && this.index.sentPrompts?.get(target.nativeSessionId);
-    return { ...page, status, ...(sentPrompt ? { sentPrompt } : {}), ...(root ? { agentCount: root.agentCount } : {}), ...(root?.rec.view?.readOnly ? { canSend: false } : {}) };
+    return { ...page, status, ...(sentPrompt ? { sentPrompt } : {}), ...(root ? { agentCount: root.agentCount } : {}),
+      // The list's title; Claude's come as title rows.
+      ...(root?.sessionId === params.sessionId && root.rec.runtime !== 'claude' ? { preview: root.preview } : {}), ...(root?.rec.view?.readOnly ? { canSend: false } : {}) };
   }
 
   // The thread list: the root, then its subagents depth-first, newest first.

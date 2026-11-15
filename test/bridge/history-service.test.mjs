@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { HistoryService } from '../../bridge/history-service.mjs';
 import { createHistoryPages } from '../../bridge/history-pages.mjs';
+import { registerRuntimeDescriptor } from '../../bridge/session-identity.mjs';
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'history-service-'));
 test.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
@@ -117,7 +118,11 @@ test('Sessions resolve to root, subagent and Codex child files; threads list roo
   const { rootSessionId, threads } = await service.threads({ sessionId: 'root' });
   assert.equal(rootSessionId, 'root');
   assert.deepEqual(threads.map((t) => [t.threadKind, t.canSend, t.parentSessionId]), [['main', true, undefined], ['subagent', false, 'root']]);
-  assert.equal((await service.history({ sessionId: 'root' })).status, 'running');
+  const claudeReply = await service.history({ sessionId: 'root' });
+  assert.equal(claudeReply.status, 'running');
+  assert.equal(claudeReply.preview, undefined, 'Claude titles come as rows');
+  rootRow.rec = { file: codexFile, runtime: 'codex', id: 'kid' };
+  assert.equal((await service.history({ sessionId: 'root' })).preview, 'Root', 'other runtimes get the list title');
 });
 
 test('the default service reads pages in a worker', async () => {
@@ -125,7 +130,14 @@ test('the default service reads pages in a worker', async () => {
   write(file, claudeRows(3));
   const index = { readyPromise: Promise.resolve(), snapshot: () => ({ catalog: { roots: [
     { sessionId: 'w', status: 'completed', rec: { file, runtime: 'claude', id: 'w' } }] } }), records: new Map(), statuses: new Map() };
-  const result = await new HistoryService({ index }).history({ sessionId: 'w' });
+  const service = new HistoryService({ index });
+  const result = await service.history({ sessionId: 'w' });
   assert.equal(result.messages.length, 9);
   assert.equal(result.status, 'completed');
+  // A runtime registered after the worker started is read by a fresh worker.
+  registerRuntimeDescriptor((await import('../../bridge/pi-catalog.mjs')).default);
+  const piFile = path.join(tmp, 'pi.jsonl');
+  write(piFile, [{ type: 'session', id: 'p', cwd: tmp }, { type: 'message', id: 'u1', parentId: null, message: { role: 'user', timestamp: 1, content: 'hi pi' } }]);
+  index.snapshot = () => ({ catalog: { roots: [{ sessionId: 'pi:p', status: 'completed', rec: { file: piFile, runtime: 'pi', id: 'p' } }] } });
+  assert.equal((await service.history({ sessionId: 'pi:p' })).messages.length, 1);
 });

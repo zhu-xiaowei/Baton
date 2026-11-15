@@ -74,6 +74,7 @@ export async function loadLatestHistory({ device, sessionId, subscribe, root, on
   return { messages: rows, hasMore: more, oldestTimestamp: rows[0]?.orderKey || '', status: reply.status || '',
     titles: reply.titles || [], ...(reply.historyReset ? { historyReset: true } : {}),
     ...(reply.agentCount !== undefined ? { agentCount: reply.agentCount } : {}), ...(reply.sentPrompt ? { sentPrompt: reply.sentPrompt } : {}),
+    ...(reply.preview ? { preview: reply.preview } : {}),
     ...(reply.canSend === false ? { canSend: false } : {}) };
 }
 

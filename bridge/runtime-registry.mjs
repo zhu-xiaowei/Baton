@@ -27,12 +27,23 @@ export function registerRuntime(adapter) {
 const OPTIONAL_RUNTIMES = [
   ['./dsh-runtime.mjs', () => fs.existsSync(process.env.DSH_HOME || path.join(os.homedir(), '.dsh'))],
   ['./hermes-runtime.mjs', () => fs.existsSync(path.join(process.env.HERMES_HOME || path.join(os.homedir(), '.hermes'), 'state.db'))],
+  ['./opencode-runtime.mjs', () => fs.existsSync(path.join(process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local/share'), 'opencode/opencode.db'))],
+  ['./pi-runtime.mjs', () => fs.existsSync(process.env.PI_CODING_AGENT_DIR || path.join(os.homedir(), '.pi', 'agent'))],
+  // kiro-cli 3.x unpacks its v3 engine (KAS) here on first run; Kiro IDE and 2.x do not.
+  ['./kiro-runtime.mjs', () => [process.env.XDG_DATA_HOME || `${os.homedir()}/.local/share`, `${os.homedir()}/Library/Application Support`]
+    .some((dir) => fs.existsSync(`${dir}/kiro-cli/kas`))],
 ];
 
+const settled = new Set(); // modules registered or failed to load: never checked again
+
+// Returns the adapters registered by this call.
 export async function registerInstalledRuntimes(list = OPTIONAL_RUNTIMES) {
+  const added = [];
   for (const [file, installed] of list) {
+    if (settled.has(file)) continue;
     try {
       if (!installed()) continue;
+      settled.add(file);
       const adapter = (await import(new URL(file, import.meta.url))).default;
       // A store this runtime cannot read must not stop Claude/Codex from syncing.
       const discover = (options) => {
@@ -41,11 +52,14 @@ export async function registerInstalledRuntimes(list = OPTIONAL_RUNTIMES) {
           return { sessions: [] };
         }
       };
-      registerRuntime(Object.create(adapter, { discover: { value: discover } }));
+      const registered = Object.create(adapter, { discover: { value: discover } });
+      registerRuntime(registered);
+      added.push(registered);
     } catch (error) {
       console.error(`[runtime] ${file} not loaded: ${error.message}`);
     }
   }
+  return added;
 }
 
 export function getRuntimeAdapter(runtime) {

@@ -303,6 +303,7 @@ export class SessionIndex {
   markDirty() {
     this.catalogCache = null;
     this.snapshotCache = null;
+    this.onDirty?.();
   }
 
   // lastKnownStatus changed: statuses are recomputed, the grouping stays.

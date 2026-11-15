@@ -18,7 +18,7 @@ import {
 } from './session.mjs';
 import { parseStorageSessionId, runtimeDescriptor, storageSessionId } from './session-identity.mjs';
 import { SessionGrants } from './session-grants.mjs';
-import { getRuntimeAdapter, runtimeAdapters } from './runtime-registry.mjs';
+import { getRuntimeAdapter, registerInstalledRuntimes, runtimeAdapters } from './runtime-registry.mjs';
 import { WS_FRAME_LIMIT, saveConfig, uninstallBridge } from './config.mjs';
 import { ClaudePool } from './headless.mjs';
 import {
@@ -107,7 +107,7 @@ const _pool = new ClaudePool({
   },
   onControlRequest: (sessionId, req) => queuePermissionRequest(sessionId, req),
 });
-const _grants = new SessionGrants();
+export const _grants = new SessionGrants();
 const _claudeRuntime = getRuntimeAdapter('claude');
 const _claudeCapturedCommands = new Map();
 const _commandCatalogCache = new CommandCatalogCache();
@@ -249,7 +249,7 @@ export async function closeTerminalsForUpdate() {
   await new Promise(resolve => setTimeout(resolve, 1500));
 }
 
-// Idle pooled processes do not block terminal-driven status updates.
+// Only busy turns own status; a process waiting on background tasks does not.
 export function poolOwns(sessionId) { return _pool.isBusy(sessionId); }
 export function poolAwaitsAgents(sessionId) { return _pool.awaitsAgents(sessionId); }
 // Whether the last root write held its Done for background agents; a released hold is written.
@@ -757,22 +757,23 @@ function connect() {
       limited: limitedRequest,
       streams: { terminal: terminalStream, preview: previewStream },
       handlers: {
-        home: params => { historyService.warm(); return sessionIndex.home(params.revision); },
+        home: async params => { await registerLateRuntimes(); historyService.warm(); return sessionIndex.home(params.revision); },
         projects: params => sessionIndex.projects(params),
         sessions: params => sessionIndex.sessions(params),
         // Subscribing here, before the file is read, leaves no gap between the page and the pushes.
         // With `subscribe` this also does what opening with `subscribe` does, before the file is
         // read, so nothing falls between the page and the pushes.
         history: async (params, caller) => {
-          if (!params.subscribe) return historyService.history(params);
           // A refresh of an open page only renews its lease; the replay and prompt are for opening.
-          if (_subscribers.has(params.sessionId, caller.replyTo)) _subscribers.add(params.sessionId, caller.replyTo, caller.deflate, params.rootSessionId);
-          else subscribeCaller(params, caller);
-          return { ...await historyService.history(params), bridgeEpoch: BRIDGE_EPOCH };
+          if (params.subscribe && _subscribers.has(params.sessionId, caller.replyTo)) _subscribers.add(params.sessionId, caller.replyTo, caller.deflate, params.rootSessionId);
+          else if (params.subscribe) subscribeCaller(params, caller);
+          const reply = await historyService.history(params);
+          if (reply.preview && !_catalogTitles.has(params.sessionId)) _catalogTitles.set(params.sessionId, reply.preview);
+          return params.subscribe ? { ...reply, bridgeEpoch: BRIDGE_EPOCH } : reply;
         },
         subscribe: (params, caller) => subscribeCaller(params, caller),
         notify_seen: params => { _notifyChecks.get(params.eventId)?.(true); return {}; },
-        unsubscribe: (params, caller) => { _subscribers.remove(params.sessionId, caller.replyTo); return {}; },
+        unsubscribe: (params, caller) => { _subscribers.remove(params.sessionId, caller.replyTo); if (!_subscribers.targets(params.sessionId, { root: true }).length) _catalogTitles.delete(params.sessionId); return {}; },
         send_message: (params, caller) => requestSendMessage(params, caller),
         interrupt: async params => { await handleInterrupt(params); return { ok: true }; },
         permission_reply: params => { handlePermissionReply(params); return { ok: true }; },
@@ -800,7 +801,7 @@ function connect() {
         pair_approve: async params => { await catchUpAccountKey(); return approveJoin(_config, params.link); },
         // The recovery phrase is K: shown to an App of the account only (sealed like every reply).
         recovery_key: () => ({ k: _config.accounts ? _config.accountKey : '' }),
-        ping: () => ({ bridgeVersion: BRIDGE_VERSION, runtimes: runtimeAdapters.filter(adapter => adapter.features.create).map(adapter => adapter.runtime) }),
+        ping: async () => (await registerLateRuntimes(), { bridgeVersion: BRIDGE_VERSION, runtimes: runtimeAdapters.filter(adapter => adapter.features.create).map(adapter => adapter.runtime) }),
       },
     });
     _directRpc.start();
@@ -944,6 +945,18 @@ async function handleMessage(msg) {
   }
 }
 
+// A harness installed after start appears on the next home or ping, exactly as if present at start.
+let _lateRuntimes = null;
+export function registerLateRuntimes() {
+  return _lateRuntimes ||= registerInstalledRuntimes().then(async (added) => {
+    if (!added.length) return;
+    await sessionIndex.readyPromise;
+    await sessionIndex.warm();
+    const { startRuntimeWatcher } = await import('./runtime-watcher-registry.mjs'); // static import would cycle via watcher.mjs
+    for (const adapter of added) if (adapter.watcher) startRuntimeWatcher(adapter.watcher);
+  }).finally(() => { _lateRuntimes = null; });
+}
+
 function subscribeCaller(params, caller) {
   if (params.replaces) _subscribers.remove(params.sessionId, params.replaces); // the caller's connection before it reconnected
   _subscribers.add(params.sessionId, caller.replyTo, caller.deflate, params.rootSessionId);
@@ -957,6 +970,23 @@ function publishTitle(reply) {
   const event = { action: 'session_title_changed', sessionId: reply.sessionId, projectHash: reply.projectHash,
     device: reply.device, name: reply.name };
   _directRpc?.publish(event, _subscribers.targets(reply.sessionId, { root: true }));
+}
+
+// A changed catalog title (generated, or renamed outside Baton) goes to every page showing the Session.
+// Sessions enter on their first history read (Claude's never do: its titles arrive as rows).
+const _catalogTitles = new Map(); // root sessionId → catalog title at the last check
+let _titleCheck = null;
+sessionIndex.onDirty = () => { if (_subscribers.sessions.size || _catalogTitles.size) _titleCheck ||= setTimeout(publishCatalogTitles, 500); };
+function publishCatalogTitles() {
+  _titleCheck = null;
+  const { roots } = sessionIndex.catalog();
+  for (const [sessionId, name] of _catalogTitles) {
+    if (!_subscribers.targets(sessionId, { root: true }).length) { _catalogTitles.delete(sessionId); continue; }
+    const row = roots.find((r) => r.sessionId === sessionId);
+    if (!row?.preview || row.preview === name || !_config) continue;
+    _catalogTitles.set(sessionId, row.preview);
+    publishTitle({ sessionId, projectHash: row.project, device: _config.deviceName, name: row.preview });
+  }
 }
 
 sessionIndex.pendingDetail = pendingInteractionDetail;
@@ -1980,6 +2010,7 @@ export async function handleDeleteFiles(msg, {
       if (await remove(adapter, 'deleteSessionHistory', identity.nativeSessionId)) {
         deletedSessions++;
         _grants.forget(identity.sessionId);
+        _pool.sessionArgs.delete(identity.nativeSessionId);
       }
     }
     for (const ph of msg.projectHashes || []) {

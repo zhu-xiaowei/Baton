@@ -47,7 +47,10 @@ dependency set.
    page, and releases viewport listeners when they close.
 3. The request goes to the selected device's Bridge over the direct channel
    (`rename_session`). After native success the Bridge pushes
-   `session_title_changed` to the Session's root subscribers.
+   `session_title_changed` to the Session's root subscribers. For every runtime
+   but Claude (whose titles are transcript rows), `history` also returns the
+   catalog title (`preview`, what the lists show), and the Bridge pushes the same
+   event when that title changes later (generated, or renamed outside Baton).
 4. `bridge/ws.mjs` → `bridge/session-rename.mjs`: validates the native UUID, title,
    local session file and project ownership, then invokes the official operation.
    Claude calls `ClaudePool.renameSession()` in `bridge/headless.mjs`; Codex

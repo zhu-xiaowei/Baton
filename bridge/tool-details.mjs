@@ -77,34 +77,40 @@ export function createToolDetailsReader(readIndex = readToolIndex) {
 
 let readerWorker;
 let requestSequence = 0;
-const pending = new Map();
 
 export function readToolDetailsAsync(filePath, nativeSessionId, runtime, toolUseIds, preview) {
+  // A runtime registered since the worker started: a new worker imports it; the old one finishes its requests.
+  if (readerWorker && readerWorker.modules !== runtimeModules().length) {
+    readerWorker.retired = true;
+    if (!readerWorker.pending.size) readerWorker.terminate();
+    readerWorker = null;
+  }
   if (!readerWorker) {
-    const worker = readerWorker = new Worker(new URL('./tool-details-worker.mjs', import.meta.url), { workerData: { runtimeModules: runtimeModules() } });
+    const worker = readerWorker = Object.assign(new Worker(new URL('./tool-details-worker.mjs', import.meta.url), { workerData: { runtimeModules: runtimeModules() } }),
+      { pending: new Map(), modules: runtimeModules().length });
     const fail = error => {
-      if (readerWorker !== worker) return;
-      readerWorker = null;
-      for (const request of pending.values()) request.reject(error);
-      pending.clear();
+      if (readerWorker === worker) readerWorker = null;
+      for (const request of worker.pending.values()) request.reject(error);
+      worker.pending.clear();
     };
     worker.on('error', fail);
     worker.on('exit', () => fail(new Error('Tool details reader stopped.')));
     worker.on('message', ({ id, result, error }) => {
-      const request = pending.get(id);
+      const request = worker.pending.get(id);
       if (!request) return;
-      pending.delete(id);
+      worker.pending.delete(id);
       if (error) request.reject(new Error(error));
       else request.resolve(result);
-      if (!pending.size) worker.unref();
+      if (!worker.pending.size) worker.retired ? worker.terminate() : worker.unref();
     });
     worker.unref();
   }
-  readerWorker.ref();
+  const worker = readerWorker;
+  worker.ref();
   return new Promise((resolve, reject) => {
     const id = ++requestSequence;
-    pending.set(id, { resolve, reject });
-    readerWorker.postMessage({ id, filePath, nativeSessionId, runtime, toolUseIds, preview });
+    worker.pending.set(id, { resolve, reject });
+    worker.postMessage({ id, filePath, nativeSessionId, runtime, toolUseIds, preview });
   });
 }
 
