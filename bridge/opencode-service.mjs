@@ -142,11 +142,13 @@ function controlRequest(p, form, resolved) {
       permission_suggestions: p.save?.length ? [{ type: 'addRules', behavior: 'allow', rules: p.save.map((r) => ({ toolName: name, ruleContent: r })) }] : [] } };
 }
 
-// The one Baton turn in this directory running a tool of this MCP server (its elicitations are not tied to a session).
+// The Baton turn running a tool of this MCP server, when it is the only session busy in this directory
+// (an elicitation names no session; another busy session, a TUI's too, could have asked).
 function mcpCaller(directory, server) {
   const calling = [...execs].filter(([id, e]) => sessionOf(id)?.directory === directory
     && [...e.steps.values()].flat().some((part) => part.type === 'tool' && part.state.status === 'running' && part.name.startsWith(`${server}_`)));
-  return calling.length === 1 ? calling[0][1] : null;
+  const busy = db.all('SELECT id FROM session_v2 WHERE directory = ? AND parent_id IS NULL AND time_busy > coalesce(time_idle, 0)', [directory]);
+  return calling.length === 1 && busy.every((r) => r.id === calling[0][0]) ? calling[0][1] : null;
 }
 
 // Shown again if OpenCode refuses the answer.
@@ -163,7 +165,7 @@ function dispatch(ev) {
   const control = ev.type === 'permission.asked' ? controlRequest(d) : ev.type === 'form.created' ? controlRequest(d.form, true) : null;
   const replied = /^(permission\.replied|form\.(replied|cancelled))$/.test(ev.type);
   let exec = execs.get(sid) || (sid === 'global' && (control ? mcpCaller(ev.location?.directory, d.form.metadata?.server) : asked.get(rid)?.exec)) || null;
-  if (control && sid === 'global' && exec) d.form.exec = exec;
+  if (control && sid === 'global' && exec) Object.assign(d.form, { exec, directory: ev.location?.directory });
   if (replied) settle(rid);
   // A subagent's request belongs to the Baton turn of its root.
   for (let id = sid; !exec && (control || replied) && (id = sessionOf(id)?.parent_id);) exec = execs.get(id);
@@ -309,7 +311,8 @@ const dbBusy = (id) => sessionOf(id)?.time_busy > (sessionOf(id)?.time_idle || 0
 export const interaction = defineInteractionAdapter({
   runtime: 'opencode',
   pending: (id) => [...asked.values()].some((p) => p.sessionID === id),
-  pendingSessions: () => new Set([...asked.values()].map((p) => p.sessionID)),
+  // Global forms are location-scoped: their replied/cancelled events settle them, not a reconcile.
+  pendingSessions: () => new Set([...asked.values()].map((p) => p.sessionID).filter((id) => id !== 'global')),
   async create({ cwd, text, streamId, onCreated }) {
     await service.ensure();
     await connect();
@@ -332,9 +335,10 @@ export const interaction = defineInteractionAdapter({
     const req = asked.get(requestId);
     settle(requestId, false);
     const base = `/api/session/${req?.sessionID || id}`; // a subagent's own session
+    const at = req?.directory ? `?${loc(req.directory)}` : '';
     const reply = async () => {
       if (req?.fields) {
-        if (decision !== 'answer') return request('DELETE', `${base}/form/${requestId}`);
+        if (decision !== 'answer') return request('DELETE', `${base}/form/${requestId}${at}`);
         const answer = {};
         for (const f of req.fields) {
           if (f.type === 'external') { answer[f.key] = true; continue; }
@@ -343,7 +347,7 @@ export const interaction = defineInteractionAdapter({
           const values = (answers[f.key] || []).map((label) => (f.options || (f.type === 'boolean' ? BOOL : [])).find((o) => o.label === label)?.value ?? label);
           if (values.length) answer[f.key] = f.type === 'multiselect' ? values : /^(number|integer)$/.test(f.type) ? Number(values[0]) : values[0];
         }
-        return request('POST', `${base}/form/${requestId}/reply`, { answer });
+        return request('POST', `${base}/form/${requestId}/reply${at}`, { answer });
       }
       if (decision === 'allow' && scope === 'session' && req?.save?.length) {
         const rules = (await request('GET', base))?.data?.permissions || [];

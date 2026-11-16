@@ -291,7 +291,7 @@ export function createCodexPermissionController(options) {
       } else if (act === 'mcp-default') {
         value = field.input.default;
       } else if (field.input && field.input.type === 'number') {
-        value = Number(label);
+        value = /^-?\d+(\.\d+)?$/.test(label) ? Number(label) : NaN;
         if (!isFinite(value) || (field.input.integer && value % 1)
           || value < (field.input.minimum ?? -Infinity) || value > (field.input.maximum ?? Infinity)) return;
       } else if (act === 'mcp-text' || isTyped) {
