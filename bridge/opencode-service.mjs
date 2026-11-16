@@ -14,6 +14,7 @@ import { randomBytes } from 'node:crypto';
 import net from 'node:net';
 import { SERVICE_FILE, messageRows, toolName } from './opencode-extract.mjs';
 import { db } from './opencode-history.mjs';
+import { publishNotice } from './ws.mjs';
 
 const IDLE_MS = 120_000;
 const ASK_RULES = [{ action: 'shell', resource: '*', effect: 'ask' }, { action: 'edit', resource: '*', effect: 'ask' }];
@@ -134,20 +135,37 @@ function controlRequest(p, form, resolved) {
   asked.set(p.id, Object.assign(p, { resolved }));
   const name = toolName(p.action);
   return { request_id: p.id, request: form ? { tool_name: 'AskUserQuestion', requires_user_interaction: true,
-    input: { questions: (p.fields || []).map((f) => ({ id: f.key, header: f.title || '', question: f.description || f.title || '',
-      multiSelect: f.type === 'multiselect', options: (f.options || (f.type === 'boolean' ? BOOL : [])).map((o) => ({ label: o.label, description: o.description || '' })) })) } }
+    input: { questions: (p.fields || []).map((f) => ({ id: f.key, header: f.title || '', question: [f.description || f.title || '', f.url].filter(Boolean).join('\n'),
+      multiSelect: f.type === 'multiselect', options: f.type === 'external' ? [{ label: 'Done', description: f.url }]
+        : (f.options || (f.type === 'boolean' ? BOOL : [])).map((o) => ({ label: o.label, description: o.description || '' })) })) } }
     : { tool_name: name, input: p.action === 'shell' ? { command: (p.resources || []).join('\n') } : { file_path: (p.resources || []).join(', ') },
       permission_suggestions: p.save?.length ? [{ type: 'addRules', behavior: 'allow', rules: p.save.map((r) => ({ toolName: name, ruleContent: r })) }] : [] } };
+}
+
+// The one Baton turn in this directory running a tool of this MCP server (its elicitations are not tied to a session).
+function mcpCaller(directory, server) {
+  const calling = [...execs].filter(([id, e]) => sessionOf(id)?.directory === directory
+    && [...e.steps.values()].flat().some((part) => part.type === 'tool' && part.state.status === 'running' && part.name.startsWith(`${server}_`)));
+  return calling.length === 1 ? calling[0][1] : null;
+}
+
+// Shown again if OpenCode refuses the answer.
+function present(cb, control) {
+  const p = asked.get(control.request_id);
+  if (p) p.show = () => { asked.set(p.id, p); cb.onControlRequest(control); };
+  cb.onControlRequest(control);
 }
 
 function dispatch(ev) {
   const d = ev.data || {};
   const sid = d.sessionID || d.form?.sessionID;
+  const rid = d.requestID || d.id || d.form?.id;
   const control = ev.type === 'permission.asked' ? controlRequest(d) : ev.type === 'form.created' ? controlRequest(d.form, true) : null;
   const replied = /^(permission\.replied|form\.(replied|cancelled))$/.test(ev.type);
-  if (replied) settle(d.requestID || d.id || d.form?.id);
+  let exec = execs.get(sid) || (sid === 'global' && (control ? mcpCaller(ev.location?.directory, d.form.metadata?.server) : asked.get(rid)?.exec)) || null;
+  if (control && sid === 'global' && exec) d.form.exec = exec;
+  if (replied) settle(rid);
   // A subagent's request belongs to the Baton turn of its root.
-  let exec = execs.get(sid);
   for (let id = sid; !exec && (control || replied) && (id = sessionOf(id)?.parent_id);) exec = execs.get(id);
   if (!exec) return;
   const cb = exec.callbacks;
@@ -199,7 +217,7 @@ function dispatch(ev) {
       tool.state = { status: { called: 'running', success: 'completed' }[ev.type.split('.')[2]] || 'error', input, content: d.content, metadata: d.metadata, error: d.error };
       return send(ev.type === 'session.tool.called' ? `b:${d.id}` : `r:${d.id}`);
     }
-    case 'permission.asked': case 'form.created': return cb.onControlRequest(control);
+    case 'permission.asked': case 'form.created': return present(cb, control);
     case 'permission.replied': case 'form.replied': case 'form.cancelled':
       return cb.onControlResolved(d.requestID || d.id || d.form?.id);
     case 'session.execution.succeeded': case 'session.execution.failed': case 'session.execution.interrupted':
@@ -319,6 +337,9 @@ export const interaction = defineInteractionAdapter({
         if (decision !== 'answer') return request('DELETE', `${base}/form/${requestId}`);
         const answer = {};
         for (const f of req.fields) {
+          if (f.type === 'external') { answer[f.key] = true; continue; }
+          // OpenCode refuses answers to fields whose `when` does not hold.
+          if (f.when && !f.when.every((w) => answer[w.key] !== undefined && [].concat(answer[w.key]).includes(w.value) === (w.op === 'eq'))) continue;
           const values = (answers[f.key] || []).map((label) => (f.options || (f.type === 'boolean' ? BOOL : [])).find((o) => o.label === label)?.value ?? label);
           if (values.length) answer[f.key] = f.type === 'multiselect' ? values : /^(number|integer)$/.test(f.type) ? Number(values[0]) : values[0];
         }
@@ -331,7 +352,12 @@ export const interaction = defineInteractionAdapter({
       return request('POST', `${base}/permission/${requestId}/reply`, decision === 'allow' ? { decision: 'once' }
         : { decision: 'reject', message: 'The user declined this action.' });
     };
-    reply().catch((error) => console.error(`[opencode] reply failed: ${error.message}`));
+    reply().catch((error) => {
+      console.error(`[opencode] reply failed: ${error.message}`);
+      if (!req?.show) return;
+      publishNotice(`opencode:${id}`, `OpenCode did not accept the answer: ${/"message":"([^"]*)"/.exec(error.message)?.[1] || error.message}`);
+      req.show();
+    });
     return true;
   },
   owns: (id) => execs.has(id),
@@ -348,8 +374,8 @@ export const interaction = defineInteractionAdapter({
     if (execs.has(id) || !serviceInfo()) return;
     for (const sid of [id, ...busyChildren(id)]) {
       const [perms, forms] = await interaction.reconcile(sid);
-      for (const p of perms) callbacks.onControlRequest(controlRequest(p, false, callbacks.onControlResolved));
-      for (const form of forms) callbacks.onControlRequest(controlRequest(form, true, callbacks.onControlResolved));
+      for (const p of perms) present(callbacks, controlRequest(p, false, callbacks.onControlResolved));
+      for (const form of forms) present(callbacks, controlRequest(form, true, callbacks.onControlResolved));
     }
   },
   // The service's open requests of a session; ones answered elsewhere are settled.

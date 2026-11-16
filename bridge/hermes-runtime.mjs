@@ -18,7 +18,7 @@ import { HermesGateway, hermesCli } from './hermes-gateway.mjs';
 import { sessionIndex } from './session-index.mjs';
 import { storageSessionId } from './session-identity.mjs';
 import { lastKnownStatus, reportSessions } from './sync.mjs';
-import { pendingInteractionDetail, publishMessages } from './ws.mjs';
+import { pendingInteractionDetail, publishMessages, publishNotice } from './ws.mjs';
 
 // A state.db older than 0.23 (no display projection) is not read: the runtime does not load.
 const REQUIRED = ['display_kind', 'display_order', 'active', 'compacted', 'message_uid'];
@@ -111,6 +111,13 @@ function onEvent(e) {
     return;
   }
   const p = e.payload || {};
+  // The gateway's own requests (sudo and secret values, desktop UI) are not answered on a phone: an empty value skips them.
+  if (e.type === 'server.request') {
+    gateway.respond(e.id, { value: '' });
+    const what = { sudo: 'the sudo password', secret: `the secret ${p.env_var || ''}`.trim() }[e.method] || `"${e.method}"`;
+    const turn = [...turns.values()].find((t) => t.id === e.session_id);
+    return publishNotice(storageId(e.session_id), `Hermes needs ${what} entered on the computer; skipped.`, turn?.callbacks.liveTurn);
+  }
   if (e.session_id && e.execution_generation != null) generations.set(e.session_id, e.execution_generation);
   if (e.type === 'approval.request') return onApproval(e);
   if (e.type === 'clarify.request') {

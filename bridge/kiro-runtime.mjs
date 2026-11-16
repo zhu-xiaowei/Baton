@@ -17,7 +17,8 @@ import { defineRuntimeWatcher } from './watcher-adapter.mjs';
 import { sessionIndex } from './session-index.mjs';
 import { storageSessionId } from './session-identity.mjs';
 import { lastKnownStatus, reportSessions } from './sync.mjs';
-import { _grants as grants, publishMessages } from './ws.mjs';
+import { _grants as grants, publishMessages, publishNotice } from './ws.mjs';
+import { mcpFormReply, mcpFormRequest } from './codex-interaction.mjs';
 import { batonSessions, localIdleSec } from './presence.mjs';
 
 const conns = new Map(); // native id → { key, cwd, id, rpc, ready, loaded, turn }
@@ -44,7 +45,8 @@ function connect(cwd) {
       if (conns.get(c.id) === c) conns.delete(c.id);
       if (c.turn) endTurn(c, c.turn, 'error', 'Kiro exited');
     });
-    await c.rpc.request('initialize', { protocolVersion: 1, clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false },
+    await c.rpc.request('initialize', { protocolVersion: 1, clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false,
+      elicitation: { form: {} }, _meta: { kiro: { userInput: true } } },
       clientInfo: { name: CLIENT, version: BRIDGE_VERSION } }, { timeoutMs: 60_000 });
   })();
   return c;
@@ -127,7 +129,32 @@ function notified(c, method, p) {
   if (file) void drain(file);
 }
 
+// A question or MCP form: the App's own prompt; `answer` turns its reply into Kiro's result.
+function ask(c, requestId, request, answer, cancelled) {
+  if (!c.turn) return cancelled;
+  return new Promise((resolve) => {
+    c.turn.asks.set(requestId, { resolve, answer, cancelled });
+    c.turn.callbacks.onControlRequest({ request_id: requestId, request });
+  });
+}
+
 async function requested(c, method, p) {
+  if (method === '_kiro/userInput') {
+    return ask(c, p.toolCallId, { tool_name: 'AskUserQuestion', requires_user_interaction: true, input: { questions: [{ question: p.question || '',
+      options: (p.options || []).map((o) => ({ label: o.title, description: o.description || '' })) }] } },
+    ({ decision, answers, answerText }) => {
+      const answer = Object.values(answers || {})[0]?.join(', ') || answerText;
+      return decision === 'answer' && answer ? { action: 'answered', answer } : { action: 'dismissed' };
+    }, { action: 'dismissed' });
+  }
+  if (method === '_kiro/mcp/elicitation') {
+    const e = { serverName: 'MCP server', ...p.elicitation };
+    if (e.mode !== 'form') {
+      publishNotice(sid(c.id), 'An MCP server asked to open a link; handle it on the computer. Declined.', c.turn?.callbacks.liveTurn);
+      return { action: 'decline' };
+    }
+    return ask(c, `elicitation:${p.toolCallId}`, mcpFormRequest(e), ({ approvalResponse }) => mcpFormReply(e, approvalResponse), { action: 'cancel' });
+  }
   if (method !== 'session/request_permission') throw Object.assign(new Error(`${method} not supported`), { code: -32601 });
   const k = p._meta?.kiro || {};
   const consent = k.consent || {};
@@ -359,16 +386,18 @@ const kiroInteraction = defineInteractionAdapter({
     if (!turn) return;
     await c.loaded?.catch(() => {});
     await Promise.race([turn.started, new Promise((resolve) => setTimeout(resolve, 2000))]);
-    for (const ask of turn.asks.values()) ask.resolve({ outcome: { outcome: 'cancelled' } });
+    for (const ask of turn.asks.values()) ask.resolve(ask.cancelled || { outcome: { outcome: 'cancelled' } });
     turn.asks.clear();
     c.rpc.notify('session/cancel', { sessionId: id });
   },
 
-  replyControl(id, requestId, { decision, scope }) {
+  replyControl(id, requestId, reply) {
+    const { decision, scope } = reply;
     const turn = conns.get(id)?.turn;
     const ask = turn?.asks.get(requestId);
     if (!ask) return false;
     turn.asks.delete(requestId);
+    if (ask.answer) return (ask.resolve(ask.answer(reply)), true);
     const always = decision === 'allow' && scope === 'session' && ask.grant;
     if (always) grants.add(sid(id), [ask.grant]);
     ask.resolve(ask.pick(always ? 'allow_always' : decision === 'allow' ? 'allow_once' : 'reject_once'));

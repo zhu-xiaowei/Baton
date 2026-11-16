@@ -253,11 +253,19 @@ export function createCodexPermissionController(options) {
         };
       });
     } else {
+      var input = field.input || {};
+      var hint = input.type === 'number'
+        ? [input.integer ? 'integer' : 'number', input.minimum != null || input.maximum != null
+          ? (input.minimum ?? '…') + '–' + (input.maximum ?? '…') : ''].filter(Boolean).join(' ')
+        : input.format || '';
+      if (input.default != null) {
+        promptOptions.push({ label: String(input.default), description: 'Default', act: 'mcp-default' });
+      }
       promptOptions.push({
         label: 'Enter value…',
         act: 'mcp-text',
         hasInput: true,
-        placeholder: field.prompt || field.label || '',
+        placeholder: (field.prompt || field.label || '') + (hint ? ' (' + hint + ')' : ''),
       });
     }
     if (!field.required) {
@@ -280,6 +288,12 @@ export function createCodexPermissionController(options) {
       var value;
       if (act === 'mcp-submit') {
         value = picked.map(function (index) { return field.input.options[index].value; });
+      } else if (act === 'mcp-default') {
+        value = field.input.default;
+      } else if (field.input && field.input.type === 'number') {
+        value = Number(label);
+        if (!isFinite(value) || (field.input.integer && value % 1)
+          || value < (field.input.minimum ?? -Infinity) || value > (field.input.maximum ?? Infinity)) return;
       } else if (act === 'mcp-text' || isTyped) {
         value = label;
       } else {
