@@ -110,7 +110,10 @@ export class HermesGateway {
       if (message.error) call.reject(Object.assign(new Error(message.error.message || 'Hermes request failed'), { code: message.error.code }));
       else call.resolve(message.result);
     } else if (message.method === 'event' && message.params) this.onEvent(message.params);
+    else if (message.id != null && message.method) this.onEvent({ type: 'server.request', id: message.id, method: message.method, session_id: message.params?.session_id, payload: message.params || {} });
   }
+
+  respond(id, result) { if (this.open) this.ws.send(JSON.stringify({ jsonrpc: '2.0', id, result })); }
 
   rpc(method, params = {}, timeout = 60_000) {
     if (!this.open) return Promise.reject(new Error('Hermes gateway is not connected'));

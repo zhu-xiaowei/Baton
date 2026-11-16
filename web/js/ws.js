@@ -535,7 +535,8 @@ function dispatchControlEvent(message) {
     if (requestState) {
       requestState.requestSeq = Math.max(requestState.requestSeq, seq);
       _controlRequestState.set(requestId, requestState);
-      if (requestState.resolvedSeq >= seq) return true;
+      // `reshow`: the runtime refused the answer and asks again under the same id.
+      if (requestState.resolvedSeq >= seq && !message.reshow) return true;
     }
     if (message.sessionId === state.wsSessionId) {
       state.wsRunning = false;
@@ -1430,8 +1431,9 @@ function handleStrictMessages(envelope) {
     });
   }
   if (completeMessages.length) {
+    // The stream renderer draws neither interrupts nor notices.
     var needsInterruptDom = completeMessages.some(function (message) {
-      return isInterruptMsg(message);
+      return isInterruptMsg(message) || message.type === 'system_event';
     });
     var needsPromptAnchor = completeMessages.some(function (message) {
       return message.type === 'user'

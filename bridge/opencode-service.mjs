@@ -14,6 +14,7 @@ import { randomBytes } from 'node:crypto';
 import net from 'node:net';
 import { SERVICE_FILE, messageRows, toolName } from './opencode-extract.mjs';
 import { db } from './opencode-history.mjs';
+import { publishNotice } from './ws.mjs';
 
 const IDLE_MS = 120_000;
 const ASK_RULES = [{ action: 'shell', resource: '*', effect: 'ask' }, { action: 'edit', resource: '*', effect: 'ask' }];
@@ -134,20 +135,39 @@ function controlRequest(p, form, resolved) {
   asked.set(p.id, Object.assign(p, { resolved }));
   const name = toolName(p.action);
   return { request_id: p.id, request: form ? { tool_name: 'AskUserQuestion', requires_user_interaction: true,
-    input: { questions: (p.fields || []).map((f) => ({ id: f.key, header: f.title || '', question: f.description || f.title || '',
-      multiSelect: f.type === 'multiselect', options: (f.options || (f.type === 'boolean' ? BOOL : [])).map((o) => ({ label: o.label, description: o.description || '' })) })) } }
+    input: { questions: (p.fields || []).map((f) => ({ id: f.key, header: f.title || '', question: [f.description || f.title || '', f.url].filter(Boolean).join('\n'),
+      multiSelect: f.type === 'multiselect', options: f.type === 'external' ? [{ label: 'Done', description: f.url }]
+        : (f.options || (f.type === 'boolean' ? BOOL : [])).map((o) => ({ label: o.label, description: o.description || '' })) })) } }
     : { tool_name: name, input: p.action === 'shell' ? { command: (p.resources || []).join('\n') } : { file_path: (p.resources || []).join(', ') },
       permission_suggestions: p.save?.length ? [{ type: 'addRules', behavior: 'allow', rules: p.save.map((r) => ({ toolName: name, ruleContent: r })) }] : [] } };
+}
+
+// The Baton turn running a tool of this MCP server, when it is the only session busy in this directory
+// (an elicitation names no session; another busy session, a TUI's too, could have asked).
+function mcpCaller(directory, server) {
+  const calling = [...execs].filter(([id, e]) => sessionOf(id)?.directory === directory
+    && [...e.steps.values()].flat().some((part) => part.type === 'tool' && part.state.status === 'running' && part.name.startsWith(`${server}_`)));
+  const busy = db.all('SELECT id FROM session_v2 WHERE directory = ? AND parent_id IS NULL AND time_busy > coalesce(time_idle, 0)', [directory]);
+  return calling.length === 1 && busy.every((r) => r.id === calling[0][0]) ? calling[0][1] : null;
+}
+
+// Shown again if OpenCode refuses the answer.
+function present(cb, control) {
+  const p = asked.get(control.request_id);
+  if (p) p.show = () => { asked.set(p.id, p); cb.onControlRequest({ ...control, request: { ...control.request, reshow: true } }); };
+  cb.onControlRequest(control);
 }
 
 function dispatch(ev) {
   const d = ev.data || {};
   const sid = d.sessionID || d.form?.sessionID;
+  const rid = d.requestID || d.id || d.form?.id;
   const control = ev.type === 'permission.asked' ? controlRequest(d) : ev.type === 'form.created' ? controlRequest(d.form, true) : null;
   const replied = /^(permission\.replied|form\.(replied|cancelled))$/.test(ev.type);
-  if (replied) settle(d.requestID || d.id || d.form?.id);
+  let exec = execs.get(sid) || (sid === 'global' && (control ? mcpCaller(ev.location?.directory, d.form.metadata?.server) : asked.get(rid)?.exec)) || null;
+  if (control && sid === 'global' && exec) Object.assign(d.form, { exec, directory: ev.location?.directory });
+  if (replied) settle(rid);
   // A subagent's request belongs to the Baton turn of its root.
-  let exec = execs.get(sid);
   for (let id = sid; !exec && (control || replied) && (id = sessionOf(id)?.parent_id);) exec = execs.get(id);
   if (!exec) return;
   const cb = exec.callbacks;
@@ -199,7 +219,7 @@ function dispatch(ev) {
       tool.state = { status: { called: 'running', success: 'completed' }[ev.type.split('.')[2]] || 'error', input, content: d.content, metadata: d.metadata, error: d.error };
       return send(ev.type === 'session.tool.called' ? `b:${d.id}` : `r:${d.id}`);
     }
-    case 'permission.asked': case 'form.created': return cb.onControlRequest(control);
+    case 'permission.asked': case 'form.created': return present(cb, control);
     case 'permission.replied': case 'form.replied': case 'form.cancelled':
       return cb.onControlResolved(d.requestID || d.id || d.form?.id);
     case 'session.execution.succeeded': case 'session.execution.failed': case 'session.execution.interrupted':
@@ -291,7 +311,8 @@ const dbBusy = (id) => sessionOf(id)?.time_busy > (sessionOf(id)?.time_idle || 0
 export const interaction = defineInteractionAdapter({
   runtime: 'opencode',
   pending: (id) => [...asked.values()].some((p) => p.sessionID === id),
-  pendingSessions: () => new Set([...asked.values()].map((p) => p.sessionID)),
+  // Global forms are location-scoped: their replied/cancelled events settle them, not a reconcile.
+  pendingSessions: () => new Set([...asked.values()].map((p) => p.sessionID).filter((id) => id !== 'global')),
   async create({ cwd, text, streamId, onCreated }) {
     await service.ensure();
     await connect();
@@ -314,15 +335,19 @@ export const interaction = defineInteractionAdapter({
     const req = asked.get(requestId);
     settle(requestId, false);
     const base = `/api/session/${req?.sessionID || id}`; // a subagent's own session
+    const at = req?.directory ? `?${loc(req.directory)}` : '';
     const reply = async () => {
       if (req?.fields) {
-        if (decision !== 'answer') return request('DELETE', `${base}/form/${requestId}`);
+        if (decision !== 'answer') return request('DELETE', `${base}/form/${requestId}${at}`);
         const answer = {};
         for (const f of req.fields) {
+          if (f.type === 'external') { answer[f.key] = true; continue; }
+          // OpenCode refuses answers to fields whose `when` does not hold.
+          if (f.when && !f.when.every((w) => answer[w.key] !== undefined && [].concat(answer[w.key]).includes(w.value) === (w.op === 'eq'))) continue;
           const values = (answers[f.key] || []).map((label) => (f.options || (f.type === 'boolean' ? BOOL : [])).find((o) => o.label === label)?.value ?? label);
           if (values.length) answer[f.key] = f.type === 'multiselect' ? values : /^(number|integer)$/.test(f.type) ? Number(values[0]) : values[0];
         }
-        return request('POST', `${base}/form/${requestId}/reply`, { answer });
+        return request('POST', `${base}/form/${requestId}/reply${at}`, { answer });
       }
       if (decision === 'allow' && scope === 'session' && req?.save?.length) {
         const rules = (await request('GET', base))?.data?.permissions || [];
@@ -331,7 +356,12 @@ export const interaction = defineInteractionAdapter({
       return request('POST', `${base}/permission/${requestId}/reply`, decision === 'allow' ? { decision: 'once' }
         : { decision: 'reject', message: 'The user declined this action.' });
     };
-    reply().catch((error) => console.error(`[opencode] reply failed: ${error.message}`));
+    reply().catch((error) => {
+      console.error(`[opencode] reply failed: ${error.message}`);
+      if (!req?.show) return;
+      publishNotice(`opencode:${id}`, `OpenCode did not accept the answer: ${/"message":"([^"]*)"/.exec(error.message)?.[1] || error.message}`);
+      req.show();
+    });
     return true;
   },
   owns: (id) => execs.has(id),
@@ -348,8 +378,8 @@ export const interaction = defineInteractionAdapter({
     if (execs.has(id) || !serviceInfo()) return;
     for (const sid of [id, ...busyChildren(id)]) {
       const [perms, forms] = await interaction.reconcile(sid);
-      for (const p of perms) callbacks.onControlRequest(controlRequest(p, false, callbacks.onControlResolved));
-      for (const form of forms) callbacks.onControlRequest(controlRequest(form, true, callbacks.onControlResolved));
+      for (const p of perms) present(callbacks, controlRequest(p, false, callbacks.onControlResolved));
+      for (const form of forms) present(callbacks, controlRequest(form, true, callbacks.onControlResolved));
     }
   },
   // The service's open requests of a session; ones answered elsewhere are settled.

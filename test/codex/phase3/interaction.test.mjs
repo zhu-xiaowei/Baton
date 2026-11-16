@@ -1865,7 +1865,7 @@ test('Codex MCP unsupported forms fall back while non-form modes auto-decline', 
       requestedSchema: {
         type: 'object',
         properties: {
-          count: { type: 'integer', title: 'Count' },
+          count: { type: 'object', title: 'Count' },
         },
       },
     },

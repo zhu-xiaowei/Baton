@@ -8,7 +8,7 @@ import {
 var _req = null;
 var _askQuestions = null;
 var _askIndex = 0;
-var _askAnswers = [];
+var _askAnswers = {}; // question index → answer, kept for Back
 var _deferredPrompt = null;
 var _promptObserver = null;
 
@@ -43,7 +43,7 @@ function reply(payload) {
 function resetClaudeState() {
   _askQuestions = null;
   _askIndex = 0;
-  _askAnswers = [];
+  _askAnswers = {};
 }
 
 function stopPromptObserver() {
@@ -162,39 +162,47 @@ function renderPrompt(prompt) {
     html += '<pre class="permission-desc">' + esc(prompt.description) + '</pre>';
   }
   html += '<div class="permission-options">';
+  var back = '';
   for (var i = 0; i < prompt.options.length; i++) {
     var option = prompt.options[i];
     var isCheck = option.check !== undefined;
-    var buttonClass = isCheck ? 'permission-btn'
+    var buttonClass = isCheck || option.back ? 'permission-btn'
       : (option.tone === 'deny' || /deny|reject|no/i.test(option.act || '')
         ? 'permission-btn deny'
         : 'permission-btn allow');
-    html += '<button class="' + buttonClass + '" data-act="' + esc(option.act) + '" '
+    var button = '<button class="' + buttonClass + '" data-act="' + esc(option.act) + '" '
       + (isCheck ? 'role="checkbox" aria-checked="' + option.check + '" ' : '')
       + 'data-has-input="' + (option.hasInput ? '1' : '0') + '" '
       + 'onclick="handlePermissionOption(this)">'
       + (isCheck ? '<span class="permission-box"><svg viewBox="0 0 16 16"><path d="M3.5 8.5l3 3 6-7"/></svg></span>' : '')
       + (option.key ? '<span class="permission-key">' + esc(option.key) + '</span>' : '')
       + '<span class="permission-copy">'
-      + '<span class="permission-label">' + esc(option.label) + '</span>'
+      + '<span class="permission-label">' + esc(option.label + (option.previous ? ' ✓ Previous' : '')) + '</span>'
       + (option.description
         ? '<span class="permission-desc-inline">' + esc(option.description) + '</span>'
         : '')
       + '</span>'
       + '</button>';
+    // Back in a multi-select sits with Cancel / Submit.
+    if (option.back && prompt.submit) { back = button; continue; }
+    html += button;
     if (option.hasInput) {
-      html += '<div class="permission-input-wrap" style="display:none">'
-        + '<input class="permission-input" placeholder="' + esc(option.placeholder || '') + '" '
+      // An earlier or refused value opens the input with it.
+      html += '<div class="permission-input-wrap" style="display:' + (option.value || option.error ? 'flex' : 'none') + '">'
+        + '<input class="permission-input" placeholder="' + esc(option.placeholder || '') + '" value="' + esc(option.value || '') + '" '
         + 'onkeydown="if(event.key===\'Enter\'&&!event.isComposing&&event.keyCode!==229)'
         + 'submitPermissionWithInput(this,\'' + esc(option.act) + '\')" />'
         + '<button class="permission-submit" '
         + 'onclick="submitPermissionWithInput(this.previousElementSibling,\'' + esc(option.act)
-        + '\')">Send</button></div>';
+        + '\')">Send</button>'
+        + (option.note ? '<div class="permission-input-note">' + esc(option.note) + '</div>' : '')
+        + (option.error ? '<div class="permission-input-note error">' + esc(option.error) + '</div>' : '')
+        + '</div>';
     }
   }
   html += '</div>';
   if (prompt.submit) {
-    html += '<div class="permission-actions">'
+    html += '<div class="permission-actions">' + back
       + '<button class="permission-btn deny" onclick="cancelPermissionPrompt()">Cancel</button>'
       + '<button class="permission-btn allow permission-multi-submit" data-act="' + esc(prompt.submit.act)
       + '" data-min="' + (prompt.submit.min || 0) + '" data-max="' + (prompt.submit.max ?? Infinity)
@@ -206,6 +214,8 @@ function renderPrompt(prompt) {
   if (prompt.submit) updateMultiSubmit();
   if (typeof updateSpinner === 'function') updateSpinner();
   pinPermissionPromptToBottom();
+  var refused = container.querySelector('#permission-prompt .permission-input-note.error');
+  if (refused) refused.parentElement.querySelector('input').focus();
 }
 
 function renderAskStep() {
@@ -215,12 +225,15 @@ function renderAskStep() {
     : '';
   var header = question.header ? '[' + question.header + '] ' : '';
   var multi = question.multiSelect === true;
+  var prev = _askAnswers[_askIndex] || {};
+  var picked = prev.picked || [];
   var options = (question.options || []).map(function (option, index) {
     return {
       label: option.label,
+      previous: !multi && picked.includes(index),
       description: option.description || '',
       act: 'opt:' + index,
-      check: multi ? false : undefined,
+      check: multi ? picked.includes(index) : undefined,
     };
   });
   options.push({
@@ -228,7 +241,9 @@ function renderAskStep() {
     act: 'type',
     hasInput: true,
     placeholder: 'Type your response…',
+    value: prev.typed,
   });
+  if (_askIndex > 0) options.push({ label: '← Back', act: 'back', back: true });
   renderPrompt({
     title: prefix + header + (question.question || question.text || ''),
     options: options,
@@ -296,31 +311,29 @@ function chooseOption(act, label, isTyped, picked) {
     return;
   }
 
+  if (act === 'back') { _askIndex--; renderAskStep(); return; }
   var question = _askQuestions[_askIndex] || {};
-  var labels = isTyped ? [label]
-    : (act === 'ask-submit' ? picked : [parseInt(act.slice(4), 10)]).map(function (index) {
-      var option = (question.options || [])[index];
-      return option ? option.label : label;
-    });
-  _askAnswers.push({
-    id: question.id || question.question,
-    question: question.question || question.text || '',
-    labels: labels,
-  });
+  _askAnswers[_askIndex] = isTyped ? { picked: [], typed: label }
+    : { picked: act === 'ask-submit' ? picked : [parseInt(act.slice(4), 10)], typed: '' };
 
   if (_askIndex < _askQuestions.length - 1) {
     _askIndex++;
     renderAskStep();
     return;
   }
-  var text = _askAnswers.map(function (entry) {
+  var entries = _askQuestions.map(function (q, i) {
+    var a = _askAnswers[i];
+    return { id: q.id || q.question, question: q.question || q.text || '',
+      labels: a.typed ? [a.typed] : a.picked.map(function (index) { return (q.options || [])[index]?.label; }) };
+  });
+  var text = entries.map(function (entry) {
     return (entry.question ? entry.question + ' ' : '') + '→ ' + entry.labels.join(', ');
   }).join('\n');
   reply({
     requestId: _req.requestId,
     decision: 'answer',
     answerText: text,
-    answers: Object.fromEntries(_askAnswers.map(function (entry) { return [entry.id, entry.labels]; })),
+    answers: Object.fromEntries(entries.map(function (entry) { return [entry.id, entry.labels]; })),
   });
   dismissPermissionPrompt();
 }

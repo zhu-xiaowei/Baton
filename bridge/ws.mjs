@@ -43,6 +43,7 @@ import {
   parseCodexSlashCommand,
 } from './codex-commands.mjs';
 import { inspectCodexSession, resolveCodexSessionCwd } from './codex-session.mjs';
+import { mcpFormReply, mcpFormRequest } from './codex-interaction.mjs';
 import { updateSessionStatus, recentSessions } from './sync.mjs';
 import { approveJoin, createInvite, rotatedKey } from './accounts.mjs';
 import { BRIDGE_VERSION } from './version.mjs';
@@ -456,6 +457,7 @@ function sendPermissionRequest(sessionId, p) {
     plan: p.input.plan,
     input: p.input,
     ...(p.sessionScope ? { sessionScope: { label: p.sessionScope.label } } : {}),
+    ...(p.reshow ? { reshow: true } : {}),
   };
   if (p.liveTurn && !p.liveTurn.isEnded()) {
     p.liveTurn.emit('permission_request', payload);
@@ -511,7 +513,16 @@ function claudeSessionScope(r) {
 }
 
 function queuePermissionRequest(sessionId, req, options = {}) {
-  const r = req.request || {};
+  let r = req.request || {};
+  // A Claude MCP elicitation: the MCP form; its URL mode (a sign-in) is declined.
+  if (r.subtype === 'elicitation') {
+    const elicitation = { serverName: r.mcp_server_name, mode: r.mode || 'form', message: r.message, requestedSchema: r.requested_schema };
+    if (elicitation.mode !== 'form') {
+      _pool.replyControl(sessionId, req.request_id, { action: 'decline' });
+      return publishNotice(sessionId, `${r.mcp_server_name || 'An MCP server'} asked to open a link; handle it on the computer. Declined.`, options.liveTurn);
+    }
+    r = { ...mcpFormRequest(elicitation), elicitation };
+  }
   const input = r.input || {};
   const syncStatus = options.syncStatus !== false && r.sync_status !== false;
   const queued = _pendingControl.enqueue(sessionId, {
@@ -524,6 +535,8 @@ function queuePermissionRequest(sessionId, req, options = {}) {
     nativeSessionId: options.nativeSessionId || sessionId,
     syncStatus,
     sessionScope: claudeSessionScope(r),
+    ...(r.elicitation ? { elicitation: r.elicitation } : {}),
+    ...(r.reshow ? { reshow: true } : {}),
     ...(options.liveTurn ? { liveTurn: options.liveTurn } : {}),
   });
   if (queued.current.syncStatus) {
@@ -687,6 +700,13 @@ export function publishMessages(sessionId, messages) {
   const job = (last || Promise.resolve()).then(() => rowsWithImageKeys(messages)).then(send)
     .catch((e) => console.error(`[ws] publish failed: ${e.message}`)).finally(() => { if (publishing.get(sessionId) === job) publishing.delete(sessionId); });
   publishing.set(sessionId, job);
+}
+
+// A one-line notice in the Session, e.g. for a request only the computer can answer.
+export function publishNotice(sessionId, content, liveTurn) {
+  const msg = { uuid: `notice-${crypto.randomUUID()}`, type: 'system_event', content, timestamp: new Date().toISOString() };
+  if (liveTurn && !liveTurn.isEnded()) liveTurn.sendAuthoritative(msg);
+  else publishMessages(sessionId, [msg]);
 }
 
 function probeConnection() {
@@ -2130,6 +2150,8 @@ function handlePermissionReply(msg) {
       pending.requestId,
       { decision, answerText, approvalResponse, answers, scope },
     );
+  } else if (pending.elicitation) {
+    replied = _pool.replyControl(sessionId, pending.requestId, mcpFormReply(pending.elicitation, approvalResponse));
   } else if (pending.hookReply) {
     if (pending.requiresInteraction && decision === 'answer' && answerText) {
       replied = pending.hookReply({ action: 'answer', answerText });
