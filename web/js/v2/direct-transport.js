@@ -359,7 +359,11 @@ function receive(ws, text) {
     const part = pushes.add(frame);
     if (part?.payload) {
       pushQueue = pushQueue.then(() => decodeRpcPayload(part.payload, inflate, openAny))
-        .then((event) => { for (const listener of pushListeners) listener(event); }).catch(() => {});
+        .then((event) => {
+          for (const one of event.action === 'batch' ? event.events : [event]) {
+            for (const listener of pushListeners) { try { listener(one); } catch {} }
+          }
+        }).catch(() => {});
     }
     return;
   }
@@ -500,7 +504,7 @@ async function send(key, request, route, missing) {
     request.deadlineFrom = request.sentAt;
   }
   const body = rpcRequest({ requestId: key, method: request.method, params: request.params, replyTo: connectionId, missing,
-    ack: request.ack });
+    ack: request.ack, oneWay: request.oneWay });
   if (!CAN_INFLATE) body.accept = [];
   try {
     const clear = request.method === 'account_key';
@@ -521,6 +525,7 @@ async function send(key, request, route, missing) {
     request.frames ||= [body]; // account_key, the one clear request
     const frames = request.frames.map((frame) => ({ ...frame, replyTo: connectionId, ...(missing?.length ? { missing } : {}) }));
     for (const frame of frames) socket.send(await route.sign(JSON.stringify(frame), undefined, { method: request.method }));
+    if (request.oneWay) { pending.delete(key); request.resolve(); }
   } catch (error) {
     request.attemptVersion = null;
     // Too large even in chunks: fail now instead of signing it again until the deadline.
@@ -637,15 +642,15 @@ async function sendStream(entry, message) {
 
 // `ack` asks the Bridge for a receipt on arrival: `onAccepted` runs once. After a receipt or a
 // progress frame (a long request, `onProgress(value)` when it carries one) the request may take
-// ACKED_DEADLINE_MS more from the latest of them.
-export function request(device, method, params = {}, { onSlow, ack, onAccepted, onProgress } = {}) {
+// ACKED_DEADLINE_MS more from the latest of them. `oneWay`: sent once, no reply; resolves when sent.
+export function request(device, method, params = {}, { onSlow, ack, onAccepted, onProgress, oneWay } = {}) {
   restore();
   connect();
   // A page opened without the home (reload, link) still learns current routes and credentials.
   if (!routesKnown && !devicesInflight) devices().catch(() => {});
   const key = uuid();
   return new Promise((resolve, reject) => {
-    pending.set(key, { device, method, params, resolve, reject, onSlow, ack: !!ack, onAccepted, onProgress, acked: false, aliveAt: 0, createdAt: performance.now(),
+    pending.set(key, { device, method, params, resolve, reject, onSlow, ack: !!ack, oneWay: !!oneWay, onAccepted, onProgress, acked: false, aliveAt: 0, createdAt: performance.now(),
       attemptVersion: null, retried: false, slow: false, sentAt: 0, firstSentAt: null });
     reconcile();
   });

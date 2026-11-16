@@ -49,3 +49,16 @@ test('first start after load waits for one native reset before starting listener
   for (const tunnel of tunnels) clearInterval(tunnel.retransmitTimer);
   delete globalThis.window;
 });
+
+test('Bridge output is acknowledged once per 64 KB written', async () => {
+  globalThis.window = { __TAURI_INTERNALS__: { transformCallback: () => 1, invoke: () => Promise.resolve(0) } };
+  const sent = [];
+  const tunnel = new PreviewTunnel({ device: 'test-ec2', target: { port: 5173 }, wsUrl: 'wss://example.test/ws', key: 'test' });
+  tunnel.channel = { send(message) { sent.push(message); return true; } };
+  const streamId = crypto.randomUUID();
+  tunnel.nativeOpen({ tunnelId: tunnel.localId, streamId });
+  const data = Buffer.alloc(16 * 1024).toString('base64');
+  for (let seq = 1; seq <= 9; seq++) tunnel.remoteMessage({ type: 'bytes', streamId, seq, data });
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.deepEqual(sent.filter(message => message.type === 'ack').map(message => message.seq), [4, 8]);
+});

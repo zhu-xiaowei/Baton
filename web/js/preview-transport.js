@@ -1,5 +1,5 @@
 import { previewInvoke as invoke, previewListen as listen } from './preview-native.js';
-import { validatePreviewMessage } from '../../bridge/preview-protocol.mjs';
+import { PREVIEW_ACK_BYTES, validatePreviewMessage } from '../../bridge/preview-protocol.mjs';
 import { openStream } from './v2/direct-transport.js';
 
 const CHUNK_BYTES = 16 * 1024;
@@ -369,6 +369,9 @@ export class PreviewTunnel {
         this.inboundBytes += decodedLength(data);
         this.onTraffic?.(this.inboundBytes);
         stream.lastWritten = seq;
+        stream.unackedBytes = (stream.unackedBytes || 0) + decodedLength(data);
+        if (stream.unackedBytes < PREVIEW_ACK_BYTES) continue;
+        stream.unackedBytes = 0;
         if (!this.channel.send({ type: 'ack', streamId: stream.id, seq })) {
           this.closeStream(stream.id, true);
           return;

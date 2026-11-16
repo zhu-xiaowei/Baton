@@ -7,6 +7,7 @@ import { deflateRawSync, inflateRawSync } from 'zlib';
 import { RpcAssembler, createHeaderSigner, decodeRpcPayload, isRpcRequest, isStreamFrame, openStreamMessage, packStreamMessage, pushFrames,
   rpcAckFrame, rpcErrorFrame, rpcProgressFrame, rpcResultFrames, sealStreamMessage, streamFrame, unpackStreamMessage } from './direct-rpc-protocol.mjs';
 import { bridgeKeys } from './e2ee-node.mjs';
+import { countFrame } from './frame-stats.mjs';
 
 // Reads that use the machine (files, Git, transcripts) run at most this many at once; requests that
 // only wait (sends, pushes, uploads) are not counted.
@@ -23,6 +24,8 @@ const LEASE_MS = 150_000;
 const RENEW_MS = 5 * 60_000;
 const MAX_BUFFERED = 1024 * 1024;
 const MAX_REQUEST_CHUNKS = 64; // about 1.2 MB of compressed params
+// Pushes to one App within this window go out as one `batch` frame; the first after a quiet window at once.
+const PUSH_BATCH_MS = 50;
 
 // Which App connections watch which Session. Nothing tells the Bridge that an App socket closed,
 // so a subscription is a lease the App renews; only these connections receive pushes.
@@ -92,6 +95,7 @@ export class DirectRpcBridge {
     this.queue = [];
     this.signers = new Map();
     this.replies = new Map(); // requestId → { replyTo, frames, at }
+    this.outbox = new Map(); // App connection → { events, deflate, sentAt, timer }
     this.requestParts = new RpcAssembler(32);
     this.active = true;
   }
@@ -174,6 +178,7 @@ export class DirectRpcBridge {
     if (text === '{"action":"realtime_pong"}') { clearTimeout(this.pongTimer); return; }
     let frame;
     try { frame = JSON.parse(text); } catch { return; }
+    countFrame('in', frame.ch ? 'stream:' + frame.ch : (frame.kind || frame.action || '?') + (frame.method ? ':' + frame.method : ''), text.length);
     if (frame.action === 'direct_rpc' && frame.type === 'joined') {
       this.pending = false;
       console.log('[direct-rpc] joined');
@@ -217,6 +222,7 @@ export class DirectRpcBridge {
   }
 
   accept(frame) {
+    if (frame.oneWay) return void Promise.resolve().then(() => this.handlers[frame.method]?.(frame.params || {}, { replyTo: frame.replyTo })).catch(() => {});
     const label = { method: frame.method };
     if (frame.ack) void this.deliver([rpcAckFrame(frame.requestId)], frame.replyTo, label);
     const known = this.replies.get(frame.requestId);
@@ -295,12 +301,28 @@ export class DirectRpcBridge {
   // `targets` (default: the Session's subscribers) is [[connectionId, { deflate }]].
   publish(event, targets = this.subscribers.targets(event.sessionId)) {
     if (!targets.length || this.socket?.readyState !== WebSocket.OPEN || this.socket.bufferedAmount > MAX_BUFFERED) return;
-    const id = randomUUID();
-    const label = { event: event.action };
+    const now = Date.now();
     for (const [connectionId, { deflate }] of targets) {
-      const session = this.keys?.byTag(this.peers.get(connectionId));
-      if (session) void this.deliver(pushFrames(id, event, { deflate: deflate ? deflateRawSync : null, seal: session.seal }), connectionId, label, 'push');
+      let box = this.outbox.get(connectionId);
+      if (!box) this.outbox.set(connectionId, box = { events: [], sentAt: 0, timer: null });
+      box.events.push(event);
+      box.deflate = deflate;
+      if (box.timer) continue;
+      const wait = box.sentAt + PUSH_BATCH_MS - now;
+      if (wait <= 0) this.flushPushes(connectionId);
+      else (box.timer = setTimeout(() => this.flushPushes(connectionId), wait)).unref?.();
     }
+  }
+
+  flushPushes(connectionId) {
+    const box = this.outbox.get(connectionId);
+    const { events, deflate } = box;
+    Object.assign(box, { events: [], sentAt: Date.now(), timer: null });
+    if (this.outbox.size > 512) for (const [id, other] of this.outbox) if (!other.timer && Date.now() - other.sentAt > PUSH_BATCH_MS) this.outbox.delete(id);
+    const session = this.keys?.byTag(this.peers.get(connectionId));
+    if (!session) return;
+    const event = events.length === 1 ? events[0] : { action: 'batch', events };
+    void this.deliver(pushFrames(randomUUID(), event, { deflate: deflate ? deflateRawSync : null, seal: session.seal }), connectionId, { event: event.action }, 'push');
   }
 
   // A terminal or preview message to an App connection. Best effort: both channels recover from
@@ -348,6 +370,7 @@ export class DirectRpcBridge {
       const sign = this.signer(target, action);
       for (const out of frames) {
         const signed = await sign(JSON.stringify(out), undefined, label);
+        countFrame('out', out.kind + ':' + (label.method || label.event || label.stream || ''), signed.length);
         if (this.socket?.readyState === WebSocket.OPEN) this.socket.send(signed);
       }
     } catch (error) {
@@ -394,6 +417,7 @@ export class DirectRpcBridge {
     clearTimeout(this.tokenTimer);
     clearInterval(this.pingTimer);
     clearTimeout(this.pongTimer);
+    for (const box of this.outbox.values()) clearTimeout(box.timer);
     const socket = this.socket;
     this.socket = null;
     if (socket) { socket.removeAllListeners(); socket.on('error', () => {}); socket.terminate(); }

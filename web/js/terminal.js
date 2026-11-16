@@ -640,7 +640,7 @@ function initializeProjectTerminal(current, { Terminal, FitAddon, RemoteTerminal
       current.lastAck = message.eventSeq;
       current.ackBytes += bytes.length;
       // Large output is reported within 100 ms (the Bridge paces catch-up by it); a little output
-      // (echoes, spinners) waits up to 2 s or rides on the next input.
+      // (echoes, spinners) waits up to 10 s or rides on the next input.
       if (current.ackBytes >= 48 * 1024) acknowledge();
       else if (current.ackBytes >= 16 * 1024 && current.ackSlow) {
         clearTimeout(current.ackTimer);
@@ -648,7 +648,7 @@ function initializeProjectTerminal(current, { Terminal, FitAddon, RemoteTerminal
         current.ackTimer = setTimeout(acknowledge, 100);
       } else if (!current.ackTimer) {
         current.ackSlow = current.ackBytes < 16 * 1024;
-        current.ackTimer = setTimeout(acknowledge, current.ackSlow ? 2000 : 100);
+        current.ackTimer = setTimeout(acknowledge, current.ackSlow ? 10_000 : 100);
       }
     } else if (message.type === 'resized') {
       const localResize = current.requestedSize?.cols === message.cols && current.requestedSize?.rows === message.rows;

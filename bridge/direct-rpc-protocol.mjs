@@ -26,11 +26,12 @@ export function fromBase64(text) {
 }
 
 // A resend keeps its requestId; `missing` asks only for those chunks of a reply already sent.
-// `ack` asks for a receipt (`rpc_ack`) as soon as the request arrives.
-export function rpcRequest({ requestId, method, params = {}, replyTo, missing, ack }) {
+// `ack` asks for a receipt (`rpc_ack`) as soon as the request arrives; `oneWay` for no reply at all.
+export function rpcRequest({ requestId, method, params = {}, replyTo, missing, ack, oneWay }) {
   const frame = { v: RPC_VERSION, kind: 'rpc', requestId, method, params, replyTo, accept: ['deflate'] };
   if (missing?.length) frame.missing = missing;
   if (ack) frame.ack = true;
+  if (oneWay) frame.oneWay = true;
   return frame;
 }
 
