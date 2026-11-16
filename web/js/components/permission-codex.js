@@ -305,7 +305,7 @@ export function createCodexPermissionController(options) {
         value = field.input.default;
       } else if (field.input && field.input.type === 'number') {
         value = /^-?(\d+(\.\d*)?|\.\d+)$/.test(label) ? Number(label) : NaN;
-        var why = isNaN(value) ? 'Enter a number' : field.input.integer && value % 1 ? 'Must be a whole number'
+        var why = !isFinite(value) ? 'Enter a number' : field.input.integer && value % 1 ? 'Must be a whole number'
           : value < (field.input.minimum ?? -Infinity) || value > (field.input.maximum ?? Infinity) ? 'Must be ' + rangeText(field.input, 'between ', ' and ') : '';
         if (why) return renderMcpFormStep(label, why);
       } else if (act === 'mcp-text' || isTyped) {

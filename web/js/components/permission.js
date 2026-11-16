@@ -214,6 +214,8 @@ function renderPrompt(prompt) {
   if (prompt.submit) updateMultiSubmit();
   if (typeof updateSpinner === 'function') updateSpinner();
   pinPermissionPromptToBottom();
+  var refused = container.querySelector('#permission-prompt .permission-input-note.error');
+  if (refused) refused.parentElement.querySelector('input').focus();
 }
 
 function renderAskStep() {
