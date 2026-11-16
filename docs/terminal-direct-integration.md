@@ -76,7 +76,7 @@ sequence order, without cross-device command transactions.
 | Snapshot | ≤4 MiB in 16 KiB chunks with a 4-chunk window; output already in the mirror but not yet sent is flushed to the other pages first, so the joining page never receives it twice |
 | Slow page | 512 KiB unacknowledged output per page; overflow drops only that page |
 | Mirror backpressure | PTY reads pause above 256 KiB queued, resume below 64 KiB, 1 MiB hard cap |
-| Lifecycle | Page heartbeat 30 s, page gives up after 90 s silent; the Bridge drops an attachment after 90 s without messages; PTYs are kept |
+| Lifecycle | Page heartbeat 60 s, page gives up after 150 s silent; the Bridge drops an attachment after 150 s without messages; PTYs are kept |
 
 ## EC2 real PTY echo measurement (2026-09-16)
 

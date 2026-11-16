@@ -5,8 +5,8 @@ import { openStream } from './v2/direct-transport.js';
 // order. A gap that does not fill in GAP_MS ends the stream, and the page reconnects with a fresh
 // snapshot.
 const RESEND_MS = 1500;
-const HEARTBEAT_MS = 30_000;
-const SILENT_MS = 90_000;
+const HEARTBEAT_MS = 60_000;
+const SILENT_MS = 150_000;
 const GAP_MS = 3000;
 const MAX_UNACKED_BYTES = 256 * 1024;
 

@@ -127,13 +127,16 @@ Measurement behind phase 0: `.scratch/proto-opt/` (per-frame-type counts from th
 candidates T1–T16 simulated on the timelines).
 
 **Phase 0 — common protocol optimizations** (App + Bridge only; works on today's AWS). One PR.
-- T2: pushes to one target within 50 ms go out as one frame; the first push after a quiet 50 ms still goes
+- T2: pushes to one App within 50 ms go out as one `batch` frame; the first push after a quiet 50 ms still goes
   at once (StreamFramer's immediate first delta is kept).
-- T4: preview tunnel chunk size, window and ack interval derive from one parameter (today 16 KB chunks,
-  128 KB window); acks become cumulative every 64 KB, or when nothing more is queued. Larger chunks from the
-  server's announced frame limit come in phase 1c.
-- T7: `notify_seen` becomes one-way (its empty `{}` result is unused).
-- T8: terminal page heartbeat 30 s → 60 s and only when nothing else was sent; Bridge idle limit 90 s → 150 s.
+- T4: preview tunnel, Bridge → App: the App acknowledges once per 64 KB written (`PREVIEW_ACK_BYTES`), no
+  timer — these acks are flow credit only, the Bridge never resends (HTTP/2 `WINDOW_UPDATE` style); the Bridge's
+  window grows 128 → 256 KB and resumes as soon as it is below the window, so in-flight data stays ≥ today's.
+  App → Bridge (acks also confirm delivery, the App resends) is unchanged. Larger chunks from the server's
+  announced frame limit come in phase 1c.
+- T7: `notify_seen` becomes a one-way request (`oneWay`: no reply, no resend; its empty `{}` result was unused).
+- T8: terminal page heartbeat 30 s → 60 s, page silence limit 90 s → 150 s, Bridge idle limit 90 s → 150 s (still
+  tolerates one lost heartbeat).
 - T10: terminal `render_ack` when < 16 KB is unreported: at most every 10 s instead of 2 s (the 16 KB / 100 ms
   rule stays, so the 192 KB skip threshold is unaffected).
 - Per-type counts: temporary `bridge/frame-stats.mjs` (one module + two call sites, `BATON_FRAME_STATS=1`,

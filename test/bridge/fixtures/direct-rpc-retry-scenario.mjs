@@ -20,7 +20,7 @@ state.SERVER = 'https://baton.example';
 // One relay per scenario: the App socket, the Bridge, and the faults to apply.
 function scenario({ devicesDelayMs = 0, online = true, dropRequests = 0, dropChunks = [], silent = false, computeMs = 0, result = { ok: 1 },
   deadSockets = [], appExpiresIn = 3600, bridgeExpiresIn = 3600 } = {}) {
-  const log = { requests: 0, computed: 0, chunksSent: 0, slowAt: null, fetches: 0, credentialRequests: 0, subscribes: [] };
+  const log = { requests: 0, computed: 0, chunksSent: 0, slowAt: null, fetches: 0, credentialRequests: 0, subscribes: [], pushIds: new Set(), seen: 0 };
   let epoch = 'a';
   let appSocket = null;
   let connections = 0;
@@ -30,6 +30,7 @@ function scenario({ devicesDelayMs = 0, online = true, dropRequests = 0, dropChu
       const { target, body } = JSON.parse(text);
       const frame = JSON.parse(body);
       if (frame.kind === 'rpc_result' || frame.kind === 'push') log.chunksSent++; // not receipts or progress
+      if (frame.kind === 'push') log.pushIds.add(frame.id);
       if (silent) return;
       if (frame.chunk && dropChunks.includes(frame.chunk.index)) { dropChunks = dropChunks.filter((i) => i !== frame.chunk.index); return; }
       if (appSocket?.id === target && appSocket.readyState === 1) setTimeout(() => appSocket.onmessage?.({ data: body }), 5);
@@ -46,6 +47,7 @@ function scenario({ devicesDelayMs = 0, online = true, dropRequests = 0, dropChu
       return { epoch };
     },
     unsubscribe: (params, caller) => { bridge.subscribers.remove(params.sessionId, caller.replyTo); return {}; },
+    seen: () => { log.seen++; return {}; },
   }, sendControl: (message) => { // the server answers a credentials request on the control socket
     if (message.op !== 'credentials') return true;
     log.credentialRequests++;
@@ -122,13 +124,22 @@ async function pushScenario(env, transport) {
   env.bridge.publish({ sessionId: 's1', action: 'stream_delta', seq: 3 });
   await wait(100);
   const afterReconnect = pushes.splice(0);
+  await wait(60);
+  const ids = env.log.pushIds.size;
+  for (const seq of [10, 11, 12]) env.bridge.publish({ sessionId: 's1', action: 'stream_delta', seq });
+  await wait(100);
+  const burst = { frames: env.log.pushIds.size - ids, seqs: pushes.splice(0).map((event) => event.seq) };
+  const results = env.log.chunksSent;
+  await transport.request('dev', 'seen', {}, { oneWay: true });
+  await wait(100);
+  const oneWay = { handled: env.log.seen, replies: env.log.chunksSent - results };
   transport.unsubscribe('dev', 's1');
   await wait(100);
   const before = env.log.chunksSent;
   env.bridge.publish({ sessionId: 's1', action: 'stream_delta', seq: 4 });
   await wait(50);
   return { unsubscribed, first, bigIntact: JSON.stringify(first[1]) === JSON.stringify(big), afterReconnect, resyncs,
-    subscribes: env.log.subscribes, sentAfterLeave: env.log.chunksSent - before };
+    subscribes: env.log.subscribes, sentAfterLeave: env.log.chunksSent - before, burst, oneWay };
 }
 
 const options = { ...workerData };

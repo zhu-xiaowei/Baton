@@ -98,5 +98,7 @@ test('pushes reach subscribers only, whole, and follow a reconnect', async () =>
   assert.deepEqual(result.subscribes, [{ to: 'app1=', renew: false }, { to: 'app2=', renew: false }]);
   assert.deepEqual(result.resyncs, ['all', 'dev'], 'the page reloads after a reconnect and when the Bridge restarted');
   assert.equal(result.sentAfterLeave, 0, 'and nothing after it left');
+  assert.deepEqual(result.burst, { frames: 2, seqs: [10, 11, 12] }, 'a burst: the first at once, the rest in one batch, in order');
+  assert.deepEqual(result.oneWay, { handled: 1, replies: 0 }, 'a one-way request is handled and not answered');
 });
 

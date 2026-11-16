@@ -947,7 +947,7 @@ function dispatchWsMessage(msg) {
       // Someone looking at this session right now: no push to any device.
       if (document.visibilityState === 'visible' && document.hasFocus()
         && msg.rootSessionId === state.wsRootSessionId) {
-        bridge.request(_wsDevice, 'notify_seen', { eventId: msg.eventId }).catch(function () {});
+        bridge.request(_wsDevice, 'notify_seen', { eventId: msg.eventId }, { oneWay: true }).catch(function () {});
       }
     } else if (msg.action === 'session_threads_changed') {
       if (msg.deviceName && msg.deviceName !== state.appState.device) return;

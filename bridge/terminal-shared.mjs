@@ -14,7 +14,7 @@ const CHUNK_BYTES = 16384;
 const FLUSH_MS = 16;
 const OUTPUT_MAX_BYTES = 64 * 1024;
 const PACKED_MAX_CHARS = 20000;
-const IDLE_MS = 90_000;
+const IDLE_MS = 150_000;
 const ACK_DELAY_MS = 50;
 // A page this far behind stops receiving output; below CATCH_UP_BYTES it gets the current screen
 // instead of what it missed (both keep 1000 lines of history, so nothing visible is lost).

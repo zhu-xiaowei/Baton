@@ -1,8 +1,8 @@
 import net from 'node:net';
-import { validatePreviewMessage } from './preview-protocol.mjs';
+import { PREVIEW_ACK_BYTES, validatePreviewMessage } from './preview-protocol.mjs';
 
 const CHUNK_BYTES = 16 * 1024;
-const WINDOW_BYTES = 128 * 1024;
+const WINDOW_BYTES = 4 * PREVIEW_ACK_BYTES;
 const MAX_PENDING_BYTES = 512 * 1024;
 const MAX_STREAMS = 24;
 const MAX_TUNNELS = 4;
@@ -182,7 +182,7 @@ export function createPreviewBridge(options) {
         stream.outstanding.delete(seq);
         stream.outstandingBytes -= size;
       }
-      if (stream.outstandingBytes < WINDOW_BYTES / 2 && stream.connected) stream.socket.resume();
+      if (stream.outstandingBytes < WINDOW_BYTES && stream.connected) stream.socket.resume();
       return;
     }
     if (message.type === 'fin') {

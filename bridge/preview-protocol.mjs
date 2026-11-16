@@ -1,6 +1,9 @@
 // Preview tunnel messages, checked by the App and the Bridge. Tunnel-level: `start {port}` → `started`,
 // `stop`, and `gone` for a tunnel the Bridge does not know (it restarted); the rest belong to one
 // TCP stream (`streamId`).
+// The App acknowledges Bridge output once per this many bytes written (flow credit only: the Bridge
+// never resends); the Bridge keeps up to four of these in flight per stream.
+export const PREVIEW_ACK_BYTES = 64 * 1024;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const APP_TYPES = new Set(['start', 'stop', 'open', 'bytes', 'ack', 'fin', 'close']);
 const BRIDGE_TYPES = new Set(['started', 'gone', 'opened', 'bytes', 'ack', 'fin', 'close', 'error']);
