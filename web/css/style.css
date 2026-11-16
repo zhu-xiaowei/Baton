@@ -448,7 +448,8 @@ html[data-theme="light"] :is(.assistant-text, .md-preview) input[type="checkbox"
   transform-origin: 45% 55%;
 }
 .tool-details-collapsed .tool-detail-chevron { transform: rotate(0); }
-.tool-details-collapsed .tool-body { display: none; }
+.tool-details-collapsed .tool-body, .tool-details-collapsed .tool-images { display: none; }
+.tool-images { margin: 4px 0 0; }
 .tool-node.tool-details-collapsed { padding-top: 6px; padding-bottom: 4px; }
 .tool-name { color: var(--tool-label); font-weight: 700; }
 .tool-desc { color: var(--text-secondary); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }

@@ -738,7 +738,7 @@ import { observeToolDetails, loadToolDetails, loadToolPreviews, toolDetailsSourc
       desc: truncate(arg, 80),
       body: grid([
         kv ? ['IN', `<div class="tool-kv">${kv}</div>`] : null,
-        out != null ? ['OUT', ansiHtml(out)] : null,
+        out != null && (out || !resultImages(result)) ? ['OUT', ansiHtml(out)] : null,
       ]),
     };
   }
@@ -788,7 +788,7 @@ import { observeToolDetails, loadToolDetails, loadToolPreviews, toolDetailsSourc
   // Images a tool returned (Read of a png, an MCP screenshot), shown like message images; one gallery per card.
   function resultImages(result) {
     const images = Array.isArray(result?.content) ? result.content.filter(b => b?.type === 'image' && b.key) : [];
-    return images.length ? `<div class="msg-attachments">${images.map(b => `<span class="img-placeholder markdown-image" data-key="${esc(b.key)}" data-alt="">`
+    return images.length ? `<div class="msg-attachments tool-images">${images.map(b => `<span class="img-placeholder markdown-image" data-key="${esc(b.key)}" data-alt="">`
       + `${window.loadingSpinner?.({ label: 'Loading image' }) || ''}</span>`).join('')}</div>` : '';
   }
 
@@ -1065,7 +1065,7 @@ import { observeToolDetails, loadToolDetails, loadToolPreviews, toolDetailsSourc
       ? renderCodexMcp(input, toolResult)
       : (dispatchers[name] || (() => renderGeneric(name, input, toolResult)))();
     if (runtime === 'codex') info.name = codexToolName(name, input, toolResult);
-    info.body = (info.body || '') + resultImages(toolResult);
+    const imagesHtml = resultImages(toolResult);
     // Store state as data attr for CSS (render.js adds .error/.warning to tl-item)
     window._lastToolState = toolState(toolResult, name);
 
@@ -1091,7 +1091,7 @@ import { observeToolDetails, loadToolDetails, loadToolPreviews, toolDetailsSourc
           <div class="tool-body-content${clampClass}" id="${id}"${truncated ? ' data-tool-preview="true"' : ''} ${noClamp ? '' : `onclick="toggleExpand(this)"`}>${info.body || ''}${previewMore}</div>
         </div>`
       : '';
-    const detailsEnabled = detailPolicy.enabled && (!!info.body || truncated || editPending);
+    const detailsEnabled = detailPolicy.enabled && (!!info.body || truncated || editPending || !!imagesHtml);
     const detailsCollapsed = detailsEnabled && (requestedDetailsCollapsed || editPending);
     window._lastToolHasDetails = detailsEnabled;
     const baseHeaderClass = detailsEnabled
@@ -1119,6 +1119,6 @@ import { observeToolDetails, loadToolDetails, loadToolPreviews, toolDetailsSourc
         ${elevatedHtml}
         ${statusHtml}
       </div>
-      ${bodyHtml}`;
+      ${bodyHtml}${imagesHtml}`;
   };
 })();
