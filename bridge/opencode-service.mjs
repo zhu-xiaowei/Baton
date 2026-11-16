@@ -154,7 +154,7 @@ function mcpCaller(directory, server) {
 // Shown again if OpenCode refuses the answer.
 function present(cb, control) {
   const p = asked.get(control.request_id);
-  if (p) p.show = () => { asked.set(p.id, p); cb.onControlRequest(control); };
+  if (p) p.show = () => { asked.set(p.id, p); cb.onControlRequest({ ...control, request: { ...control.request, reshow: true } }); };
   cb.onControlRequest(control);
 }
 

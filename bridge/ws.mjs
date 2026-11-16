@@ -457,6 +457,7 @@ function sendPermissionRequest(sessionId, p) {
     plan: p.input.plan,
     input: p.input,
     ...(p.sessionScope ? { sessionScope: { label: p.sessionScope.label } } : {}),
+    ...(p.reshow ? { reshow: true } : {}),
   };
   if (p.liveTurn && !p.liveTurn.isEnded()) {
     p.liveTurn.emit('permission_request', payload);
@@ -535,6 +536,7 @@ function queuePermissionRequest(sessionId, req, options = {}) {
     syncStatus,
     sessionScope: claudeSessionScope(r),
     ...(r.elicitation ? { elicitation: r.elicitation } : {}),
+    ...(r.reshow ? { reshow: true } : {}),
     ...(options.liveTurn ? { liveTurn: options.liveTurn } : {}),
   });
   if (queued.current.syncStatus) {

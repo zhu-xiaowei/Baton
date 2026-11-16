@@ -535,8 +535,8 @@ function dispatchControlEvent(message) {
     if (requestState) {
       requestState.requestSeq = Math.max(requestState.requestSeq, seq);
       _controlRequestState.set(requestId, requestState);
-      // Without seq, a request after its resolution is shown again (a refused answer).
-      if (requestState.resolvedSeq >= seq && Number.isInteger(message.seq)) return true;
+      // `reshow`: the runtime refused the answer and asks again under the same id.
+      if (requestState.resolvedSeq >= seq && !message.reshow) return true;
     }
     if (message.sessionId === state.wsSessionId) {
       state.wsRunning = false;
