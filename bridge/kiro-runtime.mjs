@@ -384,7 +384,7 @@ const kiroInteraction = defineInteractionAdapter({
       : field === 'ppid' ? fs.readFileSync(`/proc/${pid}/stat`, 'utf8').split(') ').pop().split(' ')[1] : fs.readFileSync(`/proc/${pid}/cmdline`, 'utf8'));
     let tui = false;
     try { tui = !!lease.parentPid && Number(ps(lease.pid, 'ppid')) === lease.parentPid && /tui\.js/.test(ps(lease.parentPid, 'args')); } catch {}
-    return { pid: tui ? lease.parentPid : lease.pid, status: recOf(id)?.state?.open ? 'running' : 'idle', canTerminate: true,
+    return { pid: tui ? lease.parentPid : lease.pid, ...(tui ? { holderPid: lease.pid } : {}), status: recOf(id)?.state?.open ? 'running' : 'idle', canTerminate: true,
       label: `A Kiro client (${lease.clientName || 'unknown'})` };
   },
 

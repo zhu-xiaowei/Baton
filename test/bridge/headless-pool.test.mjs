@@ -133,7 +133,17 @@ test('a held Claude session asks first, and takeover stops only the confirmed pi
 test('/model keeps the applied model for the next process; /model default drops the flag', async (t) => {
   const pool = new ClaudePool({ bin: fakeClaude(t) });
   t.after(() => pool.shutdownAll());
-  const settle = async (proc) => { await exited(proc); return pool.sessionArgs.get('sid')['--model']; };
+  const settle = async (proc) => { if (proc) await exited(proc); return pool.sessionArgs.get('sid')['--model']; };
   assert.equal(await settle(await turn(pool, 'sid', '/model haiku')), 'resolved-id');
   assert.equal(await settle(await turn(pool, 'sid', '/model default')), null);
+});
+
+test('takeover waits for the holder after stopping its client, and stops a holder that stays', async () => {
+  for (const stays of [false, true]) {
+    const live = new Set([42, 43]); const sent = []; let checks = 0;
+    const kill = (pid, sig) => { if (sig) { sent.push(pid); live.delete(pid); } else if (!live.has(pid) || (pid === 43 && !stays && ++checks > 2 && !live.delete(43))) throw new Error('ESRCH'); };
+    const deps = { kill, timeoutMs: 500, findWriter: () => live.size && { pid: live.has(42) ? 42 : 43, holderPid: 43 } };
+    assert.equal(await writerConflict('sid', true, 42, deps), null);
+    assert.deepEqual(sent, stays ? [42, 43] : [42]);
+  }
 });

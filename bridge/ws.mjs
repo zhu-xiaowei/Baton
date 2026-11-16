@@ -1875,11 +1875,17 @@ export async function writerConflict(sessionId, takeover, expectedWriterPid, {
   if (writer.pid !== Number(expectedWriterPid)) {
     return { errorCode: `${runtime}_writer_changed`, error: `The ${label} writer changed before takeover`, writer };
   }
-  const alive = () => { try { kill(writer.pid, 0); return true; } catch { return false; } };
+  // `holderPid`: the process that holds the session for the stopped client (Kiro's engine under its TUI).
+  const pids = [writer.pid, writer.holderPid].filter(Boolean);
+  const alive = () => pids.some((pid) => { try { kill(pid, 0); return true; } catch { return false; } });
   noteTakeover(storageSessionId(runtime, sessionId));
-  try { kill(writer.pid, 'SIGTERM'); } catch {}
-  for (const end = Date.now() + timeoutMs; alive() && Date.now() < end;) {
-    await new Promise((resolve) => setTimeout(resolve, 100));
+  for (const pid of pids) {
+    try { kill(pid, 'SIGTERM'); } catch {}
+    // The holder normally leaves with its client; it is stopped itself only if it has not by the timeout.
+    for (const end = Date.now() + timeoutMs; alive() && Date.now() < end;) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    if (!alive()) break;
   }
   const next = alive() ? writer : await findWriter(sessionId);
   if (next) endTakeover(storageSessionId(runtime, sessionId));
