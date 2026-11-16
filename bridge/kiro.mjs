@@ -211,6 +211,10 @@ export function mapTool(name, a = {}) {
     case 'invoke_sub_agent': return ['Agent', { description: a.explanation || a.agentName || '', subagent_type: a.agentName || '', prompt: a.prompt || '' }];
     case 'web_search': return ['WebSearch', { query: a.query || '' }];
     case 'web_fetch': return ['WebFetch', { url: a.url || '', prompt: a.prompt || '' }];
+    case 'tool_call': { // a deferred tool, `tool::<server>::<tool>`
+      const t = /^tool::(.+?)::(.+)$/.exec(a.tool_id || '');
+      if (t) return [`mcp__${t[1]}__${t[2]}`, a.arguments || {}];
+    }
   }
   const mcp = /^@?([^/]+)\/(.+)$/.exec(name || '');
   return [mcp ? `mcp__${mcp[1]}__${mcp[2]}` : name, a];
@@ -247,10 +251,14 @@ function kiroRow({ id, timestamp, payload: p }, ctx) {
       if (p.operationType === 'Summary') return { ...base, type: 'summary', content: text(String(p.content ?? '')) };
       // The model acknowledges a steer as [STEERING steer-<id>: …]; the TUI strips it too.
       return p.content ? say(text(String(p.content).replace(/\[STEERING (?:steer|notify)-[^\s:\]]+: [^\]]*\]\s*/g, ''))) : null;
-    case 'tool_call': return say(toolUse(p.toolCallId, mapTool(p.toolName, p.args)));
-    case 'tool_result':
+    case 'tool_call': // load_resource only loads a deferred tool's schema
+      return p.toolName === 'load_resource' ? null : say(toolUse(p.toolCallId, mapTool(p.toolName, p.args)));
+    case 'tool_result': {
+      const out = typeof p.content === 'string' ? p.content : JSON.stringify(p.content ?? '');
+      const images = (p.images || []).map((i) => ({ type: 'image', source: { type: 'base64', media_type: i.mimeType, data: i.data } }));
       return { ...base, type: 'user', content: [{ type: 'tool_result', tool_use_id: p.toolCallId,
-        content: typeof p.content === 'string' ? p.content : JSON.stringify(p.content ?? ''), is_error: p.success === false }] };
+        content: images.length ? [{ type: 'text', text: out }, ...images] : out, is_error: p.success === false }] };
+    }
     case 'sub_agent_start':
       return say(toolUse(p.subSessionId, ['Agent', { description: p.explanation || p.subAgentName || '', subagent_type: p.subAgentName || '', prompt: p.prompt || '' }]));
     case 'sub_agent_complete': {

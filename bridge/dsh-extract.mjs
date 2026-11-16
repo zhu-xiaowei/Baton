@@ -43,14 +43,12 @@ export function mapTool(name, args) {
   }
 }
 
-// Attachments are content-addressed (sha256); the key matches the App's upload key for the same bytes.
+// An attachment's file; the main thread uploads it like any message image.
 function imageBlock(c, home) {
   const att = c.attachment || {};
   const sha = String(att.attachmentId || '').replace(/^sha256:/, '');
   if (!sha) return { type: 'image', placeholder: true };
-  const ext = (att.mediaType || 'image/png').split('/')[1].replace('jpeg', 'jpg');
-  return { type: 'image', key: `${sha.slice(0, 32)}.${ext}`, mediaType: att.mediaType || '',
-    path: path.join(home, 'attachments', 'v1', 'objects', sha.slice(0, 2), sha) };
+  return { type: 'image', path: path.join(home, 'attachments', 'v1', 'objects', sha.slice(0, 2), sha) };
 }
 
 const textOf = (content) => (content || []).filter((c) => c.type === 'text').map((c) => c.text).join('\n');
@@ -102,8 +100,9 @@ export function eventRows(event, frame, i, { sid, home }) {
       if (d.error && (!text || text.includes('[object Object]'))) text = `Error: ${d.error.code || d.error.name}`;
       // A shell exiting non-zero is not isError in dsh; its output ends with the exit code.
       const exit = /\[exit code: (-?\d+)\]/.exec(text.split('\n').slice(-8).join('\n'));
-      return [{ uuid: m.id, type: 'user', ...base, content: [{ type: 'tool_result', tool_use_id: m.toolCallId, content: text,
-        is_error: !!m.isError || (!!exit && exit[1] !== '0') }, ...(m.content || []).filter((c) => c.type === 'image').map((c) => imageBlock(c, home))] }];
+      const images = (m.content || []).filter((c) => c.type === 'image').map((c) => imageBlock(c, home));
+      return [{ uuid: m.id, type: 'user', ...base, content: [{ type: 'tool_result', tool_use_id: m.toolCallId, content: images.length ? [{ type: 'text', text }, ...images] : text,
+        is_error: !!m.isError || (!!exit && exit[1] !== '0') }] }];
     }
     case 'turn/end': {
       const r = d.reason || {};

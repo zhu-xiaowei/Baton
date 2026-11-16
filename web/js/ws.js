@@ -1744,7 +1744,7 @@ function onlyHiddenToolUpdates(messages, includeCollapsedResults = false) {
           return node?.classList.contains('tool-run-group-hidden')
             || (includeCollapsedResults && block.type === 'tool_result'
               && node?.classList.contains('tool-details-collapsed')
-              && !!node.querySelector('.tool-body'));
+              && !!node.querySelector('.tool-body, .tool-images'));
         });
     });
 }

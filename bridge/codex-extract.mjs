@@ -1,8 +1,11 @@
 import crypto from 'crypto';
 import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { markEditResult } from './tool-preview.mjs';
 import {
   codexCompletedLiveMessages,
+  codexToolBlocks,
   codexItemNativeId,
   codexItemLiveKey,
   codexMessageUuid,
@@ -172,7 +175,14 @@ function mcpToolMeta(item) {
 function mcpToolResult(item) {
   const result = item?.result;
   if (!result) return String(item?.status || '');
-  return outputText(result.content ?? result);
+  return result.content?.some?.((c) => c?.type === 'image') ? codexToolBlocks(result.content) : outputText(result.content ?? result);
+}
+
+function absoluteFile(value) {
+  try {
+    const file = String(value || '').startsWith('file:') ? fileURLToPath(value) : String(value || '');
+    return path.isAbsolute(file) ? file : undefined;
+  } catch { return undefined; }
 }
 
 function runningProcessId(content) {
@@ -410,6 +420,7 @@ export function extractCodexMessages(filePath, sessionId, options = {}) {
   const mcpPairs = new Map();
   const mcpCompletionCounts = new Map();
   const backgroundByProcessId = new Map();
+  const viewedImages = new Map(); // view_image call id → the file Codex opened (a call's own path may be relative)
   let nextLine = 0;
   let needsSessionScan = startLine === 0;
   let reviewPrompt = '';
@@ -486,6 +497,7 @@ export function extractCodexMessages(filePath, sessionId, options = {}) {
     sourceLine = line;
     fragment = 0;
     const timestamp = timestampFor(entry);
+    if (payload.type === 'item_completed' && payload.item?.type === 'ImageView') viewedImages.set(payload.item.id, payload.item.path);
     const shouldEmit = line >= startLine;
     if (hiddenPatchLines.has(line)) {
       if (payload.type === 'custom_tool_call' && payload.name === 'apply_patch') {
@@ -873,8 +885,10 @@ export function extractCodexMessages(filePath, sessionId, options = {}) {
       }
       const pair = dequeue(String(payload.call_id || ''));
       if (!pair) continue;
+      // The file view_image opened, as the live item names it (Codex resizes large ones in the rollout).
       const content = pair.name === 'view_image'
-        ? ''
+        ? (payload.output || []).filter?.((c) => c?.type === 'input_image').map((c) => ({ type: 'image',
+          path: absoluteFile(viewedImages.get(payload.call_id) || pair.uses[0]?.input?.path), image_url: c.image_url })) || ''
         : payload.type === 'tool_search_output'
         ? outputText({ status: payload.status, execution: payload.execution, tools: payload.tools })
         : outputText(payload.output);

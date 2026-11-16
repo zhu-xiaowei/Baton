@@ -1,3 +1,4 @@
+import { hasPendingImages, withImageKeys } from './extract.mjs';
 import { textPreview, toolPreview, toolPreviews, TOOL_PREVIEW_CHARACTERS } from './tool-preview.mjs';
 
 export const STREAM_EVENT_ACTIONS = new Set([
@@ -36,7 +37,7 @@ export function assertTurnEventEnvelope(event) {
 
 export async function prepareAuthoritativeMessage(raw, options = {}) {
   const message = options.normalized
-    ? raw
+    ? (raw && hasPendingImages([raw]) ? { ...raw, content: await withImageKeys(raw.content) } : raw)
     : await options.normalize(raw);
   return message?.uuid ? message : null;
 }

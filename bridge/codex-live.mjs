@@ -141,8 +141,10 @@ function completedToolResult(item) {
       || (item.status === 'failed' ? 'File change failed' : 'Applied changes');
   }
   if (item.type === 'mcpToolCall') {
-    return valueText(item.error || item.result || item.status);
+    return item.result?.content?.some?.((c) => c?.type === 'image') ? codexToolBlocks(item.result.content)
+      : valueText(item.error || item.result || item.status);
   }
+  if (item.type === 'imageView') return item.path ? [{ type: 'image', path: item.path }] : '';
   if (item.type === 'planUpdate') {
     return valueText(item.explanation) || 'Plan updated';
   }
@@ -498,4 +500,10 @@ export function codexPreviewBlocks(item) {
     return [{ kind: 'tool_use', name: 'sleep', input: { duration_ms: item.durationMs } }];
   }
   return [];
+}
+
+// MCP content as Claude-style blocks: text stays text, images keep their bytes for upload.
+export function codexToolBlocks(items) {
+  return items.map((c) => (c?.type === 'image' ? { type: 'image', source: { type: 'base64', media_type: c.mimeType, data: c.data } }
+    : { type: 'text', text: typeof c?.text === 'string' ? c.text : JSON.stringify(c) }));
 }

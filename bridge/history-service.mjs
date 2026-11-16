@@ -6,6 +6,7 @@ import { Worker } from 'node:worker_threads';
 import { parseClaudeSubagentSessionId } from './claude-subagent.mjs';
 import { sessionIndex } from './session-index.mjs';
 import { runtimeDescriptor, runtimeModules, storageSessionId } from './session-identity.mjs';
+import { rowsWithImageKeys } from './extract.mjs';
 
 const WARM_RECENT = 10;
 const WARM_MAX = 20;
@@ -86,6 +87,7 @@ export class HistoryService {
     const { status, ...file } = target;
     const page = await this.pages.history(file, params);
     await runtimeDescriptor(file.runtime)?.withImages?.(page.messages); // storage access is on this thread
+    await rowsWithImageKeys(page.messages);
     // The root's subagent count (the App asks for `threads` only when there are some) and title, as of now.
     const rootId = String(params.rootSessionId || params.sessionId || '');
     const root = this.index.snapshot().catalog.roots.find((row) => row.sessionId === rootId);
