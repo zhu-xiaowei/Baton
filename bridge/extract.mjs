@@ -1,9 +1,9 @@
 import fs from 'fs';
 import crypto from 'crypto';
 import sharp from 'sharp';
+import { isMainThread } from 'node:worker_threads';
 import { recentKeys, reusable, transfer } from './transfer-store.mjs';
 import { VALID_TYPES } from './config.mjs';
-import { stripToolResultBase64 } from './tool-preview.mjs';
 
 // sessionId → next line the watcher reads; startup sets it to the end of every known file.
 export const synced = new Map();
@@ -25,13 +25,21 @@ function processImage(base64Data) {
   const id = crypto.createHash('sha1').update(base64Data).digest('hex');
   let job = imageKeys.get(id);
   if (!job) {
-    job = compressAndUpload(base64Data).then(({ key, ok }) => {
+    job = limited(() => compressAndUpload(base64Data)).then(({ key, ok }) => {
       if (!ok) imageKeys.delete(id); // tried again next time
       return key;
     }, (error) => { imageKeys.delete(id); throw error; });
     imageKeys.set(id, job);
   }
   return job;
+}
+
+// At most 4 images are compressed and uploaded at a time; a free slot passes to the next waiting one.
+let active = 0;
+const waiting = [];
+async function limited(job) {
+  if (active < 4) active++; else await new Promise((resolve) => waiting.push(resolve));
+  try { return await job(); } finally { if (waiting.length) waiting.shift()(); else active--; }
 }
 
 async function compressAndUpload(base64Data) {
@@ -53,6 +61,36 @@ async function compressAndUpload(base64Data) {
   }
 }
 
+// An image's bytes: inline base64, a local file (Codex view_image, Hermes MEDIA:), or a data URI.
+function imageData(b) {
+  if (b.source?.data || b.source?.bytes) return b.source.data || b.source.bytes;
+  try { if (b.path && fs.statSync(b.path).size <= 20 << 20) return fs.readFileSync(b.path).toString('base64'); } catch {}
+  return /^data:image\/[\w.+-]+;base64,(.+)$/s.exec(b.image_url || '')?.[1] || '';
+}
+
+// Message and tool-result images become uploaded keys. Only the main thread reaches storage, so a
+// worker leaves the bytes for it (history-service, tool_details and the live exits convert them).
+export async function withImageKeys(content) {
+  if (!Array.isArray(content) || !isMainThread) return content;
+  return Promise.all(content.map(async (b) => {
+    if (b?.type === 'tool_result' && Array.isArray(b.content)) return { ...b, content: await withImageKeys(b.content) };
+    if (b?.type !== 'image') return b;
+    if (b.key) { const { path, ...rest } = b; return rest; } // never a local path to the App
+    const data = imageData(b);
+    try { if (data) return { type: 'image', key: await processImage(data) }; } catch (e) { console.error(`Image upload failed: ${e.message}`); }
+    return { type: 'image', placeholder: true };
+  }));
+}
+
+const pendingImage = (b) => (b?.type === 'image' ? !!(b.source || b.image_url || b.path)
+  : b?.type === 'tool_result' && Array.isArray(b.content) && b.content.some(pendingImage));
+export const hasPendingImages = (rows) => rows.some((row) => Array.isArray(row?.content) && row.content.some(pendingImage));
+
+export async function rowsWithImageKeys(rows) {
+  for (const row of rows) row.content = await withImageKeys(row.content);
+  return rows;
+}
+
 export async function extractForApp(msg) {
   msg = normalizeClaudeQueuedInput(msg);
   if (msg.type === 'ai-title' || msg.type === 'custom-title' || msg.type === 'last-prompt') {
@@ -68,33 +106,8 @@ export async function extractForApp(msg) {
     content = content.replace(/\r\n?/g, '\n');
   }
   if (Array.isArray(content)) {
-    const imageJobs = [];
-    for (let i = 0; i < content.length; i++) {
-      if (content[i].type === 'image') {
-        const b64 = content[i].source?.data || content[i].source?.bytes || '';
-        if (b64) imageJobs.push({ index: i, promise: processImage(b64) });
-      }
-    }
-    const results = await Promise.allSettled(imageJobs.map(j => j.promise));
-
-    content = content.map((block, i) => {
-      if (block.type === 'image') {
-        const job = imageJobs.find(j => j.index === i);
-        if (job) {
-          const result = results[imageJobs.indexOf(job)];
-          if (result.status === 'fulfilled') return { type: 'image', key: result.value };
-          console.error(`Image upload failed: ${result.reason?.message}`);
-        }
-        return { type: 'image', placeholder: true };
-      }
-      // tool_result image base64 is unused by the app (it renders via S3 key) — strip it.
-      if (block.type === 'tool_result') return stripToolResultBase64(block);
-      // Normalize \r → \n in text blocks
-      if (block.type === 'text' && block.text && /\r/.test(block.text)) {
-        return { ...block, text: block.text.replace(/\r\n?/g, '\n') };
-      }
-      return block;
-    });
+    content = await withImageKeys(content.map((block) => (block.type === 'text' && block.text && /\r/.test(block.text)
+      ? { ...block, text: block.text.replace(/\r\n?/g, '\n') } : block)));
   }
   const extracted = {
     uuid: msg.uuid || msg.leafUuid || '',

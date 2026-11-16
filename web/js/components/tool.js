@@ -551,6 +551,7 @@ import { observeToolDetails, loadToolDetails, loadToolPreviews, toolDetailsSourc
 
   window.initializeToolDetails = function (node) {
     if (!node) return Promise.resolve();
+    window.loadImages?.(node);
     return Promise.all(Array.from(node.querySelectorAll('.diff-container[data-diff-key]'))
       .map((element) => initializeDiffElement(element)));
   };
@@ -782,6 +783,13 @@ import { observeToolDetails, loadToolDetails, loadToolPreviews, toolDetailsSourc
     return `<div class="tool-grid">${valid.map(([label, content]) =>
       `<div class="tool-row"><div class="tool-label">${esc(label)}</div><div class="tool-value">${content}</div></div>`
     ).join('')}</div>`;
+  }
+
+  // Images a tool returned (Read of a png, an MCP screenshot), shown like message images; one gallery per card.
+  function resultImages(result) {
+    const images = Array.isArray(result?.content) ? result.content.filter(b => b?.type === 'image' && b.key) : [];
+    return images.length ? `<div class="msg-attachments">${images.map(b => `<span class="img-placeholder markdown-image" data-key="${esc(b.key)}" data-alt="">`
+      + `${window.loadingSpinner?.({ label: 'Loading image' }) || ''}</span>`).join('')}</div>` : '';
   }
 
   // Extract text from tool_result content
@@ -1057,6 +1065,7 @@ import { observeToolDetails, loadToolDetails, loadToolPreviews, toolDetailsSourc
       ? renderCodexMcp(input, toolResult)
       : (dispatchers[name] || (() => renderGeneric(name, input, toolResult)))();
     if (runtime === 'codex') info.name = codexToolName(name, input, toolResult);
+    info.body = (info.body || '') + resultImages(toolResult);
     // Store state as data attr for CSS (render.js adds .error/.warning to tl-item)
     window._lastToolState = toolState(toolResult, name);
 

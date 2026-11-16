@@ -7,7 +7,7 @@ import { FrameIndex, frameEvents, newFrames } from './dsh-frames.mjs';
 import { eventRows } from './dsh-extract.mjs';
 import { readPage } from './history-page.mjs';
 import { lockHolder, lockHolders } from './dsh-locks.mjs';
-import { recentKeys, reusable, transfer } from './transfer-store.mjs';
+import { recentKeys } from './transfer-store.mjs';
 
 export const LOG = 'session.v4.jsonl.zstd';
 export const DSH_HOME = process.env.DSH_HOME || path.join(os.homedir(), '.dsh');
@@ -118,21 +118,11 @@ export class DshHistoryReader extends FrameIndex {
 }
 
 // Rows on the main thread, before they reach the App: a prompt Baton sent keeps the App's turn id, and
-// image blocks, which name the attachment file, have its bytes put in the transfer store under their key
-// (checked again after a day: storage keeps 7).
-const uploaded = recentKeys();
+// image blocks, which name the attachment file, become uploaded keys.
 export const promptIds = recentKeys(); // row uuid → live:user:<turnId> of prompts Baton sent
 export async function withImages(rows) {
   for (const row of rows) row.nativeId ||= promptIds.get(row.uuid);
-  const images = rows.flatMap((row) => (Array.isArray(row.content) ? row.content : []).filter((b) => b.type === 'image' && b.path));
-  await Promise.all(images.map(async (b) => {
-    try {
-      if (!uploaded.get(b.key) && !reusable(await transfer.head(b.key))) await transfer.put(b.key, fs.readFileSync(b.path), { contentType: b.mediaType || 'image/png' });
-      uploaded.set(b.key);
-    } catch { b.placeholder = true; }
-    delete b.path;
-  }));
-  return rows;
+  return (await import('./extract.mjs')).rowsWithImageKeys(rows);
 }
 
 export default { runtime: 'dsh', catalog, messages, withImages, history: (target) => new DshHistoryReader(target.file, target.nativeSessionId) };

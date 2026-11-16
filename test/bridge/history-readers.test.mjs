@@ -241,6 +241,21 @@ test('an image is compressed and uploaded once, however often its page is read',
   }
 });
 
+test('tool-result images keep their bytes in a worker and become keys on the main thread, 4 uploads at a time', async () => {
+  const [{ Worker }, { withImageKeys }, { transfer }] = await Promise.all(['node:worker_threads', '../../bridge/extract.mjs', '../../bridge/transfer-store.mjs'].map((m) => import(m)));
+  const sharp = (await import('node:module')).createRequire(new URL('../../bridge/package.json', import.meta.url))('sharp');
+  const image = async (r) => ({ type: 'image', source: { type: 'base64', data: (await sharp({ create: { width: 8, height: 8, channels: 3, background: { r, g: 0, b: 0 } } }).png().toBuffer()).toString('base64') } });
+  const block = { type: 'tool_result', tool_use_id: 't', content: [{ type: 'text', text: 'shot' }, ...await Promise.all([10, 60, 110, 160, 210, 250, 10].map(image))] };
+  const code = `import(${JSON.stringify(new URL('../../bridge/extract.mjs', import.meta.url).href)}).then(async (m) => { const w = require('node:worker_threads'); w.parentPort.postMessage(await m.withImageKeys(w.workerData)); })`;
+  assert.deepEqual(await new Promise((resolve) => new Worker(code, { eval: true, workerData: [block] }).once('message', resolve)), [block]);
+  const real = { head: transfer.head, put: transfer.put };
+  let active = 0, most = 0;
+  Object.assign(transfer, { head: async () => null, put: async () => { most = Math.max(most, ++active); await new Promise((r) => setTimeout(r, 20)); active--; } });
+  const [out] = await withImageKeys([block]).finally(() => Object.assign(transfer, real));
+  assert.equal(new Set(out.content.slice(1).map((b) => b.key)).size, 6, 'the repeated image shares a key');
+  assert.ok(!JSON.stringify(out).includes('"data"') && most === 4);
+});
+
 test('a file rewritten in place, shorter or longer, is indexed again', async () => {
   for (const Reader of [ClaudeHistoryReader, CodexHistoryReader]) {
     const make = Reader === ClaudeHistoryReader ? claudeTranscript : codexRollout;

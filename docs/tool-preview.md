@@ -35,6 +35,18 @@ containing the structured preview (including Edit paths), replacing the partial
 JSON prefix. Authority preserves block-level flags. Assistant text and permission
 events are unaffected.
 
+Images a tool returned (Read of a picture, an MCP screenshot) are Claude-style
+`{type:'image'}` blocks in `tool_result.content` for every runtime. Readers keep their
+source (inline base64, a local file, or a data URI); the main thread converts them with the
+same `processImage` as message images (1280px JPEG, `keyFor`, sealed upload, at most 4 at a
+time) at its four exits: history pages, tool details, live authority and `publishMessages`.
+Workers have no storage access and leave the bytes for it; a main-thread preview that still
+holds them sends a placeholder. The App gets only `{type:'image', key}` and shows a card's
+images like message images, one gallery per card. Codex view_image reads the file Codex
+opened (its `ImageView` item), so live and history share a key; if that file is gone, the
+rollout's resized data URI is used. Hermes images come from `MEDIA:` lines under
+`HERMES_HOME/cache/images/` only.
+
 ## Details RPC
 
 The tool header opens the local preview without a request, keeping the same

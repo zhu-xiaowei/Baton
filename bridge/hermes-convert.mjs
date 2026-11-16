@@ -1,5 +1,7 @@
 // Hermes `messages` rows → Baton rows (a compaction carrier adds a "summary" row). Images stay
 // `{type:'image', path}`; the history reader loads them.
+import os from 'node:os';
+import path from 'node:path';
 const JSON_PREFIX = '\u0000json:';
 const VISION_RE = /^\[The user sent an image~ Here's what I can see:\n([\s\S]*?)\]\n\[If you need a closer look, use vision_analyze with image_url: (.+?) ~\]\n*/;
 // Native-vision hints, one line per image after the caption, then one `[screenshot]` line each.
@@ -77,7 +79,7 @@ export function mapTool(name, args) {
     }
     case 'vision_analyze': return { name: 'ViewImage', input: { path: a.image_url || '' } };
     case 'skill_view': return { name: 'Skill', input: { skill: a.name || '' } };
-    default: return { name: `mcp__hermes__${name}`, input: a };
+    default: return { name: String(name).startsWith('mcp__') ? name : `mcp__hermes__${name}`, input: a };
   }
 }
 
@@ -90,8 +92,18 @@ function toolCalls(calls) {
   });
 }
 
-// A tool row's JSON text → tool_result fields.
+// Tools that made an image (MCP, browser screenshots) name Hermes' cached copy in a MEDIA: line.
+const MEDIA_DIR = path.join(process.env.HERMES_HOME || path.join(os.homedir(), '.hermes'), 'cache', 'images') + path.sep;
+const MEDIA_RE = /MEDIA:(\/[^\s"\\]+\/cache\/images\/[^\s"\\/]+\.(?:png|jpe?g|gif|webp))/gi;
 export function toolResult(toolName, raw) {
+  const result = toolResultText(toolName, raw);
+  const images = [...String(flatten(decodeContent(raw))).matchAll(MEDIA_RE)].map((m) => path.resolve(m[1]))
+    .filter((file) => file.startsWith(MEDIA_DIR)).map((file) => ({ type: 'image', path: file }));
+  return images.length ? { ...result, content: [{ type: 'text', text: String(result.content) }, ...images] } : result;
+}
+
+// A tool row's JSON text → tool_result fields.
+function toolResultText(toolName, raw) {
   let text = flatten(decodeContent(raw));
   text = UNTRUSTED_RE.exec(text)?.[1] ?? text;
   const data = parseJson(text, null);

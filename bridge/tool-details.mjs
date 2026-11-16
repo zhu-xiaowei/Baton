@@ -2,7 +2,8 @@ import fs from 'node:fs';
 import { Worker } from 'node:worker_threads';
 import { extractCodexMessages } from './codex-extract.mjs';
 import { runtimeDescriptor, runtimeModules } from './session-identity.mjs';
-import { compactToolFields, stripToolResultBase64, toolPreview, toolResultStats } from './tool-preview.mjs';
+import { compactToolFields, toolPreview, toolResultStats } from './tool-preview.mjs';
+import { withImageKeys } from './extract.mjs';
 
 // History pages leave thinking text out; it is fetched like a tool, under this id.
 function thinkingDetailId(messageUuid, blockIndex) {
@@ -40,7 +41,7 @@ export function readToolIndex(filePath, nativeSessionId, runtime) {
       } else if (!block.codexSuperseded) {
         const stats = toolResultStats(message.toolUseResult);
         tools.get(id).toolResult = compactToolFields({
-          ...stripToolResultBase64(block),
+          ...block,
           ...(stats ? { _agentMeta: stats } : {}),
         });
       }
@@ -121,5 +122,7 @@ export async function toolDetails({ sessionId, toolUseIds, preview } = {}, resol
     || toolUseIds.some((id) => typeof id !== 'string' || !id || id.length > 512)) throw new Error('invalid toolUseIds');
   const target = resolve(String(sessionId || ''));
   if (!target) throw new Error('Original session file is unavailable.');
-  return readToolDetailsAsync(target.file, target.nativeSessionId, target.runtime, toolUseIds, !!preview);
+  const result = await readToolDetailsAsync(target.file, target.nativeSessionId, target.runtime, toolUseIds, !!preview);
+  for (const entry of result.details) if (entry.toolResult) [entry.toolResult] = await withImageKeys([entry.toolResult]);
+  return result;
 }

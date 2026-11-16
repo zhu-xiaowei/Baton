@@ -41,14 +41,17 @@ function toolInput(name, input = {}) {
   }
 }
 
-const contentText = (content) => (Array.isArray(content) ? content.map((c) => (c?.type === 'text' ? c.text : c?.uri ? `[${c.mime || 'file'}] ${c.uri}` : ''))
+const dataImage = (c) => /^data:image\//.test(c?.uri || '');
+const contentText = (content) => (Array.isArray(content) ? content.map((c) => (c?.type === 'text' ? c.text : c?.uri && !dataImage(c) ? `[${c.mime || 'file'}] ${c.uri}` : ''))
   .filter(Boolean).join('\n') : typeof content === 'string' ? content : '');
 
 function toolResult(tool) {
   const [state, name] = [tool.state || {}, toolName(tool.name)];
   if (state.status === 'completed') {
     const exit = state.metadata?.exit;
-    return markEditResult({ type: 'tool_result', tool_use_id: tool.id, content: contentText(state.content) || state.metadata?.output || '',
+    const text = contentText(state.content) || state.metadata?.output || '';
+    const images = (Array.isArray(state.content) ? state.content : []).filter(dataImage).map((c) => ({ type: 'image', image_url: c.uri }));
+    return markEditResult({ type: 'tool_result', tool_use_id: tool.id, content: images.length ? [{ type: 'text', text }, ...images] : text,
       is_error: Number.isInteger(exit) && exit !== 0, ...(Number.isInteger(exit) ? { exitCode: exit } : {}) }, name);
   }
   if (state.status !== 'error') return null;

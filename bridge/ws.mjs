@@ -6,7 +6,7 @@ import path from 'path';
 import os from 'os';
 import crypto from 'crypto';
 import { spawn } from 'child_process';
-import { extractForApp, synced, countJsonlLines } from './extract.mjs';
+import { extractForApp, hasPendingImages, rowsWithImageKeys, synced, countJsonlLines } from './extract.mjs';
 import { toolPreviews } from './tool-preview.mjs';
 import {
   projectHashToPath,
@@ -678,8 +678,13 @@ export function wsSendWhenConnected(data) {
 }
 
 // Rows read from a transcript, pushed to the Session's subscribers.
+let publishing = null; // in order, also when a row waits for its image upload
 export function publishMessages(sessionId, messages) {
-  if (messages.length) wsSend({ action: 'messages', sessionId, messages: toolPreviews(messages) });
+  if (!messages.length) return;
+  const send = (rows) => wsSend({ action: 'messages', sessionId, messages: toolPreviews(rows) });
+  if (!publishing && !hasPendingImages(messages)) return send(messages);
+  const job = publishing = (publishing || Promise.resolve()).then(() => rowsWithImageKeys(messages)).then(send)
+    .catch((e) => console.error(`[ws] publish failed: ${e.message}`)).finally(() => { if (publishing === job) publishing = null; });
 }
 
 function probeConnection() {

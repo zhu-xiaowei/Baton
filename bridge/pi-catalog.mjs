@@ -92,7 +92,9 @@ export function piRows(entry, edits = new Map(), line = null) {
     return rows;
   }
   if (m.role === 'toolResult') {
-    const out = (m.content || []).filter((b) => typeof b?.text === 'string').map((b) => b.text).join('\n');
+    const text = (m.content || []).filter((b) => typeof b?.text === 'string').map((b) => b.text).join('\n');
+    const images = (m.content || []).filter((b) => b?.type === 'image' && b.data).map(image);
+    const out = images.length ? [{ type: 'text', text }, ...images] : text;
     return [row('user', useIds(m.toolCallId, edits.get(m.toolCallId) || 1)
       .map((id) => ({ type: 'tool_result', tool_use_id: id, content: out, is_error: !!m.isError })))];
   }

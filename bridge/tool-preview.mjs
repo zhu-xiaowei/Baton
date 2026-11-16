@@ -1,3 +1,4 @@
+import { isMainThread } from 'node:worker_threads';
 export const TOOL_PREVIEW_CHARACTERS = 500;
 const prepared = new WeakSet();
 
@@ -15,14 +16,6 @@ export function toolResultStats(metadata) {
 export function markEditResult(block, toolName) {
   if (toolName === 'Edit') block._toolName = 'Edit';
   return block;
-}
-
-// Tool-result images render through their S3 key; the inline base64 is unused.
-export function stripToolResultBase64(block) {
-  if (!Array.isArray(block.content)) return block;
-  const content = block.content.map((c) =>
-    c.type === 'image' && c.source?.data ? { ...c, source: { ...c.source, data: '' } } : c);
-  return { ...block, content };
 }
 
 export function compactToolFields(block) {
@@ -70,6 +63,10 @@ export function textPreview(text, limit = TOOL_PREVIEW_CHARACTERS) {
 }
 
 function previewValue(value) {
+  // Image bytes stay for the main thread to upload; one still here would reach a frame, so it loads on demand.
+  if (value?.type === 'image' && (value.source || value.image_url || value.path)) {
+    return isMainThread ? { value: { type: 'image', placeholder: true }, truncated: true } : { value, truncated: false };
+  }
   if (typeof value === 'string') {
     const preview = textPreview(value);
     return { value: preview.text, truncated: preview.truncated };
