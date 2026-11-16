@@ -90,7 +90,8 @@ class HeadlessProc {
       if (stderr.includes('background agent (bg)')) this.bgLocked = true;
     });
     this.proc.on('close', (code, signal) => {
-      const tail = stderr.trim().split('\n').slice(-5).join(' | ').slice(-500);
+      const lines = stderr.trim().split('\n'), last = lines.slice(-5), error = lines.findLast((line) => /^\w*Error\b/.test(line));
+      const tail = (error && !last.includes(error) ? `${error.slice(0, 200)} | ` : '') + last.join(' | ').slice(-500);
       console.log(`[headless] exit sid=${this.sessionId} pid=${this.proc.pid} code=${code} signal=${signal} busy=${this.busy} bgTasks=${this.backgroundTasks} unanswered=${this.unanswered.size} reason=${this.exitReason || 'self'} stderr=${JSON.stringify(tail)}`);
       this._onClose(code, stderr);
     });
@@ -217,7 +218,7 @@ class HeadlessProc {
       const reset = consumed.some((uuid) => /^\/(model|effort)\s+default\s*$/i.test(this.inputs.get(uuid)?.text || ''));
       if (!flag) this.pool._exitIfDone(this);
       // /model and /effort last as long as the process; the next one gets CC's applied value ("default": no flag).
-      else this.requestControl({ subtype: 'get_settings' }).then((s) => this.pool.sessionArgs.set(this.sessionId,
+      else (reset ? Promise.resolve() : this.requestControl({ subtype: 'get_settings' })).then((s) => this.pool.sessionArgs.set(this.sessionId,
         { ...this.pool.sessionArgs.get(this.sessionId), [flag]: reset ? null : s?.applied?.[o.local_command] }), () => {}).finally(() => this.pool._exitIfDone(this));
       cb?.onResult?.(sid, { ...o, consumedInputIds, continued: this.busy });
       return;

@@ -379,10 +379,12 @@ const kiroInteraction = defineInteractionAdapter({
   heldElsewhere(id) {
     const lease = readLease(path.join(LEASES, `${id}.lease`));
     if (!lease?.live || lease.clientName === CLIENT) return null;
-    // kiro-cli's TUI (`bun tui.js`) ignores its engine's exit while idle; stopped itself, it prints how to resume.
-    let parent = '';
-    try { parent = process.platform === 'linux' ? fs.readFileSync(`/proc/${lease.parentPid}/cmdline`, 'utf8') : execFileSync('ps', ['-p', String(lease.parentPid), '-o', 'args='], { encoding: 'utf8', timeout: 2000 }); } catch {}
-    return { pid: lease.parentPid && /tui\.js/.test(parent) ? lease.parentPid : lease.pid, status: recOf(id)?.state?.open ? 'running' : 'idle', canTerminate: true,
+    // kiro-cli's TUI (`bun tui.js`, still the engine's parent) ignores its engine's exit while idle; stopped itself, it prints how to resume.
+    const ps = (pid, field) => (process.platform !== 'linux' ? execFileSync('ps', ['-p', String(pid), '-o', `${field}=`], { encoding: 'utf8', timeout: 2000 })
+      : field === 'ppid' ? fs.readFileSync(`/proc/${pid}/stat`, 'utf8').split(') ').pop().split(' ')[1] : fs.readFileSync(`/proc/${pid}/cmdline`, 'utf8'));
+    let tui = false;
+    try { tui = !!lease.parentPid && Number(ps(lease.pid, 'ppid')) === lease.parentPid && /tui\.js/.test(ps(lease.parentPid, 'args')); } catch {}
+    return { pid: tui ? lease.parentPid : lease.pid, status: recOf(id)?.state?.open ? 'running' : 'idle', canTerminate: true,
       label: `A Kiro client (${lease.clientName || 'unknown'})` };
   },
 
