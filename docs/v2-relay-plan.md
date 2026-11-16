@@ -14,7 +14,7 @@ Details are settled per PR and recorded in §8 as they are decided.
 | 2 | **One server codebase in JavaScript** with two platform adapters (AWS, Cloudflare). The Python/FastAPI server is rewritten; the earlier constraint "profile A stays unchanged" is lifted. DynamoDB schema, REST routes and the client protocol stay the same, so existing self-host stacks, Apps and Bridges are unaffected. |
 | 3 | App and Bridge speak one protocol to both platforms; what differs is announced by the server (transport, frame limit, file storage). |
 | 4 | Order: platform-independent protocol optimizations first, then the JS rewrite (AWS adapter), then the Cloudflare adapter, then client transport selection, then launch items (§6). |
-| 5 | Each platform deploys with one command. No new third-party dependencies (Cloudflare deploys through its HTTP API, no wrangler). |
+| 5 | Each platform deploys with one command. AWS keeps its current pipeline (Docker + CodeBuild + ECR); Cloudflare gets an install script with the same experience (§5). No new third-party dependencies (Cloudflare deploys through its HTTP API, no wrangler). |
 | D1 | REST keeps being served by the server functions (Lambda / Worker); no separate REST host. |
 | D7 | One socket per client on Cloudflare; profile A keeps its control + data sockets. |
 | — | Workers KV is not used: eventually consistent (≥ 60 s), no atomic or conditional writes, which revocation, single-use pairing codes, removal transactions and rate counters need. |
@@ -89,22 +89,38 @@ server/cloudflare/  Worker entry; Durable Object per account = relay + SQLite ac
 
 ## 5. Deployment
 
-- **Artifacts:** the build (Vite `dist/` + server bundle + Bridge package) is produced once by CI per release,
-  with a checksum. Self-host `install.sh` downloads the release artifact for its version and uploads it to the
-  stack bucket — no Docker, ECR or CodeBuild, no Node on the deploying host. Development deploys build
-  locally (`npm run build`) and upload the same zip shape. (Proposal; see §8 item 1.)
-- **AWS:** Lambda runtime `nodejs22.x`, zip package from the stack bucket; CloudFormation template keeps API
-  Gateway (REST, WsApi, data API), CloudFront and DynamoDB as they are. The web app is served as today.
-- **Cloudflare:** one script calls the Cloudflare API: upload the Worker (module + DO class + D1/R2 bindings
-  + static assets), run migrations, set secrets, attach the custom domain. Usable for self-hosting on a
-  user's own Cloudflare account too.
+- **AWS: unchanged pipeline** (user, 2026-11-16: it is already the simplest for users). `curl … install.sh |
+  bash` (or `./install.sh` from a clone) → Docker image built by CodeBuild → ECR → Lambda → CloudFormation →
+  prints the Start URL and QR code. Only the image changes: Node 22 base instead of Python + Lambda Web Adapter;
+  the Vite build stage stays.
+- **Cloudflare: the same experience, one script.** Proposal:
+  ```
+  curl -fsSL https://raw.githubusercontent.com/zhu-xiaowei/baton/main/server/cloudflare/install.sh | bash
+  ```
+  1. Self-bootstraps like `install.sh` (clones the repo when run outside it). Needs git and Node 22.15+,
+     the same Node the Bridge already requires; no wrangler, no other tools.
+  2. Credentials: if none are saved, prints a pre-filled API-token link
+     (`https://dash.cloudflare.com/?to=/:account/api-tokens&permissionGroupKeys=…&name=Baton`, only the
+     permissions deployment needs), the user clicks Create and pastes the token (hidden input). The account
+     ID is read from the token; token saved in `~/.baton-cloudflare/credentials` (0600) for later runs.
+  3. Builds locally (`npm ci` + `npm run build`, the step CodeBuild does on AWS).
+  4. Idempotent API calls: create D1 / R2 if missing (R2 must be enabled on the account — the script links to
+     it if not), upload the Worker modules + Durable Object class + bindings + static assets, apply
+     migrations, generate secrets once, enable `workers.dev` (or attach a custom domain when `--domain` is
+     given), upload the Bridge package, set the version.
+  5. Prints the same output as AWS: Start URL (12 h) and terminal QR code.
+  Re-running the same command upgrades; flags mirror `install.sh` (`--rotate-key`, `OPEN_REGISTRATION=true`,
+  `PUSH_RELAY_URL`). The hosted service is deployed with the same script.
+- Not chosen as the primary path: the "Deploy to Cloudflare" button (browser only, but needs a GitHub/GitLab
+  account, copies the repository into the user's account so later upstream releases are not picked up, and
+  deploys with wrangler on Cloudflare's builders). Can be added later as an alternative.
 
 ## 6. PR order
 
 0. **Protocol optimizations, platform independent** (measure per frame type first): fewer messages
    (coalesce small frames, larger chunks where the transport allows), slimmer clear envelope, binary frames
    without base64 of ciphertext. Count matters on Cloudflare, bytes on CloudFront/S3.
-1. **JS server + AWS adapter**, behaviour-identical to the Python server; zip deployment; Python deleted;
+1. **JS server + AWS adapter**, behaviour-identical to the Python server; same deploy pipeline (Node image); Python deleted;
    acceptance on a separate test stack.
 2. **Cloudflare adapter**: relay object, account storage, global index, R2, deploy script; acceptance on a
    test Cloudflare deployment.
@@ -128,9 +144,12 @@ acceptance on separate test resources → report → squash merge on OK → dele
 
 ## 8. Details to confirm (filled in as decided)
 
-1. Release artifacts: where CI publishes them (GitHub Releases vs a public bucket), how dev deploys differ.
-2. Web app hosting per platform (Lambda as today vs S3/CloudFront; Workers static assets on Cloudflare) and
-   the cache headers fixed in #191.
+1. ~~Release artifacts~~: decided — AWS keeps building from source in CodeBuild; Cloudflare builds locally
+   in its install script (§5).
+2. Web app hosting: AWS as today (served by the Lambda); Cloudflare Workers static assets — confirm the
+   cache headers fixed in #191 can be reproduced there.
+9. Cloudflare install script details: exact token permissions, where the Bridge package lives (R2 vs static
+   assets), Free-plan deploys for self-hosters (Durable Objects on Free are SQLite-only; R2 activation).
 3. Global index on Cloudflare: D1 vs an index object; key formats; token format with account ID.
 4. R2 compatibility: checksum-verified dedup, `x-amz-meta-sealed`, Range reads, temporary credentials.
 5. Cloudflare plan and limits: Free vs Paid at launch, per-account message quotas, alerting.
