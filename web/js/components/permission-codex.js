@@ -234,7 +234,13 @@ export function createCodexPermissionController(options) {
     });
   }
 
-  function renderMcpFormStep() {
+  function rangeText(input, from, to) {
+    var min = input.minimum, max = input.maximum;
+    return min != null && max != null ? from + min + to + max : min != null ? 'at least ' + min : max != null ? 'at most ' + max : '';
+  }
+
+  // `typed` / `error`: a refused entry, shown again with why.
+  function renderMcpFormStep(typed, error) {
     var field = mcpFields[mcpIndex] || {};
     var elicitation = request.input.codexMcpElicitation || {};
     var prefix = mcpFields.length > 1 ? '[' + (mcpIndex + 1) + '/' + mcpFields.length + '] ' : '';
@@ -249,17 +255,15 @@ export function createCodexPermissionController(options) {
     } else if (field.input && field.input.type === 'select') {
       promptOptions = (field.input.options || []).map(function (option, index) {
         return {
-          label: option.label + (had && prev === option.value ? ' ✓ Previous' : ''),
+          label: option.label,
+          previous: had && prev === option.value,
           description: field.input.defaultIndex === index ? 'Default' : '',
           act: 'mcp-field:' + index,
         };
       });
     } else {
       var input = field.input || {};
-      var hint = input.type === 'number'
-        ? [input.integer ? 'integer' : 'number', input.minimum != null || input.maximum != null
-          ? (input.minimum ?? '…') + '–' + (input.maximum ?? '…') : ''].filter(Boolean).join(' ')
-        : input.format || '';
+      var hint = input.type !== 'number' ? input.format || '' : '';
       if (input.default != null) {
         promptOptions.push({ label: String(input.default), description: 'Default', act: 'mcp-default' });
       }
@@ -268,12 +272,16 @@ export function createCodexPermissionController(options) {
         act: 'mcp-text',
         hasInput: true,
         placeholder: (field.prompt || field.label || '') + (hint ? ' (' + hint + ')' : ''),
-        value: had ? String(prev) : '',
+        value: typed ?? (had ? String(prev) : ''),
+        error: error,
+        note: input.type === 'number'
+          ? [input.integer ? 'Whole number' : 'Number', rangeText(input, 'from ', ' to ')].filter(Boolean).join(' ') : '',
       });
     }
     if (!field.required) {
       promptOptions.push({ label: 'Skip', act: 'mcp-skip', tone: 'deny' });
     }
+    if (mcpIndex > 0) promptOptions.push({ label: '← Back', act: 'back', back: true });
     renderPrompt({
       title: prefix + (field.label || field.id || 'MCP input'),
       description: [
@@ -282,7 +290,6 @@ export function createCodexPermissionController(options) {
       ].filter(Boolean).join('\n\n'),
       options: promptOptions,
       submit: multi ? { act: 'mcp-submit', min: field.input.minItems, max: field.input.maxItems } : null,
-      back: mcpIndex > 0,
     });
   }
 
@@ -298,8 +305,9 @@ export function createCodexPermissionController(options) {
         value = field.input.default;
       } else if (field.input && field.input.type === 'number') {
         value = /^-?(\d+(\.\d*)?|\.\d+)$/.test(label) ? Number(label) : NaN;
-        if (!isFinite(value) || (field.input.integer && value % 1)
-          || value < (field.input.minimum ?? -Infinity) || value > (field.input.maximum ?? Infinity)) return;
+        var why = isNaN(value) ? 'Enter a number' : field.input.integer && value % 1 ? 'Must be a whole number'
+          : value < (field.input.minimum ?? -Infinity) || value > (field.input.maximum ?? Infinity) ? 'Must be ' + rangeText(field.input, 'between ', ' and ') : '';
+        if (why) return renderMcpFormStep(label, why);
       } else if (act === 'mcp-text' || isTyped) {
         value = label;
       } else {

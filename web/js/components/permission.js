@@ -162,41 +162,47 @@ function renderPrompt(prompt) {
     html += '<pre class="permission-desc">' + esc(prompt.description) + '</pre>';
   }
   html += '<div class="permission-options">';
-  var back = '<button class="permission-btn" data-act="back" onclick="handlePermissionOption(this)"><span class="permission-label">← Back</span></button>';
+  var back = '';
   for (var i = 0; i < prompt.options.length; i++) {
     var option = prompt.options[i];
     var isCheck = option.check !== undefined;
-    var buttonClass = isCheck || option.act === 'back' ? 'permission-btn'
+    var buttonClass = isCheck || option.back ? 'permission-btn'
       : (option.tone === 'deny' || /deny|reject|no/i.test(option.act || '')
         ? 'permission-btn deny'
         : 'permission-btn allow');
-    html += '<button class="' + buttonClass + '" data-act="' + esc(option.act) + '" '
+    var button = '<button class="' + buttonClass + '" data-act="' + esc(option.act) + '" '
       + (isCheck ? 'role="checkbox" aria-checked="' + option.check + '" ' : '')
       + 'data-has-input="' + (option.hasInput ? '1' : '0') + '" '
       + 'onclick="handlePermissionOption(this)">'
       + (isCheck ? '<span class="permission-box"><svg viewBox="0 0 16 16"><path d="M3.5 8.5l3 3 6-7"/></svg></span>' : '')
       + (option.key ? '<span class="permission-key">' + esc(option.key) + '</span>' : '')
       + '<span class="permission-copy">'
-      + '<span class="permission-label">' + esc(option.label) + '</span>'
+      + '<span class="permission-label">' + esc(option.label + (option.previous ? ' ✓ Previous' : '')) + '</span>'
       + (option.description
         ? '<span class="permission-desc-inline">' + esc(option.description) + '</span>'
         : '')
       + '</span>'
       + '</button>';
+    // Back in a multi-select sits with Cancel / Submit.
+    if (option.back && prompt.submit) { back = button; continue; }
+    html += button;
     if (option.hasInput) {
-      html += '<div class="permission-input-wrap" style="display:none">'
+      // An earlier or refused value opens the input with it.
+      html += '<div class="permission-input-wrap" style="display:' + (option.value || option.error ? 'flex' : 'none') + '">'
         + '<input class="permission-input" placeholder="' + esc(option.placeholder || '') + '" value="' + esc(option.value || '') + '" '
         + 'onkeydown="if(event.key===\'Enter\'&&!event.isComposing&&event.keyCode!==229)'
         + 'submitPermissionWithInput(this,\'' + esc(option.act) + '\')" />'
         + '<button class="permission-submit" '
         + 'onclick="submitPermissionWithInput(this.previousElementSibling,\'' + esc(option.act)
-        + '\')">Send</button></div>';
+        + '\')">Send</button>'
+        + (option.note ? '<div class="permission-input-note">' + esc(option.note) + '</div>' : '')
+        + (option.error ? '<div class="permission-input-note error">' + esc(option.error) + '</div>' : '')
+        + '</div>';
     }
   }
-  if (prompt.back && !prompt.submit) html += back;
   html += '</div>';
   if (prompt.submit) {
-    html += '<div class="permission-actions">' + (prompt.back ? back : '')
+    html += '<div class="permission-actions">' + back
       + '<button class="permission-btn deny" onclick="cancelPermissionPrompt()">Cancel</button>'
       + '<button class="permission-btn allow permission-multi-submit" data-act="' + esc(prompt.submit.act)
       + '" data-min="' + (prompt.submit.min || 0) + '" data-max="' + (prompt.submit.max ?? Infinity)
@@ -221,7 +227,8 @@ function renderAskStep() {
   var picked = prev.picked || [];
   var options = (question.options || []).map(function (option, index) {
     return {
-      label: option.label + (!multi && picked.includes(index) ? ' ✓ Previous' : ''),
+      label: option.label,
+      previous: !multi && picked.includes(index),
       description: option.description || '',
       act: 'opt:' + index,
       check: multi ? picked.includes(index) : undefined,
@@ -234,10 +241,10 @@ function renderAskStep() {
     placeholder: 'Type your response…',
     value: prev.typed,
   });
+  if (_askIndex > 0) options.push({ label: '← Back', act: 'back', back: true });
   renderPrompt({
     title: prefix + header + (question.question || question.text || ''),
     options: options,
-    back: _askIndex > 0,
     submit: multi ? { act: 'ask-submit', min: 1 } : null,
   });
 }
@@ -304,26 +311,19 @@ function chooseOption(act, label, isTyped, picked) {
 
   if (act === 'back') { _askIndex--; renderAskStep(); return; }
   var question = _askQuestions[_askIndex] || {};
-  var indexes = isTyped ? [] : act === 'ask-submit' ? picked : [parseInt(act.slice(4), 10)];
-  var labels = isTyped ? [label]
-    : indexes.map(function (index) {
-      var option = (question.options || [])[index];
-      return option ? option.label : label;
-    });
-  _askAnswers[_askIndex] = {
-    id: question.id || question.question,
-    question: question.question || question.text || '',
-    labels: labels,
-    picked: indexes,
-    typed: isTyped ? label : '',
-  };
+  _askAnswers[_askIndex] = isTyped ? { picked: [], typed: label }
+    : { picked: act === 'ask-submit' ? picked : [parseInt(act.slice(4), 10)], typed: '' };
 
   if (_askIndex < _askQuestions.length - 1) {
     _askIndex++;
     renderAskStep();
     return;
   }
-  var entries = _askQuestions.map(function (q, i) { return _askAnswers[i]; });
+  var entries = _askQuestions.map(function (q, i) {
+    var a = _askAnswers[i];
+    return { id: q.id || q.question, question: q.question || q.text || '',
+      labels: a.typed ? [a.typed] : a.picked.map(function (index) { return (q.options || [])[index]?.label; }) };
+  });
   var text = entries.map(function (entry) {
     return (entry.question ? entry.question + ' ' : '') + '→ ' + entry.labels.join(', ');
   }).join('\n');
