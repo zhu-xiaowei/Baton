@@ -65,13 +65,19 @@ storms, many sockets per object, R2 checksum/Range behaviour.
 ## 4. Target architecture
 
 ```text
-server/core/        routes and rules (accounts, pairing, tokens, devices, notifications, install, version)
-                    on web-standard Request/Response; talks to ports: storage, connections, files, push
-server/aws/         Lambda (Node 22) entry; DynamoDB (SystemTable, same schema); API Gateway control socket
-                    and @connections; STS credentials for the data API and S3 (profile A, as today)
-server/cloudflare/  Worker entry; Durable Object per account = relay + SQLite account storage;
-                    global index (pairing codes, recovery, rate limits) in D1 or an index object; R2 files
+server/core/        shared: routes, auth and rules (accounts, pairing, tokens, devices, notifications,
+                    install scripts, version) on web-standard Request/Response; depends only on a ports
+                    object: store, sockets, files, push
+server/aws/         Lambda (Node 22) entries (REST + control socket); DynamoDB store (SystemTable, same
+                    schema); API Gateway @connections; S3 + STS credentials; Dockerfile
+server/cloudflare/  Worker entry; Durable Object per account = relay + SQLite store; global index
+                    (pairing codes, recovery, rate limits); R2; install.sh
+server/install.sh, server/template/   stay where they are (the documented AWS one-line command uses them)
+test/contract/      one suite, run by URL against any deployment
 ```
+
+- The platforms differ in four ports only: store, sockets, files, push. Rules live in `core` once.
+- Protocol, E2EE and SigV4 code stays in `bridge/` (the Bridge package needs it); the server imports it.
 
 - AWS calls use `fetch` + the SigV4 code the repository already has (`bridge/direct-rpc-protocol.mjs`,
   `bridge/transfer-store.mjs`), so neither platform needs aws-sdk or a web framework.
@@ -115,20 +121,52 @@ server/cloudflare/  Worker entry; Durable Object per account = relay + SQLite ac
   account, copies the repository into the user's account so later upstream releases are not picked up, and
   deploys with wrangler on Cloudflare's builders). Can be added later as an alternative.
 
-## 6. PR order
+## 6. Phases (user, 2026-11-16)
 
-0. **Protocol optimizations, platform independent** (measure per frame type first): fewer messages
-   (coalesce small frames, larger chunks where the transport allows), slimmer clear envelope, binary frames
-   without base64 of ciphertext. Count matters on Cloudflare, bytes on CloudFront/S3.
-1. **JS server + AWS adapter**, behaviour-identical to the Python server; same deploy pipeline (Node image); Python deleted;
-   acceptance on a separate test stack.
-2. **Cloudflare adapter**: relay object, account storage, global index, R2, deploy script; acceptance on a
-   test Cloudflare deployment.
-3. **Clients**: transport selection from the server announcement; on Cloudflare, disconnect events replace
-   subscription leases and renewals; Bridge reconnect jitter.
-4. **Launch items**: `agentbaton.app` + `WEB_URL`, monitoring and alerts, per-account limits (the cost
-   ceiling on Cloudflare; Workers spending limits do not cover Durable Objects), hosted Android notifications
-   (socket vs FCM, FCM needs approval), encryption of videos and attachments over 50 MB.
+Measurement behind phase 0: `.scratch/proto-opt/` (per-frame-type counts from the phase-1 recordings,
+candidates T1–T16 simulated on the timelines).
+
+**Phase 0 — common protocol optimizations** (App + Bridge only; works on today's AWS). One PR.
+- T2: pushes to one target within 50 ms go out as one frame; the first push after a quiet 50 ms still goes
+  at once (StreamFramer's immediate first delta is kept).
+- T4: preview tunnel chunk size, window and ack interval derive from one parameter (today 16 KB chunks,
+  128 KB window); acks become cumulative every 64 KB, or when nothing more is queued. Larger chunks from the
+  server's announced frame limit come in phase 1c.
+- T7: `notify_seen` becomes one-way (its empty `{}` result is unused).
+- T8: terminal page heartbeat 30 s → 60 s and only when nothing else was sent; Bridge idle limit 90 s → 150 s.
+- T10: terminal `render_ack` when < 16 KB is unreported: at most every 10 s instead of 2 s (the 16 KB / 100 ms
+  rule stays, so the 192 KB skip threshold is unaffected).
+- Per-type counts: temporary `bridge/frame-stats.mjs` (one module + two call sites, `BATON_FRAME_STATS=1`,
+  one summary line per minute, counts and bytes per kind/event/method, no content); deleted after use.
+- Not done: T1 (Bridge heartbeat 4/5 → 8–9 min: about $0.02 per Bridge per month on AWS, less margin to the
+  10-minute idle close, later offline detection; free on Cloudflare anyway), T3 (terminal output throttle:
+  decide with real per-type counts), T6 (delayed `rpc_ack`: user declined).
+
+**Phase 1 — Cloudflare working end to end.**
+- 1.0 Verification in `.scratch/` (not committed): R2 checksum dedup / `x-amz-meta-sealed` / Range /
+  temporary credentials; Workers static-asset cache headers (#191); D1 vs index object; idle sockets
+  without pings; mainland China reachability.
+- 1a Contract suite (JS, by URL: register/recover, pairing, revocation, removal + rotation, account isolation,
+  notifications, install scripts, version), passing first against the current Python AWS test stack.
+- 1b JS core + Cloudflare adapter (Worker, per-account object with relay and SQLite store, global index, R2 with
+  delete-after-Bridge-receipt + 1-day expiry, notifications without storage through the push relay, version,
+  install scripts, static web app); contract suite passes on Cloudflare.
+- 1c Clients: transport chosen from the server announcement (one socket on Cloudflare), disconnect events
+  replace leases and renewals (T11), auto-response pings (T12), preview chunks from the announced frame limit
+  (T5b), Bridge reconnect jitter; AWS behaviour unchanged. End-to-end acceptance on a test deployment.
+
+**Phase 2 — one-command Cloudflare deploy** (§5): fresh-account install, upgrade and key rotation verified;
+the hosted service is deployed with the same script.
+
+**Phase 3 — AWS on the same JS core**: `server/aws` adapter (DynamoDB schema unchanged, existing SigV4 +
+fetch, no aws-sdk), same pipeline with a Node image, contract suite + end-to-end acceptance, Python server and
+Python tests deleted; existing stacks upgrade without data or client changes.
+
+**Phase 4 — hosted launch items**: `agentbaton.app` + `WEB_URL`; Paid plan; per-account message and connection
+limits (the cost ceiling — Workers spending limits do not cover Durable Objects); usage/error alerts and a
+per-type dashboard; iOS notification extension decrypting from the push payload (optional push-relay
+field); hosted Android notifications (socket vs FCM — FCM needs approval); encryption of videos and
+attachments over 50 MB; mainland China test; slim envelope + `stream_end` with ids only (T14, T16, or in 1c).
 
 Each PR: design details first → user OK → implement → self-test → PR to `feat/v2` → independent review
 (reproducible findings only, simplest implementation, no regressions vs base) → fix + re-review → end-to-end
@@ -136,8 +174,8 @@ acceptance on separate test resources → report → squash merge on OK → dele
 
 ## 7. Carried over from earlier phases
 
-- Hosted Android notifications (accounts plan D4): off until PR 4.
-- Videos and attachments over 50 MB stay plain under the account prefix until PR 4 (`SEALED_MAX`).
+- Hosted Android notifications (accounts plan D4): off until phase 4.
+- Videos and attachments over 50 MB stay plain under the account prefix until phase 4 (`SEALED_MAX`).
 - "Being viewed" suppression may move to the relay object, which knows live subscriptions (optional).
 - REST limits from PR #229 (register / recover / pair-start per IP, computers per account) carry over to both
   adapters.
@@ -156,3 +194,11 @@ acceptance on separate test resources → report → squash merge on OK → dele
 8. Mainland China reachability test method.
 9. Cloudflare install script details: exact token permissions, where the Bridge package lives (R2 vs static
    assets), Free-plan deploys for self-hosters (Durable Objects on Free are SQLite-only; R2 activation).
+10. Notifications without storage: the sealed alert (`e`, 1–2 KB) travels in the APNs payload (4 KB limit);
+    on Cloudflare the Bridge hands it to its account object over its socket, which reads the push devices and
+    calls the push relay. AWS keeps the feed rows for self-host Android polling.
+11. Attachment retention: hosted deletes phone→computer uploads once the Bridge has stored them and expires
+    the rest after 1 day; self-host keeps 7 days (one setting per adapter). Check that every attachment entry
+    point falls back to the Bridge's local copy.
+12. Push relay stays on AWS Lambda (saves ~$15/month at 100k DAU if moved; APNs needs HTTP/2 from Workers —
+    unverified; all self-host stacks authenticate to it with IAM). Revisit after launch.
