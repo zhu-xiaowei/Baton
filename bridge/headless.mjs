@@ -90,7 +90,8 @@ class HeadlessProc {
       if (stderr.includes('background agent (bg)')) this.bgLocked = true;
     });
     this.proc.on('close', (code, signal) => {
-      const tail = stderr.trim().split('\n').slice(-5).join(' | ').slice(-500);
+      const lines = stderr.trim().split('\n'), last = lines.slice(-5), error = lines.findLast((line) => /^\w*Error\b/.test(line));
+      const tail = (error && !last.includes(error) ? `${error.slice(0, 200)} | ` : '') + last.join(' | ').slice(-500);
       console.log(`[headless] exit sid=${this.sessionId} pid=${this.proc.pid} code=${code} signal=${signal} busy=${this.busy} bgTasks=${this.backgroundTasks} unanswered=${this.unanswered.size} idleSec=${this.lastActiveAt ? Math.round((Date.now() - this.lastActiveAt) / 1000) : '-'} reason=${this.exitReason || 'self'} stderr=${JSON.stringify(tail)}`);
       this._onClose(code, stderr);
     });
