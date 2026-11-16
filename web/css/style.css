@@ -450,6 +450,8 @@ html[data-theme="light"] :is(.assistant-text, .md-preview) input[type="checkbox"
 .tool-details-collapsed .tool-detail-chevron { transform: rotate(0); }
 .tool-details-collapsed .tool-body, .tool-details-collapsed .tool-images { display: none; }
 .tool-images { margin: 4px 0 0; }
+.tool-images .img-placeholder.markdown-image.loaded { width: auto; height: auto; }
+.tool-images .img-placeholder.markdown-image.loaded img { width: auto; height: auto; max-width: 100%; max-height: 240px; }
 .tool-node.tool-details-collapsed { padding-top: 6px; padding-bottom: 4px; }
 .tool-name { color: var(--tool-label); font-weight: 700; }
 .tool-desc { color: var(--text-secondary); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
