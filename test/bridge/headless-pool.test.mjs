@@ -26,7 +26,9 @@ const out = (o) => process.stdout.write(JSON.stringify(o) + '\\n');
 require('readline').createInterface({ input: process.stdin })
   .on('line', (line) => {
     const msg = JSON.parse(line);
+    if (msg.type === 'control_request') return out({ type: 'control_response', response: { request_id: msg.request_id, subtype: 'success', response: { applied: { model: 'resolved-id' } } } });
     out({ type: 'system', subtype: 'init', session_id: 'sid' });
+    if (msg.message.content[0].text.startsWith('/model')) return out({ type: 'result', subtype: 'success', local_command: 'model', user_message_uuids: [msg.uuid] });
     if (msg.message.content[0].text === 'bg') out({ type: 'system', subtype: 'background_tasks_changed', tasks: [{ task_id: 'a1' }] });
     out({ type: 'result', subtype: 'success', user_message_uuids: [msg.uuid] });
   })
@@ -126,4 +128,12 @@ test('a held Claude session asks first, and takeover stops only the confirmed pi
   assert.equal((await writerConflict('sid', true, 41, deps)).errorCode, 'claude_writer_changed');
   assert.equal(shouldCacheClientTurnAck({ action: 'send_message_result', turnId: 't', errorCode: 'claude_writer_changed' }), false);
   assert.equal(await writerConflict('sid', true, 42, deps), null);
+});
+
+test('/model keeps the applied model for the next process; /model default drops the flag', async (t) => {
+  const pool = new ClaudePool({ bin: fakeClaude(t) });
+  t.after(() => pool.shutdownAll());
+  const settle = async (proc) => { await exited(proc); return pool.sessionArgs.get('sid')['--model']; };
+  assert.equal(await settle(await turn(pool, 'sid', '/model haiku')), 'resolved-id');
+  assert.equal(await settle(await turn(pool, 'sid', '/model default')), null);
 });

@@ -1671,6 +1671,18 @@ test('Codex hides apply_patch preflight failures but keeps the corrected FileCha
   }
 });
 
+test('a Codex exec custom tool shows its JS source as input', () => {
+  const { root, target } = tempRollout();
+  try {
+    const call = { type: 'response_item', timestamp: '2026-08-10T05:10:00.000Z', payload: { type: 'custom_tool_call', name: 'exec', call_id: 'c1', input: 'await tools.ls()' } };
+    fs.writeFileSync(target, `${JSON.stringify(call)}\n`);
+    const uses = extractCodexMessages(target, SESSION_ID).messages.flatMap((m) => m.content || []).filter((b) => b.type === 'tool_use');
+    assert.deepEqual(uses.map((b) => b.input), [{ input: 'await tools.ls()' }]);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('apply_patch parser supports add, update, and move', () => {
   const changes = parseApplyPatchInput([
     '*** Begin Patch',

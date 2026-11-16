@@ -34,10 +34,12 @@ const generations = new Map();
 const resumed = new Set();
 const readers = new Map();   // Session id → history reader, for rows a change or a turn wrote
 let idleTimer = null;
+let prewarmAfter = 0; // a failed start waits before typing retries it (repeated starts make Hermes back off)
 let config = null;
 const gateway = new HermesGateway(onEvent);
 
 const activeTurn = (id) => [...turns.values()].some((turn) => turn.id === id);
+const readOnly = (id) => sessionIndex.view(sessionIndex.records.get(`rows:hermes:${id}`) || {})?.readOnly;
 // Browsing connects only to a gateway that already runs.
 const gatewayUp = () => gateway.open || fs.existsSync(path.join(HERMES_HOME, 'gateway.sock'));
 
@@ -228,9 +230,16 @@ const interaction = defineInteractionAdapter({
   },
 
   async sendExisting({ nativeSessionId: id, streamId, text, callbacks }) {
-    if (sessionIndex.view(sessionIndex.records.get(`rows:hermes:${id}`) || {})?.readOnly) throw new Error('This Hermes Session is read-only.');
+    if (readOnly(id)) throw new Error('This Hermes Session is read-only.');
     await attach(id, true);
     await submit(id, streamId, text, callbacks);
+  },
+
+  // Typing means a send is coming: start the gateway (and resume the Session) now.
+  prewarm(_cwd, id) {
+    if (Date.now() < prewarmAfter || (id && readOnly(id))) return;
+    (id ? attach(id, true) : gateway.connect({ start: true }).then(scheduleIdle))
+      .catch((error) => { prewarmAfter = Date.now() + 60_000; console.error(`[hermes] prewarm: ${error.message}`); });
   },
 
   async interrupt(id) {

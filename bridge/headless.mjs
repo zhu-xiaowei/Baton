@@ -89,7 +89,11 @@ class HeadlessProc {
       // Resume of a session still held by the daemon → CC rejects with EXIT + this msg.
       if (stderr.includes('background agent (bg)')) this.bgLocked = true;
     });
-    this.proc.on('close', (code) => this._onClose(code, stderr));
+    this.proc.on('close', (code, signal) => {
+      const tail = stderr.trim().split('\n').slice(-5).join(' | ').slice(-500);
+      console.log(`[headless] exit sid=${this.sessionId} pid=${this.proc.pid} code=${code} signal=${signal} busy=${this.busy} bgTasks=${this.backgroundTasks} unanswered=${this.unanswered.size} reason=${this.exitReason || 'self'} stderr=${JSON.stringify(tail)}`);
+      this._onClose(code, stderr);
+    });
     this.proc.on('error', (err) => this._onClose(-1, err.message));
   }
 
@@ -210,10 +214,11 @@ class HeadlessProc {
       }
       // Before onResult, so a send it starts waits for this exit.
       const flag = { model: '--model', effort: '--effort' }[o.local_command];
+      const reset = consumed.some((uuid) => /^\/(model|effort)\s+default\s*$/i.test(this.inputs.get(uuid)?.text || ''));
       if (!flag) this.pool._exitIfDone(this);
-      // /model and /effort last as long as the process; the next one gets CC's applied value.
+      // /model and /effort last as long as the process; the next one gets CC's applied value ("default": no flag).
       else this.requestControl({ subtype: 'get_settings' }).then((s) => this.pool.sessionArgs.set(this.sessionId,
-        { ...this.pool.sessionArgs.get(this.sessionId), [flag]: s?.applied?.[o.local_command] }), () => {}).finally(() => this.pool._exitIfDone(this));
+        { ...this.pool.sessionArgs.get(this.sessionId), [flag]: reset ? null : s?.applied?.[o.local_command] }), () => {}).finally(() => this.pool._exitIfDone(this));
       cb?.onResult?.(sid, { ...o, consumedInputIds, continued: this.busy });
       return;
     }
@@ -285,7 +290,7 @@ class HeadlessProc {
       this._framer.reset();
     }
     this.busy = true;
-    this.inputs.set(uuid, { streamId, consumed: false });
+    this.inputs.set(uuid, { streamId, consumed: false, text });
     const msg = {
       type: 'user',
       ...(uuid ? { uuid } : {}),
@@ -330,6 +335,7 @@ class HeadlessProc {
       return true;
     } catch {
       try {
+        this.exitReason ||= 'interrupt-sigint';
         return this.proc.kill('SIGINT');
       } catch {
         return false;
@@ -337,8 +343,9 @@ class HeadlessProc {
     }
   }
 
-  shutdown() {
+  shutdown(reason) {
     if (this.dead) return;
+    this.exitReason ||= reason;
     try { this.stdin?.end(); } catch {}   // EOF → CC exits cleanly, jsonl persists
   }
 }
@@ -370,7 +377,7 @@ export class ClaudePool {
     await new Promise((resolve) => {
       const timer = setTimeout(() => { try { proc.proc.kill('SIGKILL'); } catch {} }, 30_000);
       proc.proc.once('close', () => { clearTimeout(timer); resolve(); });
-      proc.shutdown();
+      proc.shutdown('done');
     });
   }
 
@@ -469,7 +476,7 @@ export class ClaudePool {
       return await proc.requestControl({ subtype: 'initialize' }, this.initTimeout);
     } finally {
       this._inspectProcs.delete(proc);
-      proc.shutdown();
+      proc.shutdown('inspect');
     }
   }
 
@@ -498,7 +505,7 @@ export class ClaudePool {
     } finally {
       if (temporary) {
         this._inspectProcs.delete(proc);
-        proc.shutdown();
+        proc.shutdown('inspect');
       }
     }
     return { result, errors };
@@ -526,7 +533,7 @@ export class ClaudePool {
           await new Promise(resolve => {
             const timeout = setTimeout(() => proc.proc.kill(), 5000);
             proc.proc.once('close', () => { clearTimeout(timeout); resolve(); });
-            proc.shutdown();
+            proc.shutdown('rename');
           });
         }
       }
@@ -567,8 +574,8 @@ export class ClaudePool {
   awaitsAgents(key) { const p = this.procs.get(key); return !!p && !p.dead && !!p.backgroundAgents; }
 
   shutdownAll() {
-    for (const proc of this.procs.values()) proc.shutdown();
-    for (const proc of this._inspectProcs) proc.shutdown();
+    for (const proc of this.procs.values()) proc.shutdown('bridge-shutdown');
+    for (const proc of this._inspectProcs) proc.shutdown('bridge-shutdown');
     this.procs.clear();
     this._inspectProcs.clear();
   }
