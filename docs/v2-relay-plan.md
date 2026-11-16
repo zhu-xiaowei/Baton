@@ -148,11 +148,11 @@ acceptance on separate test resources → report → squash merge on OK → dele
    in its install script (§5).
 2. Web app hosting: AWS as today (served by the Lambda); Cloudflare Workers static assets — confirm the
    cache headers fixed in #191 can be reproduced there.
-9. Cloudflare install script details: exact token permissions, where the Bridge package lives (R2 vs static
-   assets), Free-plan deploys for self-hosters (Durable Objects on Free are SQLite-only; R2 activation).
 3. Global index on Cloudflare: D1 vs an index object; key formats; token format with account ID.
 4. R2 compatibility: checksum-verified dedup, `x-amz-meta-sealed`, Range reads, temporary credentials.
 5. Cloudflare plan and limits: Free vs Paid at launch, per-account message quotas, alerting.
 6. DO placement policy (Bridge first, or a location hint from the Bridge's region).
 7. Frame size limit per platform (profile A 32 KB; Cloudflare up to 32 MiB received — pick a cap).
 8. Mainland China reachability test method.
+9. Cloudflare install script details: exact token permissions, where the Bridge package lives (R2 vs static
+   assets), Free-plan deploys for self-hosters (Durable Objects on Free are SQLite-only; R2 activation).
