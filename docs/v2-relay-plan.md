@@ -1,158 +1,139 @@
-# v2 phase 4: hosted relay (profile B) — plan
+# v2 phase 4: hosted service on Cloudflare, one JS server for both platforms — plan
 
-Status: initial plan, 2026-11-15. Phase 4 of `docs/v2-architecture.md` §14 ("Profile B: resident relay sharing
-the protocol core, CloudFront origin switch for the hosted service, monitoring and alarms"). Phases 1–3 are
-merged into `feat/v2`: direct channel without DynamoDB session storage, accounts / pairing / device
-management (PR #229, `docs/v2-accounts-design.md`), end-to-end encryption (PR #217,
-`docs/v2-accounts-e2ee-plan.md`). This plan lists what phase 4 has to build, what earlier phases deferred to
-it, and the decisions to take before code. Details are settled per PR, as before.
+Status: plan, revised 2026-11-16 (first version 2026-11-15 proposed an EC2 relay; replaced after the cost and
+latency measurements in §3). Phase 4 of `docs/v2-architecture.md` §14. Phases 1–3 are merged into `feat/v2`:
+direct channel without DynamoDB session storage, accounts / pairing / device management (PR #229,
+`docs/v2-accounts-design.md`), end-to-end encryption (PR #217, `docs/v2-accounts-e2ee-plan.md`).
+Details are settled per PR and recorded in §8 as they are decided.
 
-Note on history: `docs/terminal-relay-options.md` and the terminal benchmarks record (2026-09) that a
-resident EC2/Fargate relay was ruled out. That decision still holds for **self-host** (profile A stays
-API Gateway + Lambda). `docs/v2-architecture.md` §2 later introduced profile B **only for the shared hosted
-service**, where API Gateway pricing and its per-connection authorisation limits (§12 item 8) do not work.
+## 1. Decisions (user, 2026-11-16)
 
-## 1. Goal and scope
+| # | Decision |
+|---|---|
+| 1 | The shared hosted service (`agentbaton.app`) runs on **Cloudflare**: Workers + Durable Objects (one object per account, relay and account storage) + R2. **No EC2.** Self-host keeps AWS (profile A). |
+| 2 | **One server codebase in JavaScript** with two platform adapters (AWS, Cloudflare). The Python/FastAPI server is rewritten; the earlier constraint "profile A stays unchanged" is lifted. DynamoDB schema, REST routes and the client protocol stay the same, so existing self-host stacks, Apps and Bridges are unaffected. |
+| 3 | App and Bridge speak one protocol to both platforms; what differs is announced by the server (transport, frame limit, file storage). |
+| 4 | Order: platform-independent protocol optimizations first, then the JS rewrite (AWS adapter), then the Cloudflare adapter, then client transport selection, then launch items (§6). |
+| 5 | Each platform deploys with one command. No new third-party dependencies (Cloudflare deploys through its HTTP API, no wrangler). |
+| D1 | REST keeps being served by the server functions (Lambda / Worker); no separate REST host. |
+| D7 | One socket per client on Cloudflare; profile A keeps its control + data sockets. |
+| — | Workers KV is not used: eventually consistent (≥ 60 s), no atomic or conditional writes, which revocation, single-use pairing codes, removal transactions and rate counters need. |
+| — | Python Workers are not used: Pyodide (WebAssembly) costs more CPU per frame, needs pywrangler + uv, and would share little with the AWS code. |
 
-- A public hosted service at `agentbaton.app` that many untrusted accounts can share: every frame is
-  authorised and metered per account by the relay itself, and cost grows with bytes, not API Gateway messages.
-- **Clients are unchanged in behaviour.** App and Bridge speak the same protocol to both profiles; only what the
-  server announces differs (frame limit, whether signing credentials are needed). Moving the hosted service
-  between profiles or machines is a CloudFront origin change (architecture §3).
-- Profile A (self-host) keeps working exactly as today; profile B is a second deployment, not a replacement.
-- Out of scope: store submission (phase 5), billing, email, the UX gaps of phase 6.
+## 2. Why not EC2 (superseded proposal)
 
-## 2. What profile A does today (the parts profile B replaces or keeps)
+EC2 + CloudFront costs about $12.5/month before the first user (t4g.micro + IPv4 + disk), bills bytes
+(CloudFront to origin $0.06/GB in Japan), needs origin TLS certificates, an Auto Scaling group / Elastic IP for
+machine replacement, and operating a machine. A plain-HTTP origin would expose bearer tokens between
+CloudFront and EC2. Durable Objects need none of this, cost less at every scale measured (§3), and have no
+machine to migrate; connections on the Hibernation API survive Worker code updates.
 
-| Piece | Profile A today | Code |
-|---|---|---|
-| REST: version, install, accounts, pairing, devices, notifications | API Gateway REST + FastAPI Lambda, DynamoDB SystemTable | `server/src/{main,accounts,auth,bridge_read,notifications}.py` |
-| Control socket (Bridge): connect, heartbeat, `bridge_join`, device rows, update pushes | WsApi + `ws-handler` Lambda, ConnectionsTable | `server/src/bridge_ws.py`, `direct_rpc_ws.py` |
-| Data sockets (App `app_data`, Bridge `bridge_data`) | TerminalDirectApi; sender SigV4-signs each frame with STS credentials; `rpc`/`push` routes → HTTP integration → `@connections/{id}`; no Lambda per frame | `bridge/direct-rpc.mjs`, `web/js/v2/direct-transport.js`, `bridge/direct-rpc-protocol.mjs` |
-| Frame format | `rpc`, `rpc_result`, `rpc_ack`, `push`, `stream`; deflate + E2EE seal + 20 000-char chunks under the 32 KB frame limit | `bridge/direct-rpc-protocol.mjs`, `bridge/e2ee*.mjs` |
-| Subscriptions | Bridge's own table; App renews every 60 s (150 s lease) because API Gateway never tells Bridge an App left | `bridge/session-subscribers*`, `direct-transport.js` |
-| Attachments | S3 `t/<accountId>/`, client-signed with the same STS credentials (session policy scoped to the prefix) | `bridge/transfer-store.mjs` |
-| Notifications | Bridge decides and posts `/api/notifications/events`; iOS through the shared APNs relay; Android polls the feed | `bridge/notify.mjs`, `server/src/notifications.py`, `push-relay/` |
-| Edge | CloudFront: default → REST, `/ws` → WsApi, `/data` → TerminalDirectApi; origin secret header for real client IPs | `server/template/Baton.template` |
+## 3. Measurements (2026-11-16)
 
-## 3. Profile B architecture (proposal)
+Spike: `.scratch/do-spike/` (Worker `relay-spike` + SQLite-backed DO on the Free plan, deployed by API).
+Replayed the phase-1 recordings (`agentpeek-v2-core/.scratch/phase1-validation/traffic/`: chat, terminal,
+history; real timing and body sizes without SigV4), 10 accounts × (Bridge + App).
+
+| Metric | Result |
+|---|---|
+| Frames | 12,640 sent, 12,640 received (per-frame IDs) |
+| Billed active time per frame | 0.23 ms (2.9 × 10⁻⁵ GB-s); CPU 0.10 ms |
+| Idle hibernated sockets, auto-response ping every 25 s | ≈ 0 billed |
+| Cost per million frames | ≈ $0.008 (API Gateway: ≈ $2.28 — every frame billed in and out) |
+| Typical / heavy user per month | ≈ $0.0006 / ≈ $0.005 (relay only) |
+| Latency, Tokyo host, object in Japan | one-way p50 8–9 ms, p95 11–12 ms; ping RTT 8–9 ms |
+| Latency, object in US west from Tokyo | one-way p50 114 ms (objects never move) |
+| New connection (TLS + first object creation) | 280–360 ms |
+| Reference: profile A direct path from Tokyo EC2 | round trip p50 21–35 ms (`docs/terminal-relay-options.md`) |
+
+Monthly estimates (relay only; REST, notifications and storage add about $250 at 100k DAU on either platform):
+
+| Scale | Cloudflare DO | Profile A (API Gateway) | EC2 + CloudFront (dropped) |
+|---|---|---|---|
+| ≤ ~600 DAU | $0 (Free plan) or $5 | ~$0.25–1.65 per user | ~$12.5 + |
+| 10k users | ~$10 | ~$2.5k | ~$28–56 |
+| 100k DAU | ~$160 | ~$50k | ~$600–750 (flat-rate plan) |
+| 1M DAU | ~$1.5k | ~$500k | ~$5–8k |
+
+Cost on Durable Objects follows the **number of incoming messages** (20 messages = 1 request, $0.15 per
+million requests); bytes and egress are free. DO placement (apac, 2026-11-16): Singapore 40%, Hong Kong 20%,
+Narita 17%, Osaka 16%, Seoul 7%; hints wnam/enam/weur/eeur/apac(-ne/-se)/oc; jurisdictions eu/us/fedramp.
+
+Not yet measured: mainland China reachability, idle sockets without pings, account-storage latency, reconnect
+storms, many sockets per object, R2 checksum/Range behaviour.
+
+## 4. Target architecture
 
 ```text
-App / Bridge ──TLS──► CloudFront (agentbaton.app)
-                        ├─ default (REST)  ──► API Gateway + Lambda (unchanged, D1)
-                        └─ /ws  (one socket per client) ──► EC2 t4g (Tokyo): Node relay
-                                                               ├─ auth: token → account (SystemTable, cached briefly)
-                                                               ├─ routing: accountId → {bridges, apps} in memory
-                                                               ├─ forwards frames, never stores or decrypts them
-                                                               └─ meters frames/bytes per account
-DynamoDB SystemTable (accounts, tokens, pairing, push devices) and S3 attachments: shared with REST.
+server/core/        routes and rules (accounts, pairing, tokens, devices, notifications, install, version)
+                    on web-standard Request/Response; talks to ports: storage, connections, files, push
+server/aws/         Lambda (Node 22) entry; DynamoDB (SystemTable, same schema); API Gateway control socket
+                    and @connections; STS credentials for the data API and S3 (profile A, as today)
+server/cloudflare/  Worker entry; Durable Object per account = relay + SQLite account storage;
+                    global index (pairing codes, recovery, rate limits) in D1 or an index object; R2 files
 ```
 
-- **One Node process** on one Graviton instance in `ap-northeast-1` (start `t4g.micro`, architecture §3.2),
-  systemd, EC2 auto-recovery, TLS at the origin (D3). Routing state lives in memory only and is rebuilt by
-  client reconnects.
-- **One socket per client** (App and Bridge) instead of control + data sockets: the relay authenticates the
-  upgrade with the same `apiKey` credential (`bt_…` token or, for completeness, a deployment key) through the
-  same rules as `server/src/auth.py`, including roles and the Bridge device-name binding.
-- **Protocol core reused, transport swapped.** The frame codec, chunking, E2EE sealing, `rpc_ack`, streams and
-  request/response logic stay (`direct-rpc-protocol.mjs`, `e2ee*.mjs` are plain JS and run in the relay too
-  if needed). What profile B removes from the client path: STS credentials for frames, SigV4 signing,
-  `rpc_join` tickets, the MOCK `whoami`, `realtime_ping` MOCK routes, the 32 KB chunk ceiling (announce a
-  larger `maxFrameBytes`, verified through CloudFront first). Clients pick the transport from what the server
-  announces (`/devices` already returns `protocol`, `rpc.endpoint`, credentials); profile A clients keep the
-  current path.
-- **Per-frame authorisation**: a frame may only reach a connection of the same account; `to` addresses are
-  resolved by the relay (device name for Bridges, connection id for Apps), never trusted from the sender.
-  This closes architecture §12 item 8 for the hosted service.
-- **Disconnect events**: the relay tells a Bridge when an App connection goes away, so subscription leases,
-  the 60 s renewal and `replaces` can be deleted for profile B (decision recorded in the step-3B plan "Later");
-  profile A keeps them.
+- AWS calls use `fetch` + the SigV4 code the repository already has (`bridge/direct-rpc-protocol.mjs`,
+  `bridge/transfer-store.mjs`), so neither platform needs aws-sdk or a web framework.
+- Cloudflare per-account object: holds that account's sockets and rows (account, devices, tokens, push
+  devices), so revocation closes sockets in the same call — the EC2 plan's "revocation hook" disappears.
+  Tokens carry the account ID so the Worker routes to the object without a global token table.
+- Relay on Cloudflare: Worker authenticates the upgrade, forwards to the account object; the object relays
+  frames only between that account's sockets (isolation by construction), sends disconnect events, answers
+  pings by auto-response. The Bridge connects first and creates the object near itself.
+- Files: R2 through the S3 API with prefix-scoped temporary credentials if R2 checks
+  `x-amz-checksum-sha256` and Range like S3; otherwise presigned URLs from the Worker.
+- iOS pushes keep the shared APNs relay (`push-relay/`, IAM-auth Function URL); the Worker signs with SigV4.
+- One cross-platform contract suite (account isolation, pairing, revocation, removal) runs against both
+  adapters; the Python tests are deleted with the Python server.
 
-## 4. Work items
+## 5. Deployment
 
-### 4.1 Relay core (new `relay/` package, MIT, same repository — architecture §15)
-1. WebSocket server (`ws`, already a Bridge dependency) behind the TLS terminator; health endpoint.
-2. Upgrade auth: token → `{accountId, kind, deviceName, tokenHash}` from SystemTable (short cache, plus an
-   invalidation path so a revoke closes sockets at once; today `_close` deletes API Gateway connections).
-3. In-memory routing tables, per-account; Bridge exclusivity per device name (today `bridgeOwner` /
-   `bridge_replaced` in `bridge_ws.py`).
-4. Frame forwarding with per-frame account check, `maxFrameBytes`, backpressure (drop or close a slow
-   consumer above a buffer threshold), ping every ≤ 5 min (CloudFront idle timeout 10 min).
-5. Server → client events that today come from Lambda: Bridge list changes (`bridges` update to Apps),
-   `device_removed`, `account_rotated`, `account_deleted`, `bridge_replaced`, `heartbeat` answers with
-   `bridgeVersion` (auto-update trigger).
-6. Revocation and deletion hooks: REST (Lambda) must be able to close relay sockets of a token or an account
-   (D2: relay admin endpoint authenticated by IAM/secret, or relay polls a revocation stream).
-7. Graceful restart: announce reconnect within a random 0–10 s, then stop. Bridge reconnect today is
-   immediate then a fixed `RECONNECT_DELAY` (`bridge/ws.mjs` `scheduleReconnect`) — add jitter; the App
-   already jitters (`direct-transport.js`, `RETRY_JITTER_MS`).
+- **Artifacts:** the build (Vite `dist/` + server bundle + Bridge package) is produced once by CI per release,
+  with a checksum. Self-host `install.sh` downloads the release artifact for its version and uploads it to the
+  stack bucket — no Docker, ECR or CodeBuild, no Node on the deploying host. Development deploys build
+  locally (`npm run build`) and upload the same zip shape. (Proposal; see §8 item 1.)
+- **AWS:** Lambda runtime `nodejs22.x`, zip package from the stack bucket; CloudFormation template keeps API
+  Gateway (REST, WsApi, data API), CloudFront and DynamoDB as they are. The web app is served as today.
+- **Cloudflare:** one script calls the Cloudflare API: upload the Worker (module + DO class + D1/R2 bindings
+  + static assets), run migrations, set secrets, attach the custom domain. Usable for self-hosting on a
+  user's own Cloudflare account too.
 
-### 4.2 Clients
-8. Transport selection from the server's announcement; one code path for frames above the transport layer
-   (`direct-transport.js`, `bridge/direct-rpc.mjs`). Keep profile A untouched behind the same interface.
-9. Delete lease/renewal logic on profile B only (relay disconnect events).
-10. Frame and envelope slimming where bytes are billed (step-3B plan "Traffic": push envelope duplication,
-    terminal/preview frames) — measure first (architecture §13 item 1).
+## 6. PR order
 
-### 4.3 Abuse limits and metering
-11. Per-account frames/bytes per minute and concurrent connections; per-IP connection rate at the relay
-    (it sees the real address via CloudFront's viewer headers / origin secret); limits reported in logs and
-    metrics, enforced by closing or throttling.
-12. Keep the REST limits from PR #229 (register / recover / pair-start per IP, computers per account).
+0. **Protocol optimizations, platform independent** (measure per frame type first): fewer messages
+   (coalesce small frames, larger chunks where the transport allows), slimmer clear envelope, binary frames
+   without base64 of ciphertext. Count matters on Cloudflare, bytes on CloudFront/S3.
+1. **JS server + AWS adapter**, behaviour-identical to the Python server; zip deployment; Python deleted;
+   acceptance on a separate test stack.
+2. **Cloudflare adapter**: relay object, account storage, global index, R2, deploy script; acceptance on a
+   test Cloudflare deployment.
+3. **Clients**: transport selection from the server announcement; on Cloudflare, disconnect events replace
+   subscription leases and renewals; Bridge reconnect jitter.
+4. **Launch items**: `agentbaton.app` + `WEB_URL`, monitoring and alerts, per-account limits (the cost
+   ceiling on Cloudflare; Workers spending limits do not cover Durable Objects), hosted Android notifications
+   (socket vs FCM, FCM needs approval), encryption of videos and attachments over 50 MB.
 
-### 4.4 Edge, domain and deployment
-13. CloudFormation (or a separate template) for profile B: EC2 + instance role (DynamoDB SystemTable read,
-    CloudWatch), security group (origin reachable only from CloudFront — managed prefix list), EIP or DNS name.
-14. CloudFront: `/ws` → EC2 origin, origin secret header, `Sec-WebSocket-*` forwarding, deflate check,
-    custom domain `agentbaton.app` + ACM certificate (us-east-1).
-15. **`WEB_URL`**: today `https://${CDN.DomainName}`; make it a parameter so pairing links printed by Bridge and
-    returned by `pair/start`/`pair/create` use `https://agentbaton.app` (decided 2026-11-14 to do it here).
-16. Dedicated AWS account for hosted production (architecture §12 item 7); production parameters stay outside
-    the repository.
-17. Monitoring and alarms: connections, frames/s, bytes, memory, CPU credits, error rate, restarts; alarm email
-    (same pattern as the push relay); logs 7 days, never content, paths, titles, tokens or bodies.
+Each PR: design details first → user OK → implement → self-test → PR to `feat/v2` → independent review
+(reproducible findings only, simplest implementation, no regressions vs base) → fix + re-review → end-to-end
+acceptance on separate test resources → report → squash merge on OK → delete test resources.
 
-### 4.5 Items earlier phases deferred to phase 4
-18. **Hosted Android notifications (D4 of the accounts plan)**: FCM (new dependency, needs approval) vs a
-    relay socket held by the existing Android foreground service vs off. Polling the feed every 5/15 s is not
-    acceptable at hosted scale (~170k requests per device per month, architecture §8).
-19. **Videos and attachments over 50 MB**: encrypt in chunked records with Range support (`SEALED_MAX`,
-    `transfer-store.mjs`); videos stream today in plain form under the account prefix.
-20. "Being viewed" suppression for notifications can move to the relay (it knows live subscriptions) instead
-    of the Bridge's `notify_check` probe — optional, decide in design.
+## 7. Carried over from earlier phases
 
-### 4.6 Validation before go-live (architecture §13)
-21. Load test on `t4g.micro`: idle connections per GB, sustained frames/s, CPU credits; reconnect storm after a
-    restart (jitter works).
-22. CloudFront WebSocket facts: request counting for upgrades, largest frame that passes, deflate end to end,
-    idle behaviour with the ping interval.
-23. Cross-account isolation suite run against **both** profiles (architecture §14 item 2); the existing
-    `test/server/test_accounts.py` covers REST; add relay frame-routing tests.
-24. Reachability from mainland China mobile networks (no CloudFront edge there).
-25. Cost check against architecture §11 with measured traffic.
+- Hosted Android notifications (accounts plan D4): off until PR 4.
+- Videos and attachments over 50 MB stay plain under the account prefix until PR 4 (`SEALED_MAX`).
+- "Being viewed" suppression may move to the relay object, which knows live subscriptions (optional).
+- REST limits from PR #229 (register / recover / pair-start per IP, computers per account) carry over to both
+  adapters.
 
-## 5. Decisions to take (proposals in brackets)
+## 8. Details to confirm (filled in as decided)
 
-- **D1 REST stays on API Gateway + Lambda in profile B** [yes: REST traffic is small; only the real-time path
-  moves to EC2; SystemTable and code stay shared]. Alternative: run the FastAPI app on the EC2 too.
-- **D2 How REST tells the relay to close sockets** (revoke, remove, delete, rotate notices) [a small authenticated
-  admin endpoint on the relay, called by Lambda; relay re-checks the token on every reconnect anyway].
-- **D3 TLS at the origin** [Caddy with automatic certificates on an origin hostname, origin locked to the
-  CloudFront prefix list] vs an ALB (simpler certificates, ~$16+/month).
-- **D4 Instance size and region** [`t4g.micro`, `ap-northeast-1`, vertical scaling first].
-- **D5 Hosted Android notifications** [relay socket in the foreground service if battery is acceptable;
-  FCM only with approval].
-- **D6 Frame size in profile B** [`maxFrameBytes` 512 KB after verification; fewer chunks, same codec].
-- **D7 One socket per client in profile B** [yes] and keep profile A's two sockets.
-- **D8 Relay language / packaging** [Node 22, `ws`, no new dependency beyond what Bridge already uses].
-
-## 6. Suggested PR order
-
-1. Relay core + local tests (routing, per-frame authorisation, auth, revocation hook), no deployment.
-2. Client transport selection + lease removal for profile B; profile A regression suites unchanged.
-3. Profile B deployment (template, CloudFront `/ws` origin, domain + `WEB_URL`, monitoring/alarms) on a test
-   account, load test and CloudFront checks.
-4. Abuse limits and metering; Android notifications (D5); large-attachment/video encryption.
-Each PR: design details first → user OK → implement → self-test → PR → independent review (reproducible
-findings only) → fix + re-review → acceptance on a separate test stack and test boxes → report → merge on OK →
-delete test resources.
+1. Release artifacts: where CI publishes them (GitHub Releases vs a public bucket), how dev deploys differ.
+2. Web app hosting per platform (Lambda as today vs S3/CloudFront; Workers static assets on Cloudflare) and
+   the cache headers fixed in #191.
+3. Global index on Cloudflare: D1 vs an index object; key formats; token format with account ID.
+4. R2 compatibility: checksum-verified dedup, `x-amz-meta-sealed`, Range reads, temporary credentials.
+5. Cloudflare plan and limits: Free vs Paid at launch, per-account message quotas, alerting.
+6. DO placement policy (Bridge first, or a location hint from the Bridge's region).
+7. Frame size limit per platform (profile A 32 KB; Cloudflare up to 32 MiB received — pick a cap).
+8. Mainland China reachability test method.
