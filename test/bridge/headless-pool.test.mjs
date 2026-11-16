@@ -26,7 +26,9 @@ const out = (o) => process.stdout.write(JSON.stringify(o) + '\\n');
 require('readline').createInterface({ input: process.stdin })
   .on('line', (line) => {
     const msg = JSON.parse(line);
+    if (msg.type === 'control_request') return out({ type: 'control_response', response: { request_id: msg.request_id, subtype: 'success', response: { applied: { model: 'resolved-id' } } } });
     out({ type: 'system', subtype: 'init', session_id: 'sid' });
+    if (msg.message.content[0].text.startsWith('/model')) return out({ type: 'result', subtype: 'success', local_command: 'model', user_message_uuids: [msg.uuid] });
     if (msg.message.content[0].text === 'bg') out({ type: 'system', subtype: 'background_tasks_changed', tasks: [{ task_id: 'a1' }] });
     out({ type: 'result', subtype: 'success', user_message_uuids: [msg.uuid] });
   })
@@ -126,4 +128,22 @@ test('a held Claude session asks first, and takeover stops only the confirmed pi
   assert.equal((await writerConflict('sid', true, 41, deps)).errorCode, 'claude_writer_changed');
   assert.equal(shouldCacheClientTurnAck({ action: 'send_message_result', turnId: 't', errorCode: 'claude_writer_changed' }), false);
   assert.equal(await writerConflict('sid', true, 42, deps), null);
+});
+
+test('/model keeps the applied model for the next process; /model default drops the flag', async (t) => {
+  const pool = new ClaudePool({ bin: fakeClaude(t) });
+  t.after(() => pool.shutdownAll());
+  const settle = async (proc) => { if (proc) await exited(proc); return pool.sessionArgs.get('sid')['--model']; };
+  assert.equal(await settle(await turn(pool, 'sid', '/model haiku')), 'resolved-id');
+  assert.equal(await settle(await turn(pool, 'sid', '/model default')), null);
+});
+
+test('takeover waits for the holder after stopping its client, and stops a holder that stays', async () => {
+  for (const stays of [false, true]) {
+    const live = new Set([42, 43]); const sent = []; let checks = 0;
+    const kill = (pid, sig) => { if (sig) { sent.push(pid); live.delete(pid); } else if (!live.has(pid) || (pid === 43 && !stays && ++checks > 2 && !live.delete(43))) throw new Error('ESRCH'); };
+    const deps = { kill, timeoutMs: 500, findWriter: () => live.size && { pid: live.has(42) ? 42 : 43, holderPid: 43 } };
+    assert.equal(await writerConflict('sid', true, 42, deps), null);
+    assert.deepEqual(sent, stays ? [42, 43] : [42]);
+  }
 });

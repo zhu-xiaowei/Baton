@@ -810,7 +810,7 @@ export function extractCodexMessages(filePath, sessionId, options = {}) {
         const mcpInfo = mcpToolCalls.get(callId)?.[occurrence - 1];
         const input = payload.type === 'tool_search_call'
           ? (payload.arguments || { execution: payload.execution || '' })
-          : mapToolInput(payload.name, payload.arguments);
+          : mapToolInput(payload.name, payload.arguments ?? payload.input); // custom tools (exec: JS source) carry `input`
         const namespace = String(payload.namespace || '');
         if (namespace.startsWith('mcp__') && namespace.length > 5) {
           input.codexMcpServer = namespace.slice(5);

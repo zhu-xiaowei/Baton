@@ -679,10 +679,10 @@ import { observeToolDetails, loadToolDetails, loadToolPreviews, toolDetailsSourc
     let statsHtml = '';
     if (meta) {
       const secs = Math.round((meta.totalDurationMs || 0) / 1000);
-      const calls = meta.totalToolUseCount || 0;
-      // Background agent launches with 0/0 stats (meaningless) — only show real counts.
+      const calls = meta.totalToolUseCount;
+      // Background agent launches with 0/0 stats (meaningless) — only show real counts; Kiro/Hermes give no count.
       if (calls > 0 || secs > 0) {
-        statsHtml = `<span class="tool-status">${calls} tool calls, ${secs}s</span>`;
+        statsHtml = `<span class="tool-status">${Number.isFinite(calls) ? `${calls} tool calls, ` : ''}${secs}s</span>`;
       }
     } else if (!result) {
       // No result yet — show running timer with tool_use id for later update

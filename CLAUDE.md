@@ -152,7 +152,8 @@ Done:
   `EXIT=<n>` marks a failed command whose wrapper shell exited 0.
 - `hermes-gateway.mjs` + `hermes-runtime.mjs`: one WS to the user's gateway; each connection gets a fresh
   single-use ticket from `$HERMES_HOME/gateway.sock` (never logged). Browsing/subscribing never starts the
-  gateway; sending starts it once (`hermes gateway attach --json --start`) and lets its own idle-exit stop it;
+  gateway; typing (prewarm, 60 s pause after a failed start) or sending starts it once
+  (`hermes gateway attach --json --start`) and lets its own idle-exit stop it;
   Baton disconnects after 120 s without turns or waiting prompts. Send = `prompt.submit{submission_id: turnId}`
   (a send during a turn is queued by Hermes and becomes the next turn; no takeover needed), new =
   `session.create{source:'tui', cwd}` (no cwd → `$HOME`), interrupt = `session.interrupt{execution_generation}`.
@@ -646,7 +647,7 @@ Replaced the old tmux send-keys approach (deleted in Phase 2E). Full design: `do
 
 ### Session Launch (headless)
 - Existing session with no live CC process → `_pool.send` spawns a headless `claude -p --resume <id>`; the persistent process becomes the single writer. No tmux, no wait-for-ready, no trust-dialog handling (headless inherits the folder's trust state).
-- A process exits once its Session is Done (design §6.6): after a `result` with no queued input, no background task and no unanswered `control_request`, the pool closes stdin (no signal) and the next message re-spawns with `--resume`, so settings and CLAUDE.md changes apply to it; session grants come back through `--allowedTools`, and `/model` / `/effort` through `--model` / `--effort` (CC's `get_settings` value after the command). No idle reap, no LRU cap. Background tasks (`background_tasks_changed`, CC ≥ 2.1.203) keep the process until CC's report-back turn ends; in `-p` mode `~/.claude/sessions/<pid>.json` reads `idle` while background work runs, and CC keeps running after EOF until that work ends. Once CC reports `user_message_uuids`, a `result` without them (a turn CC started itself) consumes no input. (No more `cleanStaleSessions` / `apeek_*` tmux naming — all deleted in Phase 2E.)
+- A process exits once its Session is Done (design §6.6): after a `result` with no queued input, no background task and no unanswered `control_request`, the pool closes stdin (no signal) and the next message re-spawns with `--resume`, so settings and CLAUDE.md changes apply to it; session grants come back through `--allowedTools`, and `/model` / `/effort` through `--model` / `--effort` (CC's `get_settings` value after the command; `/model default` drops the flag). No idle reap, no LRU cap. Background tasks (`background_tasks_changed`, CC ≥ 2.1.203) keep the process until CC's report-back turn ends; in `-p` mode `~/.claude/sessions/<pid>.json` reads `idle` while background work runs, and CC keeps running after EOF until that work ends. Once CC reports `user_message_uuids`, a `result` without them (a turn CC started itself) consumes no input. (No more `cleanStaleSessions` / `apeek_*` tmux naming — all deleted in Phase 2E.)
 - New regular Session: Bridge mints a UUID, sends `send_message_result` first, then starts
   headless with `--session-id <id>` so the app subscribes before stream frames arrive.
 - Prewarm (`docs/api.md`): typing sends `prewarm` (first input, then ≤ every 10 s); Claude, Kiro and DSH
@@ -655,6 +656,7 @@ Replaced the old tmux send-keys approach (deleted in Phase 2E). Full design: `do
   the transcript at spawn, so a size change since means a fresh process) or to a minted new-Session ID
   (`--session-id` writes nothing before input). Kiro/DSH keep one per Session folder, only `initialize`d
   (no session or lock, so an old one may still be exiting), and skip a Session with a running turn.
+  Hermes starts a stopped gateway (and resumes the Session); a failed start pauses it for 60 s.
   Prewarm errors are logged, never thrown.
   An unused `--resume` still touches the jsonl mtime at spawn and appends `mode`/`cost-state` at exit
   (CC does both on any start; SIGTERM/INT/HUP write the same, SIGKILL leaves `sessions/<pid>.json`).

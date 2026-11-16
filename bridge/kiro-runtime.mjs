@@ -3,7 +3,7 @@
 // Text streams from ACP; every row comes from messages.jsonl, so a live turn and its history match.
 import fs from 'node:fs';
 import path from 'node:path';
-import { execFile } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import { promisify } from 'node:util';
 import kiro, { CLIENT, DASHBOARD, alive, HOME, LEASES, ROOT, KiroReader, canonicalId, mapTool, parse, readLease, sessionFile } from './kiro.mjs';
 import { RpcStdio } from './rpc-stdio.mjs';
@@ -263,12 +263,12 @@ async function rename(id, name, project) {
   const rec = recOf(id);
   if (!rec?.state || sessionIndex.view(rec)?.project !== project) throw new Error('Session not found on this device.');
   if (conns.has(id) || kiroInteraction.heldElsewhere(id)) throw new Error('The Kiro session is in use; rename it when its turn has ended or the other client has closed it.');
+  await setDashboardTitle(id, name); // kiro-cli's `/sessions rename` writes both, this one first
   const c = connect(rec.state.cwd);
   try {
     await c.ready;
     const result = await c.rpc.request('_kiro/session/rename', { sessionId: id, title: name, sessionSource: 'local' }, { timeoutMs: 30_000 });
     if (!result?.success) throw new Error('Kiro did not rename the session.');
-    await setDashboardTitle(id, name); // kiro-cli's `/sessions rename` writes both; this one only once Kiro accepted
     // Node's recursive watch misses a replaced (renamed-over) file it saw once, so read the new title now.
     changed(path.join(path.dirname(rec.file), 'session.json'));
   } finally {
@@ -379,7 +379,12 @@ const kiroInteraction = defineInteractionAdapter({
   heldElsewhere(id) {
     const lease = readLease(path.join(LEASES, `${id}.lease`));
     if (!lease?.live || lease.clientName === CLIENT) return null;
-    return { pid: lease.pid, status: recOf(id)?.state?.open ? 'running' : 'idle', canTerminate: true,
+    // kiro-cli's TUI (`bun tui.js`, still the engine's parent) ignores its engine's exit while idle; stopped itself, it prints how to resume.
+    const ps = (pid, field) => (process.platform !== 'linux' ? execFileSync('ps', ['-p', String(pid), '-o', `${field}=`], { encoding: 'utf8', timeout: 2000 })
+      : field === 'ppid' ? fs.readFileSync(`/proc/${pid}/stat`, 'utf8').split(') ').pop().split(' ')[1] : fs.readFileSync(`/proc/${pid}/cmdline`, 'utf8'));
+    let tui = false;
+    try { tui = !!lease.parentPid && Number(ps(lease.pid, 'ppid')) === lease.parentPid && /tui\.js/.test(ps(lease.parentPid, 'args')); } catch {}
+    return { pid: tui ? lease.parentPid : lease.pid, ...(tui ? { holderPid: lease.pid } : {}), status: recOf(id)?.state?.open ? 'running' : 'idle', canTerminate: true,
       label: `A Kiro client (${lease.clientName || 'unknown'})` };
   },
 

@@ -666,7 +666,8 @@ Errors are only logged. Kiro and DSH only `initialize` it, per folder, with no S
 lock, and skip a Session whose turn is running. Claude starts `--resume <id>`, or
 `--session-id <id>` with a Bridge-minted ID that the next new Session uses; a transcript
 another writer extended in the meantime gets a fresh process. Sessions held elsewhere are left
-alone; other runtimes ignore it.
+alone. Hermes starts its gateway when it is not running and resumes the Session; after a failed
+start it waits 60 s before trying again. Other runtimes ignore it.
 
 ---
 
