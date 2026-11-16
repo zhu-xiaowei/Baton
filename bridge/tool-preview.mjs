@@ -62,9 +62,10 @@ export function textPreview(text, limit = TOOL_PREVIEW_CHARACTERS) {
   return { text, truncated: false };
 }
 
-function previewValue(value) {
+// `results`: the value is a tool_result's content, whose image blocks are not cut.
+function previewValue(value, results = false) {
   // Image bytes stay for the main thread to upload; one still here would reach a frame, so it loads on demand.
-  if (value?.type === 'image' && (value.source || value.image_url || value.path)) {
+  if (results === 'block' && value?.type === 'image' && (value.source || value.image_url || value.path)) {
     return isMainThread ? { value: { type: 'image', placeholder: true }, truncated: true } : { value, truncated: false };
   }
   if (typeof value === 'string') {
@@ -77,7 +78,7 @@ function previewValue(value) {
   for (const [key, child] of Object.entries(value)) {
     const preview = IDENTITY_FIELDS.has(key)
       ? { value: child, truncated: false }
-      : previewValue(child);
+      : previewValue(child, results && Array.isArray(value) ? 'block' : false);
     Object.defineProperty(result, key, {
       value: preview.value, enumerable: true, configurable: true, writable: true,
     });
@@ -117,7 +118,7 @@ export function toolPreview(message) {
     const field = block.type === 'tool_use' ? 'input'
       : block.type === 'tool_result' ? 'content' : null;
     if (field && Object.hasOwn(block, field)) {
-      const preview = previewValue(block[field]);
+      const preview = previewValue(block[field], block.type === 'tool_result');
       if (preview.truncated) {
         block = compactToolFields({ ...block, [field]: preview.value, truncated: true });
         if (block.type === 'tool_result' && !Number.isInteger(block.codexExitCode)

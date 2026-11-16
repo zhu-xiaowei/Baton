@@ -123,6 +123,6 @@ export async function toolDetails({ sessionId, toolUseIds, preview } = {}, resol
   const target = resolve(String(sessionId || ''));
   if (!target) throw new Error('Original session file is unavailable.');
   const result = await readToolDetailsAsync(target.file, target.nativeSessionId, target.runtime, toolUseIds, !!preview);
-  for (const entry of result.details) if (entry.toolResult) [entry.toolResult] = await withImageKeys([entry.toolResult]);
+  await Promise.all(result.details.map(async (entry) => { if (entry.toolResult) [entry.toolResult] = await withImageKeys([entry.toolResult]); }));
   return result;
 }

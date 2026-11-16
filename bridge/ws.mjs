@@ -678,13 +678,15 @@ export function wsSendWhenConnected(data) {
 }
 
 // Rows read from a transcript, pushed to the Session's subscribers.
-let publishing = null; // in order, also when a row waits for its image upload
+const publishing = new Map(); // sessionId → its last send: in order, also when a row waits for its image upload
 export function publishMessages(sessionId, messages) {
   if (!messages.length) return;
   const send = (rows) => wsSend({ action: 'messages', sessionId, messages: toolPreviews(rows) });
-  if (!publishing && !hasPendingImages(messages)) return send(messages);
-  const job = publishing = (publishing || Promise.resolve()).then(() => rowsWithImageKeys(messages)).then(send)
-    .catch((e) => console.error(`[ws] publish failed: ${e.message}`)).finally(() => { if (publishing === job) publishing = null; });
+  const last = publishing.get(sessionId);
+  if (!last && !hasPendingImages(messages)) return send(messages);
+  const job = (last || Promise.resolve()).then(() => rowsWithImageKeys(messages)).then(send)
+    .catch((e) => console.error(`[ws] publish failed: ${e.message}`)).finally(() => { if (publishing.get(sessionId) === job) publishing.delete(sessionId); });
+  publishing.set(sessionId, job);
 }
 
 function probeConnection() {

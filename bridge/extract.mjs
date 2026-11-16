@@ -42,6 +42,8 @@ async function limited(job) {
   try { return await job(); } finally { if (waiting.length) waiting.shift()(); else active--; }
 }
 
+const UPLOAD_TIMEOUT_MS = 30_000; // a stalled upload fails, so the rows waiting for it go out
+
 async function compressAndUpload(base64Data) {
   const buffer = Buffer.from(base64Data, 'base64');
   const compressed = await sharp(buffer)
@@ -54,7 +56,11 @@ async function compressAndUpload(base64Data) {
   const key = await transfer.keyFor(hash, '.jpg');
 
   try {
-    if (!reusable(await transfer.head(key))) await transfer.put(key, compressed, { contentType: 'image/jpeg' });
+    let timer;
+    const late = new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('timed out')), UPLOAD_TIMEOUT_MS); });
+    await Promise.race([(async () => {
+      if (!reusable(await transfer.head(key))) await transfer.put(key, compressed, { contentType: 'image/jpeg' });
+    })(), late]).finally(() => clearTimeout(timer));
     return { key, ok: true };
   } catch {
     return { key, ok: false };
@@ -87,7 +93,7 @@ const pendingImage = (b) => (b?.type === 'image' ? !!(b.source || b.image_url ||
 export const hasPendingImages = (rows) => rows.some((row) => Array.isArray(row?.content) && row.content.some(pendingImage));
 
 export async function rowsWithImageKeys(rows) {
-  for (const row of rows) row.content = await withImageKeys(row.content);
+  await Promise.all(rows.map(async (row) => { row.content = await withImageKeys(row.content); }));
   return rows;
 }
 

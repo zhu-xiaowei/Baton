@@ -117,12 +117,12 @@ export class DshHistoryReader extends FrameIndex {
   page(range) { return readPage(this, range, 32, 512); }
 }
 
-// Rows on the main thread, before they reach the App: a prompt Baton sent keeps the App's turn id, and
-// image blocks, which name the attachment file, become uploaded keys.
+// Rows on the main thread, before they reach the App: a prompt Baton sent keeps the App's turn id. Image
+// blocks name the attachment file; the main-thread exits upload them like any image.
 export const promptIds = recentKeys(); // row uuid → live:user:<turnId> of prompts Baton sent
 export async function withImages(rows) {
   for (const row of rows) row.nativeId ||= promptIds.get(row.uuid);
-  return (await import('./extract.mjs')).rowsWithImageKeys(rows);
+  return rows;
 }
 
 export default { runtime: 'dsh', catalog, messages, withImages, history: (target) => new DshHistoryReader(target.file, target.nativeSessionId) };
