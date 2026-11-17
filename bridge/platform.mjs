@@ -26,9 +26,6 @@ export function findExecutable(name, candidates = []) {
   }
 }
 
-// The private runtime the installer downloads (~/.baton-bridge/node/) stays off spawned harnesses' PATH.
-export const isPrivateNode = (file) => /[\\/]\.baton-bridge[\\/]node[\\/]/.test(file);
-
 export function executableOptions(binary, options = {}, runtime = {}) {
   const platform = runtime.platform || process.platform;
   const nodeExecutable = runtime.nodeExecutable || process.execPath;
@@ -41,7 +38,7 @@ export function executableOptions(binary, options = {}, runtime = {}) {
     : path.dirname(nodeExecutable);
   const delimiter = platform === 'win32' ? ';' : ':';
   const pathEntries = (env[pathKey] || '').split(delimiter).filter(Boolean);
-  if (nodeDirectory && !isPrivateNode(nodeExecutable) && !pathEntries.includes(nodeDirectory)) {
+  if (nodeDirectory && !pathEntries.includes(nodeDirectory)) {
     env[pathKey] = [nodeDirectory, ...pathEntries].join(delimiter);
   }
 

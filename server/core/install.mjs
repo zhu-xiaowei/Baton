@@ -51,7 +51,7 @@ const unixNodeSums = Object.entries(NODE_SHA256).filter(([file]) => !file.starts
 
 // Downloads from both sources at once; the first verified archive wins and the other download is
 // stopped. On any failure the user's Node.js is used. The installer's PATH gets it (node/npm below);
-// the service PATH keeps the user's Node for harnesses.
+// the service PATH keeps the user's Node after it (the Bridge puts its own node first for harnesses).
 const unixPrivateNode = `install_private_node() {
   local os arch ext file want tmp ok pids="" i=0 src status p
   case "$(uname -s)" in Darwin) os=darwin ;; Linux) os=linux ;; *) return 1 ;; esac
@@ -372,7 +372,7 @@ function windowsInstallScript(url, server, apiKey, name) {
     "  '@echo off',",
     "  ('set \"USERPROFILE=' + $targetHome + '\"'),",
     "  ('set \"HOME=' + $targetHome + '\"'),",
-    // The user's Node.js, not the private one, for the harnesses the Bridge starts.
+    // The user's Node.js stays on PATH; the Bridge puts its own node before it for harnesses.
     "  $(if ($userNode) { 'set \"PATH=' + (Split-Path $userNode) + ';%PATH%\"' }),",
     "  ('\"' + $nodePath + '\" \"' + $bridge + '\" >> \"' + $logPath + '\" 2>&1')",
     ")",
@@ -554,7 +554,7 @@ export async function installScript({ headers }, apiKey, name, platform, presign
     '  # Linux: systemd\n' +
     '  SERVICE_DIR="$HOME/.config/systemd/user"\n' +
     '  export XDG_RUNTIME_DIR=/run/user/$(id -u)\n' +
-    // The private runtime replaces the user's Node: their Node joins the user manager's PATH for harnesses.
+    // The private runtime replaces the user's Node: their Node joins the user manager's PATH, after the Bridge's own.
     '  MANAGER_PATH=$(systemctl --user show-environment 2>/dev/null | sed -n "s/^PATH=//p")\n' +
     '  SERVICE_PATH=""\n' +
     '  [ -n "$USER_NODE_DIR" ] && [ "$NODE" != "$USER_NODE" ] &&\n' +
