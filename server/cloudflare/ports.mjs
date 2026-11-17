@@ -1,6 +1,9 @@
 // What server/core needs on Cloudflare, shared by the Worker (public routes) and AccountObject (everything
 // authenticated): core's env from Worker variables, the deployment key, the Bridge package, the push relay.
 import { createServer } from '../core/app.mjs';
+import { createAuth } from '../core/auth.mjs';
+import { createDevices } from '../core/devices.mjs';
+import { createNotifications } from '../core/notifications.mjs';
 
 export const MAX_FRAME_BYTES = 1048576;
 const NO_BODY = new Set([101, 204, 205, 304]);
@@ -24,9 +27,13 @@ async function relayPost(env, body, timeoutSec) {
 }
 
 // ports: table, sockets, rpcInfo (the caller's).
-export const server = (env, ports) => createServer({ env: coreEnv(env), log: console.log, currentKey: async () => env.API_KEY ?? '',
-  presign: async () => (env.FILES ? `${env.API_URL}/bridge.tar.gz` : null),
-  relayPost: (url, body, timeoutSec) => relayPost(env, body, timeoutSec), ...ports });
+// Also core's auth, device rows and notifications, for sockets and alerts.
+export function server(env, ports) {
+  const all = { env: coreEnv(env), log: console.log, currentKey: async () => env.API_KEY ?? '',
+    presign: async () => (env.FILES ? `${env.API_URL}/bridge.tar.gz` : null),
+    relayPost: (url, body, timeoutSec) => relayPost(env, body, timeoutSec), ...ports };
+  return { ...createServer(all), auth: createAuth(all), devices: createDevices(all.table), notifications: createNotifications(all) };
+}
 
 export const toResponse = (out, method) => new Response(method === 'HEAD' || NO_BODY.has(out.status) ? null : out.body,
   { status: out.status, headers: out.headers });
