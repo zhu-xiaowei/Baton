@@ -36,7 +36,9 @@ import { removeDevice } from './v2/pairing.js';
 import { parsePreviewTarget } from './preview-link.js';
 import { openExternalLink, previewNativeAvailable } from './native-shell.js';
 import { CHECK_ICON_SVG, FOLDER_ICON_SVG, GIT_BRANCH_ICON_SVG, TERMINAL_ICON_SVG } from './components/icons.js';
-import { saveGitStatusView, shouldRestoreGitStatus } from './git/view-state.js';
+import {
+  GIT_DIFF_VIEW_KEY, saveGitDiffView, saveGitStatusView, shouldRestoreGitStatus,
+} from './git/view-state.js';
 import { deleteProjectDataCache } from './cache/project-data-cache.js';
 import {
   browseNewProjectPath,
@@ -1633,7 +1635,13 @@ function closeProjectTools(device, projectHash) {
 
 // Saved tool views name the Session they were opened on; a kept tool moves with the page.
 function saveKeptToolViews() {
-  if (state.gitStatusOpen) saveGitStatusView(state.appState);
+  if (state.gitStatusOpen) {
+    saveGitStatusView(state.appState);
+    try {
+      var diff = JSON.parse(sessionStorage.getItem(GIT_DIFF_VIEW_KEY) || 'null');
+      if (diff) saveGitDiffView(state.appState, diff);
+    } catch (error) {}
+  }
   if (document.getElementById('projectTerminalPage')) saveTerminalView(state.appState);
 }
 
