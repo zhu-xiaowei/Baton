@@ -26,7 +26,7 @@ const sealed = (config, t, code) => sealPair(t, Buffer.from(config.accountKey, '
 
 function show(print, url) {
   qrcode.generate(url, { small: true }, (qr) => print(qr));
-  print(url);
+  print(`Start URL: ${url}`);
 }
 
 // Resolves with the config to save once an App approved this computer; a new code every 10 minutes.

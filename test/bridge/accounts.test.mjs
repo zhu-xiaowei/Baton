@@ -16,7 +16,7 @@ test('a computer joins with K sealed by an App under the QR code secret, and che
     let code;
     const fetchImpl = async (url, { body }) => {
       // The link's one secret: the App derives the same code from it and seals K under it.
-      const p = () => Buffer.from(printed.find((line) => line.startsWith('https://w/#j=')).slice(13), 'base64url');
+      const p = () => Buffer.from(printed.find((line) => line.startsWith('Start URL: https://w/#j=')).slice(24), 'base64url');
       code ??= JSON.parse(body).code;
       const reply = url.endsWith('/start') ? { code, poll: 'poll-1', expiresIn: 600, web: 'https://w' }
         : ++polls === 1 ? { pending: true }

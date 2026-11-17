@@ -175,7 +175,7 @@ await bridgePackage(version);
 const accountId = secrets.API_KEY ? createHash('sha256').update(secrets.API_KEY).digest('hex').slice(0, 16) : '';
 const vars = { API_URL: `https://${API_HOST}`, WEB_URL: `https://${WEB_HOST}`, APP_VERSION: version, BRIDGE_VERSION: version, OPEN_REGISTRATION: 'true',
   CF_ACCOUNT_ID: ACCOUNT, R2_BUCKET: flags.bucket, ACCOUNT_ID: secrets.ACCOUNT_ID ?? accountId, API_KEY_NAME: secrets.API_KEY_NAME ?? '',
-  R2_PARENT_KEY_ID: secrets.R2_PARENT_KEY_ID ?? '' };
+  R2_PARENT_KEY_ID: secrets.R2_PARENT_KEY_ID ?? '', ...(INSTALL_HOST && { INSTALL_URL: `https://${INSTALL_HOST}` }) };
 const bindings = [{ type: 'assets', name: 'ASSETS' }, { type: 'r2_bucket', name: 'FILES', bucket_name: flags.bucket },
   { type: 'durable_object_namespace', name: 'ACCOUNT', class_name: 'AccountObject' },
   { type: 'durable_object_namespace', name: 'INDEX', class_name: 'IndexObject' },

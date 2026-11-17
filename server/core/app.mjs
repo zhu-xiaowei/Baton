@@ -85,7 +85,7 @@ export function createServer(ports) {
         deviceDisplayName: item.deviceDisplayName || item.deviceName, os: item.os ?? '', online: online.has(item.deviceName) })) };
     const meta = await accounts.meta(account);
     Object.assign(result, { apps: await accounts.listTokens(account), rotations: meta.rotations ?? [], hosted: !!meta.joinSecretHash,
-      self: (caller.tokenHash ?? '').slice(0, 12) });
+      ...(env.INSTALL_URL && { install: env.INSTALL_URL }), self: (caller.tokenHash ?? '').slice(0, 12) });
     if (env.CONNECTIONS_TABLE) {
       try {
         result.rpc = await ports.rpcInfo(account, bridges);
