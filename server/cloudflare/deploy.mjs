@@ -29,6 +29,8 @@ if (!API_HOST || [...domains, INSTALL_HOST ?? 'x.y'].some((d) => !/^[a-z0-9-]+(\
 const API = `https://api.cloudflare.com/client/v4/accounts/${ACCOUNT}`;
 const DATE = '2026-04-07';
 const RELAY = `${flags.name}-push`;
+// Tokens travel in WebSocket URL queries: logs must never record them.
+const OBSERVABILITY = { enabled: true, redact_query_string: true, logs: { enabled: true, invocation_logs: false, persist: true, head_sampling_rate: 1 } };
 const sh = (cmd, args, opts = {}) => (execFileSync(cmd, args, { cwd: ROOT, encoding: 'utf8', ...opts }) ?? '').trim();
 
 async function cf(method, route, body, { auth = TOKEN, ok404 = false } = {}) {
@@ -58,15 +60,20 @@ async function upload(name, metadata, modules, migrations) {
     const f = form();
     f.append('metadata', new Blob([JSON.stringify({ ...metadata, migrations })], { type: 'application/json' }));
     await cf('PUT', `/workers/scripts/${name}`, f);
-    version = (await cf('GET', `/workers/scripts/${name}/deployments`)).deployments[0].versions[0].version_id;
   } else {
     const f = form();
     f.append('metadata', new Blob([JSON.stringify(metadata)], { type: 'application/json' }));
     version = (await cf('POST', `/workers/scripts/${name}/versions`, f)).id;
     await cf('POST', `/workers/scripts/${name}/deployments`, { strategy: 'percentage', versions: [{ version_id: version, percentage: 100 }] });
   }
-  const live = (await cf('GET', `/workers/scripts/${name}/deployments`)).deployments[0].versions;
-  if (live.length !== 1 || live[0].version_id !== version || live[0].percentage !== 100) throw new Error(`${name}: version ${version} is not live`);
+  // Cloudflare can answer with the previous state for a few seconds (seen right after creating a Worker).
+  for (let attempt = 1; ; attempt++) {
+    const live = (await cf('GET', `/workers/scripts/${name}/deployments`)).deployments[0]?.versions ?? [];
+    version ??= live[0]?.version_id; // a new script's first version
+    if (live.length === 1 && live[0].version_id === version && live[0].percentage === 100) break;
+    if (attempt === 6) throw new Error(`${name}: version ${version} is not live`);
+    await new Promise((resolve) => setTimeout(resolve, 5000));
+  }
   await cf('POST', `/workers/scripts/${name}/subdomain`, { enabled: false, previews_enabled: false });
   console.log(`${name}: version ${version} live`);
 }
@@ -74,7 +81,7 @@ async function upload(name, metadata, modules, migrations) {
 async function deployRelay() {
   const key = fs.readFileSync(0, 'utf8').trim();
   if (!key) throw new Error('--relay needs the APNs key on stdin');
-  await upload(RELAY, { main_module: 'worker.mjs', compatibility_date: DATE, observability: { enabled: false },
+  await upload(RELAY, { main_module: 'worker.mjs', compatibility_date: DATE, observability: OBSERVABILITY,
     bindings: [{ type: 'durable_object_namespace', name: 'APNS_TOKEN', class_name: 'ApnsToken' }, { type: 'secret_text', name: 'APNS_KEY', text: key }] },
   [['push-relay/worker.mjs', 'worker.mjs']], { new_tag: 'v1', new_sqlite_classes: ['ApnsToken'] });
 }
@@ -126,7 +133,8 @@ const MIME = { html: 'text/html; charset=utf-8', js: 'text/javascript; charset=u
   css: 'text/css; charset=utf-8', svg: 'image/svg+xml', json: 'application/json', webmanifest: 'application/manifest+json', png: 'image/png',
   ico: 'image/vnd.microsoft.icon', wasm: 'application/wasm', woff2: 'font/woff2', webp: 'image/webp', jpg: 'image/jpeg', gif: 'image/gif',
   txt: 'text/plain; charset=utf-8', map: 'application/json' };
-const HEADERS = '/*\n  ! Cache-Control\n/*.html\n  Cache-Control: no-cache\n/assets/*.js\n  Cache-Control: public, max-age=31536000, immutable\n'
+// HTML may be read from any origin: a native App learns the API server of a link's page from its <meta name="baton-api">.
+const HEADERS = '/*\n  ! Cache-Control\n/*.html\n  Cache-Control: no-cache\n  Access-Control-Allow-Origin: *\n/assets/*.js\n  Cache-Control: public, max-age=31536000, immutable\n'
   + '/assets/*.css\n  Cache-Control: public, max-age=31536000, immutable\n';
 
 async function assets(name) {
@@ -177,7 +185,7 @@ const bindings = [{ type: 'assets', name: 'ASSETS' }, { type: 'r2_bucket', name:
 const modules = [...fs.readdirSync(path.join(ROOT, 'server/core')).filter((f) => f.endsWith('.mjs')).map((f) => `server/core/${f}`),
   ...['worker', 'account', 'store', 'ports', 'r2'].map((f) => `server/cloudflare/${f}.mjs`)].map((f) => [f, f]);
 await upload(flags.name, { main_module: 'server/cloudflare/worker.mjs', compatibility_date: DATE, bindings, assets: await assets(flags.name),
-  observability: { enabled: true } }, modules, { new_tag: 'v1', new_sqlite_classes: ['AccountObject', 'IndexObject'] });
+  observability: OBSERVABILITY }, modules, { new_tag: 'v1', new_sqlite_classes: ['AccountObject', 'IndexObject'] });
 for (const hostname of domains) await cf('PUT', '/workers/domains', { hostname, service: flags.name, zone_id: flags.zone, environment: 'production' });
 if (INSTALL_HOST) await installRoutes();
 console.log(`deployed ${[...domains, ...(INSTALL_HOST ? [`${INSTALL_HOST}/install(.ps1)`] : [])].join(', ')} (version ${version}${bindings.some((b) => b.name === 'PUSH') ? ', push relay bound' : ''})`);

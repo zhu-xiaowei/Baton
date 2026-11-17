@@ -3,7 +3,7 @@
 // With BATON_ORIGIN_SECRET each request poses as CloudFront relaying a random viewer, so rate limits never carry over.
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
-import { accountOf, openPair, sealPair } from '../../bridge/e2ee-node.mjs';
+import { accountOf, openPair, pairCode, sealPair } from '../../bridge/e2ee-node.mjs';
 import { importAccountKey, sealRotation } from '../../bridge/e2ee.mjs';
 
 export const BASE = process.env.BATON_URL?.replace(/\/$/, '');
@@ -35,7 +35,8 @@ export async function newAccount(deviceName = 'ct-app', opts = {}) {
 }
 
 export async function startComputer(deviceName) {
-  return { ...(await api('/api/pair/start', { deviceName })), t: randomBytes(16) };
+  const t = randomBytes(16);
+  return { ...(await api('/api/pair/start', { deviceName, code: pairCode(t) })), t };
 }
 
 export const approve = (token, k, start, status) =>

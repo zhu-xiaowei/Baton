@@ -13,12 +13,14 @@ test('a computer joins with K sealed by an App under the QR code secret, and che
   for (const claimed of [head, 'f'.repeat(16)]) {
     const printed = [];
     let polls = 0;
-    const fetchImpl = async (url) => {
-      const link = () => new URL(printed.find((line) => line.includes('#j=')).replace('#', '?')).searchParams;
-      const reply = url.endsWith('/start') ? { code: 'code-1', poll: 'poll-1', expiresIn: 600 }
+    let code;
+    const fetchImpl = async (url, { body }) => {
+      // The link's one secret: the App derives the same code from it and seals K under it.
+      const p = () => Buffer.from(printed.find((line) => line.startsWith('https://w/#j=')).slice(13), 'base64url');
+      code ??= JSON.parse(body).code;
+      const reply = url.endsWith('/start') ? { code, poll: 'poll-1', expiresIn: 600, web: 'https://w' }
         : ++polls === 1 ? { pending: true }
-          : { token: 'bt_x', head: claimed, approvedBy: 'iPhone',
-            sealed: await browser.sealPair(Buffer.from(link().get('t'), 'base64url'), k, link().get('j')) };
+          : { token: 'bt_x', head: claimed, approvedBy: 'iPhone', sealed: await browser.sealPair(p(), k, await browser.pairCode(p())) };
       return { ok: true, json: async () => reply };
     };
     const joining = join({ server: 'https://s/v1', deviceName: 'Mac' }, { print: (line) => printed.push(line), sleep: async () => {}, fetchImpl });

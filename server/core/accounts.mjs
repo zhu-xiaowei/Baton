@@ -151,14 +151,16 @@ export function createAccounts({ env, table, auth, devices, sockets, log }) {
     return { token: await issue(account, 'app', body.deviceName, body.install), accountId: account };
   }
 
+  // The client picks the code (a hash of its link's secret; format checked by Body); older Bridges let pair/start pick one.
+  async function newCode(code, item) {
+    if (await conditional(async () => table.putItem({ Item: { ...await pairKey(code), ...item, ttl: nowInt() + PAIR_SECONDS },
+      ConditionExpression: 'attribute_not_exists(pk)' })) === false) throw new HTTPError(409, 'Code in use.');
+  }
+
   async function pairCreate({ body, auth: caller }) {
     need(body, 'code', 'sealed');
     await ensureMeta(caller);
-    const Key = await pairKey(body.code);
-    if (await conditional(() => table.putItem({ Item: { ...Key, kind: 'app', accountId: caller.accountId, by: caller.tokenHash ?? '',
-      sealed: body.sealed, ttl: nowInt() + PAIR_SECONDS }, ConditionExpression: 'attribute_not_exists(pk)' })) === false) {
-      throw new HTTPError(409, 'Code in use.');
-    }
+    await newCode(body.code, { kind: 'app', accountId: caller.accountId, by: caller.tokenHash ?? '', sealed: body.sealed });
     return { expiresIn: PAIR_SECONDS, web: env.WEB_URL ?? '', ...api() };
   }
 
@@ -173,9 +175,8 @@ export function createAccounts({ env, table, auth, devices, sockets, log }) {
       throw new HTTPError(422, 'Device name is too long (64 characters at most).');
     }
     await rate(`start#${ip(request)}`, 10);
-    const [code, poll] = [tokenUrlsafe(16), tokenUrlsafe(16)];
-    await table.putItem({ Item: { ...await pairKey(code), kind: 'bridge', pollHash: await sha256(poll), deviceName: body.deviceName,
-      ttl: nowInt() + PAIR_SECONDS } });
+    const [code, poll] = [body.code || tokenUrlsafe(16), tokenUrlsafe(16)];
+    await newCode(code, { kind: 'bridge', pollHash: await sha256(poll), deviceName: body.deviceName });
     return { code, poll, expiresIn: PAIR_SECONDS, web: env.WEB_URL ?? '', ...api() };
   }
 

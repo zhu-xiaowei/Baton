@@ -5,7 +5,7 @@ import { randomBytes } from 'crypto';
 import fs from 'fs';
 import qrcode from 'qrcode-terminal';
 import { CONFIG_PATH, saveConfig } from './config.mjs';
-import { fingerprint, openPair, openRotation, sealPair } from './e2ee-node.mjs';
+import { fingerprint, openPair, openRotation, pairCode, sealPair } from './e2ee-node.mjs';
 
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -19,10 +19,9 @@ async function call(config, path, body, fetchImpl = fetch) {
   return reply;
 }
 
-// `web` (the server's reply): where the App is served, which also serves its data socket.
-// `api`: a server whose Web App has its own origin names its API server (`s`).
-const link = (kind, code, t, web, server, api) => `${web || server}/landing.html#${kind}=${code}&t=${t.toString('base64url')}`
-  + (api ? `&s=${encodeURIComponent(api)}` : '');
+// One secret per link (`p`): the server sees only pairCode(p), and K is sealed under p. `web` (the server's reply)
+// is where the App is served; that page knows its API server, so the link needs only the fragment.
+const link = (kind, p, web, server) => `${web || server}/#${kind}=${p.toString('base64url')}`;
 const sealed = (config, t, code) => sealPair(t, Buffer.from(config.accountKey, 'base64'), code);
 
 function show(print, url) {
@@ -34,9 +33,9 @@ function show(print, url) {
 export async function join(config, { print = console.log, sleep = pause, fetchImpl = fetch } = {}) {
   for (;;) {
     const t = randomBytes(16);
-    const { code, poll, expiresIn, web, api } = await call(config, '/api/pair/start', { deviceName: config.deviceName }, fetchImpl);
+    const { code, poll, expiresIn, web } = await call(config, '/api/pair/start', { deviceName: config.deviceName, code: pairCode(t) }, fetchImpl);
     print('\nScan with the Baton app on your phone to add this computer:');
-    show(print, link('j', code, t, web, config.server, api));
+    show(print, link('j', t, web, config.server));
     for (const end = Date.now() + expiresIn * 1000; Date.now() < end; await sleep(2000)) {
       const reply = await call(config, '/api/pair/wait', { code, poll }, fetchImpl).catch((error) => (error.status === 404 ? null : { pending: true }));
       if (!reply) break;
@@ -53,17 +52,19 @@ export async function join(config, { print = console.log, sleep = pause, fetchIm
 // A one-use link that adds a new App to this computer's account (`pair`, the App's `pair_invite`).
 export async function createInvite(config) {
   const t = randomBytes(16);
-  const code = randomBytes(16).toString('base64url');
-  const { expiresIn, web, api } = await call(config, '/api/pair/create', { code, sealed: sealed(config, t, code) });
-  return { link: link('c', code, t, web, config.server, api), expiresIn };
+  const code = pairCode(t);
+  const { expiresIn, web } = await call(config, '/api/pair/create', { code, sealed: sealed(config, t, code) });
+  return { link: link('c', t, web, config.server), expiresIn };
 }
 
 // Adds the computer that printed `url` to this computer's account (`pair <link>`, the App's `pair_approve`).
 export function approveJoin(config, url) {
   const params = new URLSearchParams(String(url).split('#')[1] || '');
-  if (!params.get('j') || !params.get('t')) throw new Error('not a computer\'s join code');
-  const t = Buffer.from(params.get('t'), 'base64url');
-  return call(config, '/api/pair/approve', { code: params.get('j'), sealed: sealed(config, t, params.get('j')) });
+  if (!params.get('j')) throw new Error('not a computer\'s join code');
+  // Older links: `j` is the code itself and `t` the secret.
+  const t = Buffer.from(params.get('t') || params.get('j'), 'base64url');
+  const code = params.get('t') ? params.get('j') : pairCode(t);
+  return call(config, '/api/pair/approve', { code, sealed: sealed(config, t, code) });
 }
 
 // The newest K after rotations made while this computer was away or just now (`account_rotated`), or null.
