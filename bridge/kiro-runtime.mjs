@@ -481,7 +481,8 @@ export default defineRuntimeAdapter({
     const ids = (sessionIndex.catalog().byProject.get(projectHash) || []).filter((row) => row.rec.runtime === 'kiro').map((row) => row.rec.id);
     // Session deletes are guarded by ws.mjs; a project's are checked here.
     if (ids.some((id) => conns.has(id) || kiroInteraction.heldElsewhere(id))) throw new Error('a Session is in use');
-    await Promise.all(ids.map(deleteSession));
+    const failed = (await Promise.allSettled(ids.map(deleteSession))).find((r) => r.status === 'rejected');
+    if (failed) throw failed.reason;
     return true;
   },
   createStatusContext: () => ({ leases: kiro.catalog.running() }),
