@@ -26,6 +26,8 @@ const conns = new Map(); // native id → { key, cwd, id, rpc, ready, loaded, tu
 const drains = new Map(); // jsonl → { reader, from, busy, again }
 const commands = new Map(); // cwd → ACP available commands
 const warm = new Map(); // cwd → a prewarmed connection: initialized only (no session, no lease, nothing written)
+// Kiro lists /goal and /workflow-* only for clients that enable them; a Session keeps the workflows switch it was created or loaded with.
+const SETTINGS = { workflows: { enabled: true }, goal: { enabled: true } };
 let bin = null;
 let config = null;
 let spawned = 0;
@@ -47,7 +49,7 @@ function connect(cwd) {
       if (c.turn) endTurn(c, c.turn, 'error', 'Kiro exited');
     });
     await c.rpc.request('initialize', { protocolVersion: 1, clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false,
-      elicitation: { form: {} }, _meta: { kiro: { userInput: true } } },
+      elicitation: { form: {} }, _meta: { kiro: { userInput: true, settings: SETTINGS } } },
       clientInfo: { name: CLIENT, version: BRIDGE_VERSION } }, { timeoutMs: 60_000 });
   })();
   return c;
@@ -348,7 +350,7 @@ const kiroInteraction = defineInteractionAdapter({
       conns.set(id, c = takeWarm(cwd) || connect(cwd));
       c.id = id;
       // History comes from the files, so the load does not replay it.
-      c.loaded = c.ready.then(() => c.rpc.request('session/load', { sessionId: id, cwd, mcpServers: [], _meta: { kiro: { noReplay: true } } }, { timeoutMs: 60_000 }));
+      c.loaded = c.ready.then(() => c.rpc.request('session/load', { sessionId: id, cwd, mcpServers: [], _meta: { kiro: { noReplay: true, settings: SETTINGS } } }, { timeoutMs: 60_000 }));
     }
     const turn = newTurn(c, sessionId, streamId, callbacks);
     const file = sessionFile(id);
@@ -367,7 +369,7 @@ const kiroInteraction = defineInteractionAdapter({
     const c = takeWarm(cwd) || connect(cwd);
     try {
       await c.ready;
-      const result = await c.rpc.request('session/new', { cwd, mcpServers: [] }, { timeoutMs: 60_000 });
+      const result = await c.rpc.request('session/new', { cwd, mcpServers: [], _meta: { kiro: { settings: SETTINGS } } }, { timeoutMs: 60_000 });
       Object.assign(c, { id: result.sessionId, loaded: Promise.resolve(), created: true });
       conns.set(c.id, c);
       // ACP starts at the service default; the user's own default (as the TUI reads it) applies here.
