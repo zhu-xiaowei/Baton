@@ -45,7 +45,9 @@ async function presign() {
   const signature = createHmac('sha1', secretAccessKey)
     .update(`GET\n\n\n${expires}\n${token.map(([name, value]) => `${name}:${value}\n`).join('')}/${bucket}/${key}`).digest('base64');
   const query = [['AWSAccessKeyId', accessKeyId], ['Signature', signature], ...token, ['Expires', expires]];
-  return `https://${bucket}.s3.amazonaws.com/${key}?${query.map(([name, value]) => `${name}=${rfc3986(value)}`).join('&')}`;
+  // A name that is not a DNS label (dots) is addressed by path on the regional endpoint.
+  const base = /^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/.test(bucket) ? `${bucket}.s3.amazonaws.com` : `s3.${region()}.amazonaws.com/${bucket}`;
+  return `https://${base}/${key}?${query.map(([name, value]) => `${name}=${rfc3986(value)}`).join('&')}`;
 }
 
 // ---- Lambda entry ----

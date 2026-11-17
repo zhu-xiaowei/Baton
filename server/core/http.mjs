@@ -82,13 +82,13 @@ function readBody(bytes, contentType) {
   try {
     return { value: loads(source) };
   } catch (error) {
-    if (!(error instanceof JSONDecodeError)) throw error;
+    if (!(error instanceof JSONDecodeError)) throw new HTTPError(400, 'There was an error parsing the body');
     throw Object.assign(new Error('json'), { errors: [{ type: 'json_invalid', loc: ['body', error.pos], msg: 'JSON decode error',
       input: {}, ctx: { error: error.message } }] });
   }
 }
 
-const echo = (input) => (input?.bytes ? new TextDecoder('utf-8', { fatal: true }).decode(input.bytes) : input);
+const echo = (input) => (input?.bytes ? new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(input.bytes) : input);
 
 // Path, then query, then body errors, as FastAPI's solve_dependencies collects them.
 async function solve(route, { url, headers }, bytes) {

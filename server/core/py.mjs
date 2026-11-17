@@ -46,6 +46,11 @@ export const nowInt = () => Math.floor(Date.now() / 1000);
 export class PyFloat {
   constructor(value) { this.value = value; }
 }
+export class RecursionError extends Error {}
+const MAX_DEPTH = 9997; // json.loads' nesting limit (C recursion limit)
+const NUMBER = /-?(?:0|[1-9][0-9]*)(\.[0-9]+)?([eE][-+]?[0-9]+)?/y;
+// jsonable_encoder's (Python frames) nesting limit for a response, as measured in FastAPI's handler
+const MAX_ENCODE_DEPTH = 976;
 export class JSONDecodeError extends Error {
   constructor(msg, pos) {
     super(msg);
@@ -92,53 +97,71 @@ export function loads(text) {
       out += String.fromCodePoint(code);
     }
   };
-  const value = (at) => {
+  const scalar = (at) => {
     if (at >= text.length) fail('Expecting value', at);
-    const c = text[at];
-    if (c === '"') return string(at + 1);
-    if (c === '{') {
-      const object = new Map();
-      at = ws(at + 1);
-      if (text[at] === '}') return [object, at + 1];
-      for (;;) {
-        if (text[at] !== '"') fail('Expecting property name enclosed in double quotes', at);
-        const [key, afterKey] = string(at + 1);
-        at = ws(afterKey);
-        if (text[at] !== ':') fail("Expecting ':' delimiter", at);
-        const [item, afterValue] = value(ws(at + 1));
-        object.set(key, item);
-        at = ws(afterValue);
-        if (text[at] === '}') return [object, at + 1];
-        if (text[at] !== ',') fail("Expecting ',' delimiter", at);
-        at = ws(at + 1);
-      }
-    }
-    if (c === '[') {
-      const array = [];
-      at = ws(at + 1);
-      if (text[at] === ']') return [array, at + 1];
-      for (;;) {
-        const [item, after] = value(at);
-        array.push(item);
-        at = ws(after);
-        if (text[at] === ']') return [array, at + 1];
-        if (text[at] !== ',') fail("Expecting ',' delimiter", at);
-        at = ws(at + 1);
-      }
-    }
+    if (text[at] === '"') return string(at + 1);
     for (const [word, result, room] of [['null', null, 3], ['true', true, 3], ['false', false, 4],
       ['NaN', new PyFloat(NaN), 2], ['Infinity', new PyFloat(Infinity), 7], ['-Infinity', new PyFloat(-Infinity), 8]]) {
       if (at + room < text.length && text.startsWith(word, at)) return [result, at + word.length];
     }
-    const number = /^-?(?:0|[1-9][0-9]*)(\.[0-9]+)?([eE][-+]?[0-9]+)?/.exec(text.slice(at));
+    NUMBER.lastIndex = at;
+    const number = NUMBER.exec(text);
     if (!number) fail('Expecting value', at);
     const raw = number[0];
     if (number[1] || number[2]) return [new PyFloat(Number(raw)), at + raw.length];
+    // int() refuses more than 4300 digits (a ValueError, not a JSON error)
+    if (raw.replace('-', '').length > 4300) throw new RangeError('Exceeds the limit (4300 digits) for integer string conversion');
     return [Number.isSafeInteger(Number(raw)) ? Number(raw) : BigInt(raw), at + raw.length];
   };
-  const [result, end] = value(ws(0));
-  if (ws(end) !== text.length) fail('Extra data', ws(end));
-  return result;
+  const key = (at) => {
+    if (text[at] !== '"') fail('Expecting property name enclosed in double quotes', at);
+    const [name, end] = string(at + 1);
+    const colon = ws(end);
+    if (text[colon] !== ':') fail("Expecting ':' delimiter", colon);
+    return [name, ws(colon + 1)];
+  };
+  // Containers on an explicit stack; deeper than CPython's C recursion limit is a RecursionError.
+  const stack = [];
+  let at = ws(0);
+  for (;;) {
+    let value;
+    let end;
+    if (text[at] === '{' || text[at] === '[') {
+      if (stack.length >= MAX_DEPTH) throw new RecursionError('maximum recursion depth exceeded while decoding a JSON document');
+      const container = text[at] === '{' ? new Map() : [];
+      const inner = ws(at + 1);
+      if (text[inner] === (container instanceof Map ? '}' : ']')) {
+        [value, end] = [container, inner + 1];
+      } else {
+        const frame = { container };
+        if (container instanceof Map) [frame.key, at] = key(inner);
+        else at = inner;
+        stack.push(frame);
+        continue;
+      }
+    } else {
+      [value, end] = scalar(at);
+    }
+    for (;;) {
+      const top = stack.at(-1);
+      if (!top) {
+        if (ws(end) !== text.length) fail('Extra data', ws(end));
+        return value;
+      }
+      if (top.container instanceof Map) top.container.set(top.key, value);
+      else top.container.push(value);
+      at = ws(end);
+      if (text[at] === (top.container instanceof Map ? '}' : ']')) {
+        stack.pop();
+        [value, end] = [top.container, at + 1];
+        continue;
+      }
+      if (text[at] !== ',') fail("Expecting ',' delimiter", at);
+      at = ws(at + 1);
+      if (top.container instanceof Map) [top.key, at] = key(at);
+      break;
+    }
+  }
 }
 
 export function floatRepr(value) {
@@ -152,8 +175,9 @@ export function floatRepr(value) {
 
 // json.dumps(ensure_ascii=False, allow_nan=False, separators=(",", ":")), as JSONResponse renders, or with
 // `plain` json.dumps' defaults (", ", ": ", ASCII only), as the Python server sent JSON to AWS.
-export function dumps(value, plain = false) {
-  const item = (inner) => dumps(inner, plain);
+export function dumps(value, plain = false, depth = 0) {
+  if (depth > MAX_ENCODE_DEPTH) throw new RecursionError('maximum recursion depth exceeded');
+  const item = (inner) => dumps(inner, plain, depth + 1);
   if (value === null || value === undefined) return 'null';
   if (value instanceof PyFloat) return floatRepr(value.value);
   if (typeof value === 'bigint') return String(value);
@@ -213,9 +237,9 @@ export function validate(fields, input, loc) {
 // A str field constrained like pydantic's Field(pattern=...): `source` is the Python pattern.
 export const pattern = (source, extra = {}) => ({ source, pattern: source.replace(/\\w/g, WORD), ...extra });
 
-// A loads() result as plain JavaScript values.
-export const plain = (value) => (value instanceof Map ? Object.fromEntries([...value].map(([key, item]) => [key, plain(item)]))
-  : Array.isArray(value) ? value.map(plain) : value instanceof PyFloat ? value.value : value);
+// A loads() object's top level as a plain object (nested values stay as loads() returned them).
+export const plain = (value) => (value instanceof Map ? Object.fromEntries([...value].map(([key, item]) => [key, item instanceof PyFloat ? item.value : item]))
+  : value);
 
 // urllib.parse.unquote: %XX runs decoded as UTF-8, invalid bytes replaced.
 export const unquote = (text) => text.replace(/(?:%[0-9a-fA-F]{2})+/g,
