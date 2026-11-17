@@ -129,7 +129,8 @@ export async function signUrl({ method, host, path, region, credentials, expires
 }
 
 // SigV4 header authentication for one AWS API request (the server's DynamoDB, STS, API Gateway and
-// push relay calls): the headers to send besides `headers`.
+// push relay calls): the headers to send besides `headers`. The day's signing key is derived once.
+const signingKeys = new Map();
 export async function signHeaders({ method, url, region, service, credentials, headers = {}, body = '', now = new Date() }) {
   const target = new URL(url);
   const stamp = now.toISOString().replace(/[:-]|\.\d{3}/g, '');
@@ -145,9 +146,17 @@ export async function signHeaders({ method, url, region, service, credentials, h
   const path = target.pathname.split('/').map(rfc3986).join('/');
   const canonical = [method, path, query, names.map((name) => `${name}:${signed[name]}\n`).join(''),
     names.join(';'), await sha256Hex(body)].join('\n');
-  let signingKey = await hmac(`AWS4${credentials.secretAccessKey}`, date);
-  for (const part of [region, service, 'aws4_request']) signingKey = await hmac(signingKey, part);
-  const signature = hex(await hmac(signingKey, `AWS4-HMAC-SHA256\n${stamp}\n${scope}\n${await sha256Hex(canonical)}`));
+  const id = `${credentials.accessKeyId}/${scope}`;
+  if (!signingKeys.has(id)) {
+    if (signingKeys.size > 16) signingKeys.clear();
+    signingKeys.set(id, (async () => {
+      let key = await hmac(`AWS4${credentials.secretAccessKey}`, date);
+      for (const part of [region, service, 'aws4_request']) key = await hmac(key, part);
+      return crypto.subtle.importKey('raw', key, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+    })());
+  }
+  const toSign = `AWS4-HMAC-SHA256\n${stamp}\n${scope}\n${await sha256Hex(canonical)}`;
+  const signature = hex(await crypto.subtle.sign('HMAC', await signingKeys.get(id), encoder.encode(toSign)));
   return { ...added, authorization: `AWS4-HMAC-SHA256 Credential=${credentials.accessKeyId}/${scope}, SignedHeaders=${names.join(';')}, Signature=${signature}` };
 }
 
