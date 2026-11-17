@@ -1,6 +1,6 @@
 import { mountThemeSettings } from './theme.js';
 // Entry for setup.html — install command + Start URL QR
-import { state } from './state.js';
+import { defaultServer, state } from './state.js';
 import './api.js';
 import { mountBackButton } from './components/back-button.js';
 import { attachPageEdgeBackGesture } from './edge-back.js';
@@ -28,7 +28,7 @@ setNativeTabTitle('Settings');
   // Auth guard: handle ?key= URL param, redirect if missing key
   var urlKey = new URLSearchParams(location.search).get('key');
   if (urlKey) {
-    setCredentials(urlKey, location.origin + location.pathname.replace(/\/[^/]*$/, ''));
+    setCredentials(urlKey, defaultServer());
     history.replaceState(null, '', location.pathname);
   }
   if (!state.KEY) { location.replace('landing.html'); return; }

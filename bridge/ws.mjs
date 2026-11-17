@@ -90,12 +90,15 @@ let _resumeProbeTimer = null;
 let _pendingPing = null;
 let _pingSequence = 0;
 let _consecutiveFailures = 0;
+let _relay = false; // the server announced relay transport (one socket); kept for reconnect timing
 const _sendWhenConnected = [];
 const HEARTBEAT_INTERVAL = 4 * 60_000;
 const HEARTBEAT_TIMEOUT = 10_000;
 const PING_INTERVAL = 20_000;
 const PING_TIMEOUT = 5_000;
 const RECONNECT_DELAY = 5_000;
+const RELAY_RETRY_JITTER = 5_000;
+const RELAY_RETRY_MAX = 60_000;
 const CONNECT_TIMEOUT = 5_000;
 
 // onExit only fires when a process exits during an active turn or with prompts unanswered.
@@ -216,7 +219,8 @@ async function terminalStream(frame) {
 
 async function previewStream(frame) {
   _previewBridgeLoading ||= import('./preview-bridge.mjs').then(({ createPreviewBridge }) => {
-    _previewBridge = createPreviewBridge({ channel: (frame) => streamChannel('preview', frame.id, frame.from, frame.inflate === 1) });
+    _previewBridge = createPreviewBridge({ channel: (frame) => streamChannel('preview', frame.id, frame.from, frame.inflate === 1),
+      frameBytes: () => (_directRpc?.relay ? _directRpc.maxFrameBytes : 0) });
     return _previewBridge;
   }).catch(error => { _previewBridgeLoading = null; throw error; });
   try {
@@ -780,6 +784,7 @@ function connect() {
       accounts: !!_config.accounts,
       saveAccountKey: (raw) => { Object.assign(_config, { accountKey: raw.toString('base64'), accountKeyAt: Date.now() }); saveConfig(_config); },
       sendControl: message => send(JSON.stringify(message)),
+      controlSocket: socket,
       subscribers: _subscribers,
       limited: limitedRequest,
       streams: { terminal: terminalStream, preview: previewStream },
@@ -858,7 +863,9 @@ function connect() {
   socket.on('message', async (data) => {
     if (_ws !== socket) return;
     try {
-      const msg = JSON.parse(data.toString());
+      const text = data.toString();
+      const msg = JSON.parse(text);
+      if (msg.kind && _directRpc?.relay) return _directRpc.receiveFrame(msg, text.length);
       if (msg.action === 'heartbeat') {
         _consecutiveFailures = 0;
         clearTimeout(_heartbeatTimeout);
@@ -872,6 +879,13 @@ function connect() {
 
   socket.on('close', (code, reason) => {
     if (_ws !== socket) return;
+    // Relay refusals: 4401 a removed device (paired) or a wrong key, 4403 a wrong role or device.
+    if (code === 4401 && _config?.accounts) { void handleMessage({ action: 'device_removed' }); return; }
+    if (code === 4401 || code === 4403) {
+      console.log(`[ws] refused by the server (code=${code}); stopping reconnects`);
+      resetConnection();
+      return;
+    }
     console.log(`[ws] disconnected (code=${code}, reason=${reason?.toString() || ''}), reconnecting...`);
     scheduleReconnect();
   });
@@ -922,10 +936,13 @@ function resetConnection() {
 
 function scheduleReconnect() {
   if (!_config) return;
+  _relay ||= !!_directRpc?.relay;
   resetConnection();
   if (_reconnectTimer) return;
   _consecutiveFailures += 1;
-  const delay = _consecutiveFailures === 1 ? 0 : RECONNECT_DELAY;
+  // Relay: many Bridges reconnect at once after a deploy, so every retry is jittered and backs off.
+  const delay = _relay ? Math.round(Math.random() * RELAY_RETRY_JITTER) + Math.min(RELAY_RETRY_MAX, _consecutiveFailures === 1 ? 0 : 1000 * 2 ** (_consecutiveFailures - 2))
+    : _consecutiveFailures === 1 ? 0 : RECONNECT_DELAY;
   console.log(`[ws] retry ${_consecutiveFailures} in ${delay}ms`);
   _reconnectTimer = setTimeout(() => {
     _reconnectTimer = null;
@@ -1034,7 +1051,7 @@ function viewedOnApp(rootSessionId, eventId) {
     _directRpc.publish({ action: 'notify_check', rootSessionId, eventId }, targets);
   });
 }
-configureNotifier({ post, history: params => historyService.history(params), viewed: viewedOnApp,
+configureNotifier({ post, sendAlert: (frame) => (_relay || _directRpc?.relay ? wsSend(frame) : null), history: params => historyService.history(params), viewed: viewedOnApp,
   notifyKey: () => _directRpc?.keys?.notifyKey });
 setTransferKeys(() => _directRpc?.keys?.files() || null);
 setTransferAccess(() => {

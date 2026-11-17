@@ -15,7 +15,7 @@ export function parseLink(text) {
   const t = params.get('t');
   if (!kind || !t) return null;
   return { text: url.href, kind, code: params.get(kind), t: fromBase64(t.replace(/-/g, '+').replace(/_/g, '/')),
-    server: url.origin + url.pathname.replace(/\/[^/]*$/, '') };
+    server: (/^https:\/\//.test(params.get('s') || '') && params.get('s').replace(/\/$/, '')) || url.origin + url.pathname.replace(/\/[^/]*$/, '') };
 }
 
 // "iPhone" for the App, "Safari on iPhone" for a browser: how the account's device list tells them apart.

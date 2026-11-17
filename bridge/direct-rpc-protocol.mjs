@@ -6,7 +6,6 @@
 export const RPC_VERSION = 2;
 const COMPRESS_MIN = 1024;
 const CHUNK_CHARS = 20000;
-const JSON_CHUNK_CHARS = 6000;
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
@@ -38,12 +37,13 @@ export function rpcRequest({ requestId, method, params = {}, replyTo, missing, a
 // A request whose params do not fit one frame (a long message) is sent as chunks of its params,
 // sealed (e2ee.mjs session) and sent as chunks of its params, however short; only `account_key`
 // goes as it is. `deflate` may return a Promise (browser streams).
-export async function rpcRequestFrames(request, deflate, seal) {
+// `chunk`: chunk length on relay (relayChunkChars), else CHUNK_CHARS.
+export async function rpcRequestFrames(request, deflate, seal, chunk = CHUNK_CHARS) {
   const { params, ...head } = request;
   const data = await sealJson(head, JSON.stringify(params), deflate, seal);
-  const count = Math.ceil(data.length / CHUNK_CHARS);
+  const count = Math.ceil(data.length / chunk);
   return Array.from({ length: count }, (_, index) => ({ ...head, chunk: { index, count }, enc: 'e',
-    data: data.slice(index * CHUNK_CHARS, (index + 1) * CHUNK_CHARS) }));
+    data: data.slice(index * chunk, (index + 1) * chunk) }));
 }
 
 export function isRpcRequest(frame) {
@@ -59,20 +59,23 @@ function sealJson(head, json, deflate, seal) {
   return packed.then ? packed.then((out) => seal(head, out, 1)) : seal(head, packed, 1);
 }
 
-function chunkFrames(head, value, deflate, seal) {
+// A relay frame (no signing, `maxFrameBytes` announced) holds a quarter of its limit in chunk data.
+export const relayChunkChars = (maxFrameBytes) => Math.floor(maxFrameBytes / 4);
+
+function chunkFrames(head, value, deflate, seal, chunk = CHUNK_CHARS) {
   const json = JSON.stringify(value);
   const enc = seal ? 'e' : 'json'; // clear only for `account_key`
   const data = seal ? sealJson(head, json, deflate, seal) : json;
   // JSON chunks may be multi-byte UTF-8 and are escaped again inside the signed frame.
-  const size = enc === 'json' ? JSON_CHUNK_CHARS : CHUNK_CHARS;
+  const size = enc === 'json' ? Math.floor(chunk * 3 / 10) : chunk; // 6000 at CHUNK_CHARS
   const count = Math.max(1, Math.ceil(data.length / size));
   return Array.from({ length: count }, (_, index) => ({
     v: RPC_VERSION, ...head, chunk: { index, count }, enc, data: data.slice(index * size, (index + 1) * size),
   }));
 }
 
-export function rpcResultFrames(requestId, result, { deflate, method, seal } = {}) {
-  return chunkFrames({ kind: 'rpc_result', requestId, method, ok: true }, result, deflate, seal);
+export function rpcResultFrames(requestId, result, { deflate, method, seal, chunk } = {}) {
+  return chunkFrames({ kind: 'rpc_result', requestId, method, ok: true }, result, deflate, seal, chunk);
 }
 
 export function rpcErrorFrame(requestId, error, method, seal) {
@@ -93,8 +96,8 @@ export function rpcProgressFrame(requestId, progress, seal) {
 }
 
 // A pushed Session event; `event` and `sessionId` stay readable next to the encoded payload.
-export function pushFrames(id, event, { deflate, seal } = {}) {
-  return chunkFrames({ kind: 'push', id, event: event.action, sessionId: event.sessionId }, event, deflate, seal);
+export function pushFrames(id, event, { deflate, seal, chunk } = {}) {
+  return chunkFrames({ kind: 'push', id, event: event.action, sessionId: event.sessionId }, event, deflate, seal, chunk);
 }
 
 // Collects the chunks of a reply or push by id; returns { done, payload | error } once every

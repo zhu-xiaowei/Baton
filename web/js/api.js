@@ -1,7 +1,7 @@
 // API client — unified util for all pages
 // Credentials default to localStorage; can be overridden per-call via opts.{key,server} (used by landing.html before login)
 
-import { state } from './state.js';
+import { defaultServer, state } from './state.js';
 import { clearListCaches } from './list-cache.js';
 import { clearProjectDataCache } from './cache/project-data-cache.js';
 import { showImageViewer } from './components/image-viewer.js';
@@ -17,7 +17,7 @@ import { forgetAccountKey } from './v2/account-key.js';
 import { loadLatestHistory, loadOlderHistory } from './v2/history.js';
 import { transfer } from '../../bridge/transfer-store.mjs';
 
-state.SERVER = (localStorage.getItem('_as') || (location.origin + location.pathname.replace(/\/[^/]*$/, ''))).replace(/\/$/, '');
+state.SERVER = (localStorage.getItem('_as') || defaultServer()).replace(/\/$/, '');
 state.KEY = (function () {
   try {
     var v = localStorage.getItem('_ak');

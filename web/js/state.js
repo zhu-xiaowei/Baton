@@ -2,6 +2,10 @@
 // All cross-module reads/writes go through this object — never reassign cross-module bare vars.
 // (Module-private vars stay in their owning file as plain `var`.)
 
+// This page's API server: the deployment's <meta name="baton-api"> when the Web App has its own origin, else this origin.
+export const defaultServer = () => (document.querySelector('meta[name="baton-api"]')?.content
+  || location.origin + location.pathname.replace(/\/[^/]*$/, '')).replace(/\/$/, '');
+
 export const state = {
   // ---- Credentials (api.js) ----
   KEY: '',

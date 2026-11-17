@@ -1,15 +1,18 @@
 import { previewInvoke as invoke, previewListen as listen } from './preview-native.js';
-import { PREVIEW_ACK_BYTES, validatePreviewMessage } from '../../bridge/preview-protocol.mjs';
-import { openStream } from './v2/direct-transport.js';
+import { previewSizes, validatePreviewMessage } from '../../bridge/preview-protocol.mjs';
+import { openStream, relayFrameBytes } from './v2/direct-transport.js';
 
 const CHUNK_BYTES = 16 * 1024;
 const WINDOW_BYTES = 128 * 1024;
-const MAX_PENDING_BYTES = 512 * 1024;
 const CHANNEL_HIGH_BYTES = 256 * 1024;
 const RETRANSMIT_MS = 1500;
 const RETRANSMIT_CHECK_MS = 500;
 const RECONNECT_DELAYS_MS = [0, 1000, 2000, 4000, 8000];
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// Bridge output arrives in chunks of `previewSizes().chunk` (larger on relay); native writes take CHUNK_BYTES.
+const NATIVE_CHARS = 4 * Math.floor(CHUNK_BYTES / 3);
+const sizes = () => previewSizes(relayFrameBytes());
 
 // Native listeners outlive a webview reload; release this window's leftovers before the first start.
 let nativeReset = null;
@@ -86,7 +89,7 @@ export class PreviewTunnel {
 
   bridgeMessage(value) {
     let message;
-    try { message = validatePreviewMessage(value, 'bridge'); } catch { return this.lost('Invalid preview frame'); }
+    try { message = validatePreviewMessage(value, 'bridge', sizes().chunk); } catch { return this.lost('Invalid preview frame'); }
     if (message.type === 'started') return this.resolveReady?.();
     // The Bridge restarted and no longer knows this tunnel.
     if (message.type === 'gone') return this.lost('Preview connection closed');
@@ -329,7 +332,7 @@ export class PreviewTunnel {
         return;
       }
       if (message.seq > stream.nextIncoming + 32
-        || stream.pendingBytes + decodedLength(message.data) > MAX_PENDING_BYTES) {
+        || stream.pendingBytes + decodedLength(message.data) > 8 * sizes().ack) {
         this.closeStream(stream.id, true);
         return;
       }
@@ -364,13 +367,14 @@ export class PreviewTunnel {
         const data = stream.pendingIncoming.get(seq);
         stream.pendingIncoming.delete(seq);
         stream.pendingBytes -= decodedLength(data);
-        await invoke('preview_write', { streamId: stream.id, data });
+        const step = decodedLength(data) > CHUNK_BYTES ? NATIVE_CHARS : data.length;
+        for (let i = 0; i < data.length; i += step) await invoke('preview_write', { streamId: stream.id, data: data.slice(i, i + step) });
         if (!this.streams.has(stream.id)) return;
         this.inboundBytes += decodedLength(data);
         this.onTraffic?.(this.inboundBytes);
         stream.lastWritten = seq;
         stream.unackedBytes = (stream.unackedBytes || 0) + decodedLength(data);
-        if (stream.unackedBytes < PREVIEW_ACK_BYTES) continue;
+        if (stream.unackedBytes < sizes().ack) continue;
         stream.unackedBytes = 0;
         if (!this.channel.send({ type: 'ack', streamId: stream.id, seq })) {
           this.closeStream(stream.id, true);

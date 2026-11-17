@@ -5,7 +5,7 @@
 // every event.
 // One requestId per request: the Bridge answers a resend from its stored reply, never twice.
 import { state } from '../state.js';
-import { RpcAssembler, createHeaderSigner, decodeRpcPayload, fromBase64, openStreamMessage, packStreamMessage, rpcRequest,
+import { RpcAssembler, createHeaderSigner, decodeRpcPayload, fromBase64, openStreamMessage, packStreamMessage, relayChunkChars, rpcRequest,
   rpcRequestFrames, sealStreamMessage, streamFrame, toBase64, unpackStreamMessage } from '../../../bridge/direct-rpc-protocol.mjs';
 import { appKeys, fingerprint, openRotation } from '../../../bridge/e2ee.mjs';
 import { loadAccountKey, saveAccountKey } from './account-key.js';
@@ -17,6 +17,7 @@ const SLOW_MS = 6000;
 const DEADLINE_MS = 12000;
 const LATE_RESEND_MS = 2000; // a first send later than SLOW_MS - this (cold start) is resent this soon after it
 const PING_MS = 60000;
+const RELAY_PING_MS = 25000;
 const PROBE_MS = 1000;
 // A request this long without any inbound frame pings the socket (rebuilt after the same wait
 // without an answer); a request that asked for a receipt and has none is sent again.
@@ -36,13 +37,14 @@ const CAN_DEFLATE = typeof CompressionStream === 'function' && (() => {
 })();
 
 const routes = new Map();     // device → { online, dataId, version }
-let rpc = null;               // { endpoint, region, credentials }
+let rpc = null;               // { endpoint, region, credentials } (relay: { relay, url, maxFrameBytes, credentials })
 let socket = null;
 let connectionId = '';
 let lastId = '';                // the latest connection id, kept across a drop
 let dataUrl = '';
 let retryTimer = null;
 let retries = 0;              // consecutive drops since the last whoami
+let refused = false;          // the relay closed with 4401/4403: no reconnects
 let pingTimer = null;
 let tickTimer = null;
 let lastInboundAt = 0;
@@ -100,14 +102,17 @@ function restore() {
 function applyRpc(next, { persist = true } = {}) {
   if (!next) return;
   // The region is part of the execute-api host: <api>.execute-api.<region>.amazonaws.com.
-  rpc = { endpoint: next.endpoint, region: new URL(next.endpoint).host.split('.')[2], credentials: next.credentials,
-    storage: next.storage || null };
+  // Relay (Cloudflare): one socket at `url`, frames sent as they are; credentials only for storage.
+  rpc = next.transport === 'relay'
+    ? { relay: true, url: next.url, maxFrameBytes: next.maxFrameBytes || 1048576, credentials: next.credentials || null, storage: next.storage || null }
+    : { endpoint: next.endpoint, region: new URL(next.endpoint).host.split('.')[2], credentials: next.credentials,
+      storage: next.storage || null };
   const seen = new Set();
   const cameOnline = [];
   const rekeyed = [];
   for (const bridge of next.bridges || []) {
     seen.add(bridge.device);
-    const version = bridge.dataId + '|' + (bridge.pub || '').slice(-8) + '|' + (next.credentials?.sessionToken || '').slice(-16);
+    const version = bridge.dataId + '|' + (bridge.pub || '').slice(-8) + '|' + (rpc.relay ? '' : (next.credentials?.sessionToken || '').slice(-16));
     const previous = routes.get(bridge.device);
     if (previous?.version !== version || !previous.online) {
       routes.set(bridge.device, { online: true, dataId: bridge.dataId, version, pub: bridge.pub || '', fp: bridge.fp || '' });
@@ -122,6 +127,8 @@ function applyRpc(next, { persist = true } = {}) {
     try { localStorage.setItem(storageKey(), JSON.stringify({ rpc: next })); } catch {}
     noteHolders(next.bridges);
   }
+  // A socket opened before the transport was known moves to the announced one.
+  if (socket && socket.__url !== socketUrl()) { const ws = socket; socket = null; ws.onclose = null; ws.close(); connectionId = ''; clearInterval(pingTimer); connect(); }
   reconcile();
   if (!persist) return;
   for (const device of cameOnline) {
@@ -156,6 +163,29 @@ function noteHolders(bridges = [], devicesList = null) {
   if (devicesList) for (const device of Object.keys(seen)) if (!devicesList.some((d) => d.deviceName === device)) delete seen[device];
   try { localStorage.setItem(key, JSON.stringify(seen)); } catch {}
   return seen;
+}
+
+// The relay's frame limit (0 on AWS): stream and chunk sizes follow it.
+export function relayFrameBytes() {
+  restore();
+  return rpc?.relay ? rpc.maxFrameBytes : 0;
+}
+
+function socketUrl() {
+  if (rpc?.relay) {
+    const url = new URL(rpc.url);
+    url.search = new URLSearchParams({ apiKey: state.KEY, role: 'app' }).toString();
+    return url.href;
+  }
+  dataUrl ||= 'wss://' + new URL(state.SERVER).host + '/data';
+  return dataUrl + '?' + new URLSearchParams({ apiKey: state.KEY, role: 'app_data' });
+}
+
+// Relay frames go unsigned to `target`'s socket; one over the relay's limit is never sent.
+function relayFrame(target, frame) {
+  const text = JSON.stringify({ to: target, ...frame });
+  if (new TextEncoder().encode(text).length > rpc.maxFrameBytes) throw new Error('Frame exceeds maxFrameBytes');
+  return text;
 }
 
 export function cachedOnlineDevices() {
@@ -278,12 +308,13 @@ if (typeof document !== 'undefined' && document.addEventListener) {
 
 // The server is reached through its CloudFront domain, which also serves /data.
 export function connect() {
-  if (!state.KEY || !state.SERVER) return;
-  dataUrl ||= 'wss://' + new URL(state.SERVER).host + '/data';
+  if (!state.KEY || !state.SERVER || refused) return;
   if (socket?.readyState === WebSocket.OPEN) return probe();
   if (socket?.readyState === WebSocket.CONNECTING) return;
   const started = performance.now();
-  const ws = socket = new WebSocket(dataUrl + '?' + new URLSearchParams({ apiKey: state.KEY, role: 'app_data' }));
+  const url = socketUrl();
+  const ws = socket = new WebSocket(url);
+  ws.__url = url;
   connectionId = '';
   ws.onopen = () => {
     if (socket !== ws) return;
@@ -294,6 +325,13 @@ export function connect() {
     // Without an id nothing can be addressed to this socket; rebuild it rather than wait for a drop.
     setTimeout(() => { if (socket === ws && !connectionId) ws.close(); }, 5000);
     clearInterval(pingTimer);
+    // Relay: subscriptions are no leases (the server reports closed Apps), so only the text ping.
+    if (rpc?.relay) {
+      pingTimer = setInterval(() => {
+        if (document.visibilityState === 'visible' && ws.readyState === WebSocket.OPEN) ws.send(PING);
+      }, RELAY_PING_MS);
+      return;
+    }
     // One keepalive while visible: the subscription renewal (an end-to-end check through the
     // Bridge) when a Session is open, otherwise the gateway ping.
     pingTimer = setInterval(() => {
@@ -308,11 +346,17 @@ export function connect() {
     }, PING_MS);
   };
   ws.onmessage = (event) => { lastInboundAt = performance.now(); receive(ws, event.data); };
-  ws.onclose = () => {
+  ws.onclose = (event) => {
     if (socket !== ws) return;
     socket = null;
     connectionId = '';
     clearInterval(pingTimer);
+    // The relay refused the key (4401: revoked or wrong) or its role (4403): retrying cannot help.
+    if (event?.code === 4401 || event?.code === 4403) {
+      refused = true;
+      if (event.code === 4401) window.logout?.();
+      return;
+    }
     // bridges_changed pushes are missed while closed, so the next request fetches /devices again.
     routesKnown = false;
     // A hidden page reconnects only for a request in flight; showing it reconnects. Past the
@@ -517,14 +561,14 @@ async function send(key, request, route, missing) {
     if (session && request.session !== session) {
       request.session = session;
       body.pk = keys.pub;
-      request.frames = await rpcRequestFrames(body, CAN_DEFLATE ? deflate : null, session.seal);
+      request.frames = await rpcRequestFrames(body, CAN_DEFLATE ? deflate : null, session.seal, rpc.relay ? relayChunkChars(rpc.maxFrameBytes) : undefined);
     }
     // One signer per route (a route is replaced when its Bridge or the credentials change).
-    route.sign ||= createHeaderSigner({ endpoint: rpc.endpoint, region: rpc.region, credentials: rpc.credentials,
+    if (!rpc.relay) route.sign ||= createHeaderSigner({ endpoint: rpc.endpoint, region: rpc.region, credentials: rpc.credentials,
       target: route.dataId, action: 'rpc' });
     request.frames ||= [body]; // account_key, the one clear request
     const frames = request.frames.map((frame) => ({ ...frame, replyTo: connectionId, ...(missing?.length ? { missing } : {}) }));
-    for (const frame of frames) socket.send(await route.sign(JSON.stringify(frame), undefined, { method: request.method }));
+    for (const frame of frames) socket.send(rpc.relay ? relayFrame(route.dataId, frame) : await route.sign(JSON.stringify(frame), undefined, { method: request.method }));
     if (request.oneWay) { pending.delete(key); request.resolve(); }
   } catch (error) {
     request.attemptVersion = null;
@@ -546,11 +590,13 @@ function reconcile() {
       request.slow = true;
       try { request.onSlow?.(); } catch {}
     }
-    if (!route?.online || !connectionId || !rpc?.credentials || socket?.readyState !== WebSocket.OPEN) continue;
+    if (!route?.online || !connectionId || !(rpc?.credentials || rpc?.relay) || socket?.readyState !== WebSocket.OPEN) continue;
     // Credentials are renewed on demand, right before signing; expired ones wait for the new ones.
-    const left = rpc.credentials.expiresAt * 1000 - Date.now();
-    if (left < RENEW_MS && !devicesInflight && now - devicesAt > STALL_MS) devices().catch(() => {});
-    if (left < 5000) continue;
+    if (!rpc.relay) {
+      const left = rpc.credentials.expiresAt * 1000 - Date.now();
+      if (left < RENEW_MS && !devicesInflight && now - devicesAt > STALL_MS) devices().catch(() => {});
+      if (left < 5000) continue;
+    }
     const stalled = request.attemptVersion === route.version && now - request.sentAt > STALL_MS;
     if (stalled && lastInboundAt < request.sentAt) probe({ stalled: true });
     // A new route or connection needs the whole reply again; a stall only what is missing.
@@ -618,13 +664,13 @@ async function sendStream(entry, message) {
   // A page opened before the socket or its routes are known waits for them briefly.
   for (const started = performance.now(); ; await new Promise((resolve) => setTimeout(resolve, 100))) {
     const route = routes.get(entry.device);
-    const left = rpc?.credentials ? rpc.credentials.expiresAt * 1000 - Date.now() : 0;
+    const left = rpc?.relay ? Infinity : rpc?.credentials ? rpc.credentials.expiresAt * 1000 - Date.now() : 0;
     if (route?.online && connectionId && socket?.readyState === WebSocket.OPEN && left > 5000) break;
     if (left < RENEW_MS && !devicesInflight && performance.now() - devicesAt > STALL_MS) devices().catch(() => {});
     if (performance.now() - started > STREAM_WAIT_MS) return;
   }
   const route = routes.get(entry.device);
-  route.sign ||= createHeaderSigner({ endpoint: rpc.endpoint, region: rpc.region, credentials: rpc.credentials,
+  if (!rpc.relay) route.sign ||= createHeaderSigner({ endpoint: rpc.endpoint, region: rpc.region, credentials: rpc.credentials,
     target: route.dataId, action: 'rpc' });
   const session = await sessionFor(entry.device);
   if (!session) return migrate();
@@ -637,7 +683,9 @@ async function sendStream(entry, message) {
   const pk = entry.pkFor !== route.pub ? { pk: keys.pub } : {};
   entry.pkFor = route.pub;
   const frame = { ...streamFrame(entry.ch, entry.id, connectionId, m), s: keys.tag, ...pk, ...(CAN_INFLATE && opens ? { inflate: 1 } : {}) };
-  socket.send(await route.sign(JSON.stringify(frame), undefined, { stream: entry.ch }));
+  if (rpc.relay) {
+    try { socket.send(relayFrame(route.dataId, frame)); } catch { console.warn('[direct] stream frame over the relay limit dropped'); }
+  } else socket.send(await route.sign(JSON.stringify(frame), undefined, { stream: entry.ch }));
 }
 
 // `ack` asks the Bridge for a receipt on arrival: `onAccepted` runs once. After a receipt or a
@@ -669,6 +717,7 @@ export function resetDirectTransport() {
   clearTimeout(retryTimer);
   retryTimer = null;
   retries = 0;
+  refused = false;
   try { localStorage.removeItem(storageKey()); } catch {}
   if (socket) { const ws = socket; socket = null; ws.close(); }
 }

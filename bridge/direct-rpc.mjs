@@ -5,7 +5,7 @@ import { createHash, randomUUID } from 'crypto';
 import WebSocket from 'ws';
 import { deflateRawSync, inflateRawSync } from 'zlib';
 import { RpcAssembler, createHeaderSigner, decodeRpcPayload, isRpcRequest, isStreamFrame, openStreamMessage, packStreamMessage, pushFrames,
-  rpcAckFrame, rpcErrorFrame, rpcProgressFrame, rpcResultFrames, sealStreamMessage, streamFrame, unpackStreamMessage } from './direct-rpc-protocol.mjs';
+  relayChunkChars, rpcAckFrame, rpcErrorFrame, rpcProgressFrame, rpcResultFrames, sealStreamMessage, streamFrame, unpackStreamMessage } from './direct-rpc-protocol.mjs';
 import { bridgeKeys } from './e2ee-node.mjs';
 import { countFrame } from './frame-stats.mjs';
 
@@ -19,6 +19,7 @@ const PROGRESS_MS = 15_000;
 const REPLY_TTL_MS = 30_000;
 const MAX_REPLIES = 256;
 const PING_MS = 5 * 60_000;
+const RELAY_PING_MS = 25_000;
 const PONG_TIMEOUT_MS = 10_000;
 const LEASE_MS = 150_000;
 const RENEW_MS = 5 * 60_000;
@@ -29,9 +30,11 @@ const PUSH_BATCH_MS = 50;
 
 // Which App connections watch which Session. Nothing tells the Bridge that an App socket closed,
 // so a subscription is a lease the App renews; only these connections receive pushes.
+// On relay (`leaseless`) the server reports closed Apps (`peer_left`) and subscriptions never expire.
 export class SessionSubscribers {
   constructor() {
     this.sessions = new Map(); // sessionId → Map(connectionId → { expires, deflate })
+    this.leaseless = false;
   }
 
   // `root`: the thread root the page shows, for pushes about the whole thread (titles, children).
@@ -40,7 +43,7 @@ export class SessionSubscribers {
     let targets = this.sessions.get(sessionId);
     if (!targets) this.sessions.set(sessionId, targets = new Map());
     const previous = targets.get(connectionId);
-    targets.set(connectionId, { expires: Date.now() + LEASE_MS, deflate: deflate ?? previous?.deflate ?? false,
+    targets.set(connectionId, { expires: this.leaseless ? Infinity : Date.now() + LEASE_MS, deflate: deflate ?? previous?.deflate ?? false,
       root: root || previous?.root || sessionId });
   }
 
@@ -51,6 +54,10 @@ export class SessionSubscribers {
   remove(sessionId, connectionId) {
     const targets = this.sessions.get(sessionId);
     if (targets?.delete(connectionId) && !targets.size) this.sessions.delete(sessionId);
+  }
+
+  drop(connectionId) {
+    for (const sessionId of [...this.sessions.keys()]) this.remove(sessionId, connectionId);
   }
 
   // `root`: also the connections watching a thread of that root.
@@ -72,9 +79,11 @@ export class SessionSubscribers {
 export class DirectRpcBridge {
   // `limited(frame)`: whether the request counts against MAX_CONCURRENT (default: all do).
   // `streams[ch](frame)`: terminal / preview frames from Apps, their message already unpacked.
+  // `controlSocket`: the socket `sendControl` writes to; on relay (announced with the credentials) it
+  // carries the App frames too (`receiveFrame`), sent unsigned as `{ to, ...frame }`.
   // `accountKey` (K, 32 bytes): every frame but `account_key` is sealed (e2ee.mjs); `saveAccountKey(K)`
   // stores a K an App hands over (migration of existing users, docs/v2-accounts-e2ee-plan.md §9).
-  constructor({ key, accountKey, accountKeyAt, accounts = false, saveAccountKey, sendControl, handlers, subscribers, socketFactory, limited = () => true, streams = {} }) {
+  constructor({ key, accountKey, accountKeyAt, accounts = false, saveAccountKey, sendControl, controlSocket, handlers, subscribers, socketFactory, limited = () => true, streams = {} }) {
     this.key = key;
     this.accountKey = accountKey || null;
     this.accounts = accounts;
@@ -83,6 +92,9 @@ export class DirectRpcBridge {
     this.saveAccountKey = saveAccountKey;
     this.peers = new Map(); // App connection → its session tag
     this.sendControl = sendControl;
+    this.controlSocket = controlSocket;
+    this.relay = false;
+    this.maxFrameBytes = 0;
     this.handlers = handlers;
     this.streams = streams;
     this.limited = limited;
@@ -143,22 +155,64 @@ export class DirectRpcBridge {
 
   // Control-socket replies for this channel; returns true when consumed.
   handleControl(message) {
+    if (message?.action === 'peer_left') { this.dropPeer(message.id); return true; }
+    if (message?.action === 'realtime_pong' && this.relay) { clearTimeout(this.pongTimer); return true; }
     if (message?.action !== 'direct_rpc') return false;
     if (message.type === 'credentials') {
+      if (message.transport === 'relay' && !this.relay) this.useRelay(message.maxFrameBytes);
       if (message.credentials) {
         this.auth = { endpoint: message.endpoint, region: message.region, credentials: message.credentials,
           storage: message.storage || null };
         this.signers.clear();
       }
       this.credentialsArrived?.();
-      if (!this.auth) this.retry();
+      if (this.relay) { if (!this.joined && !this.pending) this.join(); } else if (!this.auth) this.retry();
       else if (!this.socket && !this.pending) this.requestToken();
       return true;
     }
     clearTimeout(this.tokenTimer);
+    if (this.relay) {
+      if (message.type !== 'joined') return this.retry(), true;
+      this.joined = true;
+      this.pending = false;
+      console.log('[direct-rpc] joined');
+      clearInterval(this.pingTimer);
+      this.pingTimer = setInterval(() => this.ping(this.socket), RELAY_PING_MS);
+      this.pingTimer.unref?.();
+      return true;
+    }
     if (message.type === 'token' && this.auth) this.open(message.token);
     else this.retry();
     return true;
+  }
+
+  // One socket for control and App frames; no second socket, no signing, no lease.
+  useRelay(maxFrameBytes) {
+    this.relay = true;
+    this.maxFrameBytes = maxFrameBytes || 1024 * 1024;
+    this.chunk = relayChunkChars(this.maxFrameBytes);
+    this.socket = this.controlSocket;
+    this.subscribers.leaseless = true;
+  }
+
+  join() {
+    if (!this.active) return;
+    this.pending = true;
+    this.joined = false;
+    clearTimeout(this.tokenTimer);
+    this.tokenTimer = setTimeout(() => { if (this.pending) this.retry(); }, 10_000);
+    this.tokenTimer.unref?.();
+    const keys = this.keys ? { pub: this.keys.pub, fp: this.keys.fp } : {};
+    if (!this.sendControl({ action: 'direct_rpc', op: 'bridge_join', ...keys })) this.retry();
+  }
+
+  // A closed App connection (relay): nothing is kept for it.
+  dropPeer(id) {
+    if (!id) return;
+    this.subscribers.drop(id);
+    this.peers.delete(id);
+    clearTimeout(this.outbox.get(id)?.timer);
+    this.outbox.delete(id);
   }
 
   open(token) {
@@ -178,7 +232,13 @@ export class DirectRpcBridge {
     if (text === '{"action":"realtime_pong"}') { clearTimeout(this.pongTimer); return; }
     let frame;
     try { frame = JSON.parse(text); } catch { return; }
-    countFrame('in', frame.ch ? 'stream:' + frame.ch : (frame.kind || frame.action || '?') + (frame.method ? ':' + frame.method : ''), text.length);
+    this.receiveFrame(frame, text.length);
+  }
+
+  // An App frame, parsed (relay: from the control socket).
+  receiveFrame(frame, length) {
+    const socket = this.socket;
+    countFrame('in', frame.ch ? 'stream:' + frame.ch : (frame.kind || frame.action || '?') + (frame.method ? ':' + frame.method : ''), length);
     if (frame.action === 'direct_rpc' && frame.type === 'joined') {
       this.pending = false;
       console.log('[direct-rpc] joined');
@@ -281,7 +341,7 @@ export class DirectRpcBridge {
         const fingerprint = createHash('sha256').update(JSON.stringify(result)).digest('hex').slice(0, 16);
         result = params.known === fingerprint ? { notModified: true, fingerprint } : { ...result, fingerprint };
       }
-      frames = rpcResultFrames(frame.requestId, result, { deflate: deflate ? deflateRawSync : null, method: frame.method, seal });
+      frames = rpcResultFrames(frame.requestId, result, { deflate: deflate ? deflateRawSync : null, method: frame.method, seal, chunk: this.chunk });
     } catch (error) {
       frames = [rpcErrorFrame(frame.requestId, error.message, frame.method, seal)];
     } finally {
@@ -322,7 +382,7 @@ export class DirectRpcBridge {
     const session = this.keys?.byTag(this.peers.get(connectionId));
     if (!session) return;
     const event = events.length === 1 ? events[0] : { action: 'batch', events };
-    void this.deliver(pushFrames(randomUUID(), event, { deflate: deflate ? deflateRawSync : null, seal: session.seal }), connectionId, { event: event.action }, 'push');
+    void this.deliver(pushFrames(randomUUID(), event, { deflate: deflate ? deflateRawSync : null, seal: session.seal, chunk: this.chunk }), connectionId, { event: event.action }, 'push');
   }
 
   // A terminal or preview message to an App connection. Best effort: both channels recover from
@@ -337,7 +397,8 @@ export class DirectRpcBridge {
 
   // Keys for this process; published by joining again (Apps then make new sessions).
   newKeys() {
-    if (this.socket) setTimeout(() => { const socket = this.socket; this.socket = null; socket?.close(); this.requestToken(); }, 300).unref?.();
+    if (this.relay) setTimeout(() => this.join(), 300).unref?.();
+    else if (this.socket) setTimeout(() => { const socket = this.socket; this.socket = null; socket?.close(); this.requestToken(); }, 300).unref?.();
     return bridgeKeys(this.accountKey, this.keyAt, () => { this.keys = this.newKeys(); });
   }
 
@@ -365,6 +426,7 @@ export class DirectRpcBridge {
   }
 
   async deliver(frames, target, label, action = 'rpc') {
+    if (this.relay) return this.relayDeliver(frames, target, label);
     try {
       if (!await this.authorization()) return;
       const sign = this.signer(target, action);
@@ -375,6 +437,15 @@ export class DirectRpcBridge {
       }
     } catch (error) {
       console.error(`[direct-rpc] ${action} failed: ${error.message}`);
+    }
+  }
+
+  relayDeliver(frames, target, label) {
+    for (const out of frames) {
+      const text = JSON.stringify({ to: target, ...out });
+      countFrame('out', out.kind + ':' + (label.method || label.event || label.stream || ''), text.length);
+      if (Buffer.byteLength(text) > this.maxFrameBytes) { console.error(`[direct-rpc] dropped ${out.kind} over ${this.maxFrameBytes} bytes`); continue; }
+      try { if (this.socket?.readyState === WebSocket.OPEN) this.socket.send(text); } catch (error) { console.error(`[direct-rpc] send failed: ${error.message}`); }
     }
   }
 
@@ -403,6 +474,7 @@ export class DirectRpcBridge {
     if (!this.active || this.retryTimer) return;
     this.retryTimer = setTimeout(() => {
       this.retryTimer = null;
+      if (this.relay) { if (!this.joined) this.join(); return; }
       if (this.socket) return;
       if (this.auth) this.requestToken();
       else this.requestCredentials();
@@ -420,6 +492,6 @@ export class DirectRpcBridge {
     for (const box of this.outbox.values()) clearTimeout(box.timer);
     const socket = this.socket;
     this.socket = null;
-    if (socket) { socket.removeAllListeners(); socket.on('error', () => {}); socket.terminate(); }
+    if (socket && !this.relay) { socket.removeAllListeners(); socket.on('error', () => {}); socket.terminate(); }
   }
 }
