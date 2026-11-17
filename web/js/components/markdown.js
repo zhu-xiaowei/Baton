@@ -173,8 +173,10 @@
       },
       // Assistant output is untrusted. Raw HTML must remain visible text instead of
       // being inserted into Baton's document where <style>/<meta> can alter the UI.
+      // A bare <br> (line breaks inside table cells, as GitHub renders) is the only exception.
       html: function (html) {
-        return _documentSlots ? html : escHtml(html);
+        if (_documentSlots) return html;
+        return /^<br\s*\/?>$/i.test(html.trim()) ? '<br>' : escHtml(html);
       },
       // marked v12 dropped the old highlight option, so fenced code is rendered here.
       code: function (code, lang) {
