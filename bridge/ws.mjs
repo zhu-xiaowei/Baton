@@ -2061,13 +2061,10 @@ export async function handleDeleteFiles(msg, {
         _pool.sessionArgs.delete(identity.nativeSessionId);
       }
     }
-    for (const ph of msg.projectHashes || []) {
-      let ok = true;
-      for (const adapter of adapters) {
-        if (!await remove(adapter, 'deleteProjectHistory', ph)) ok = false;
-      }
-      if (ok) deletedProjects++;
-    }
+    await Promise.all((msg.projectHashes || []).map(async (ph) => {
+      const results = await Promise.all(adapters.map((adapter) => remove(adapter, 'deleteProjectHistory', ph)));
+      if (results.every(Boolean)) deletedProjects++;
+    }));
   } catch (error) {
     errors.push(error.message);
   } finally {

@@ -323,6 +323,18 @@ const watcher = defineRuntimeWatcher({
   },
 });
 
+// Each delete is a Python process; at most 16 run at once across concurrent project deletes.
+let deleting = 0;
+const deleteQueue = [];
+async function limited(run) {
+  if (deleting < 16) deleting++;
+  else await new Promise((resolve) => deleteQueue.push(resolve));
+  try { return await run(); } finally {
+    const next = deleteQueue.shift();
+    if (next) next(); else deleting--;
+  }
+}
+
 async function cli(args) {
   const { error, stderr } = await hermesCli(args);
   if (error) throw new Error(String(stderr).trim().split('\n').at(-1) || error.message);
@@ -352,13 +364,15 @@ export default defineRuntimeAdapter({
   },
   rename: async (id, name) => (await cli(['sessions', 'rename', '--', id, name]), name),
   async deleteSessionHistory(id) {
-    await cli(['sessions', 'delete', '--yes', id]);
+    await limited(() => cli(['sessions', 'delete', '--yes', id]));
     grants.forget(storageId(id));
     return true;
   },
   async deleteProjectHistory(projectHash) {
     const rows = sessionIndex.catalog().byProject.get(projectHash) || [];
-    for (const row of rows.filter((r) => r.rec.runtime === 'hermes')) await this.deleteSessionHistory(row.rec.id);
+    const results = await Promise.allSettled(rows.filter((r) => r.rec.runtime === 'hermes').map((row) => this.deleteSessionHistory(row.rec.id)));
+    const failed = results.find((r) => r.status === 'rejected');
+    if (failed) throw failed.reason;
     return true;
   },
 });
