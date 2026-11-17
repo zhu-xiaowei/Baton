@@ -34,31 +34,60 @@ export function checkDeviceName(items, name, mode, current = '') {
   return [name, ''];
 }
 
-// Official build, checked against the release's SHASUMS256.txt; on any failure the user's Node.js is used.
-// The installer's PATH gets it (node/npm below); the service PATH keeps the user's Node for harnesses.
+// SHA-256 of the official archives the installers use (`node scripts/node-checksums.mjs <version>` prints this).
+export const NODE_SHA256 = {
+  'darwin-arm64.tar.xz': '1d64136c8a43d648d1b3bad10797a4c995b1ca032d2bde8799de43b37f058fe5',
+  'darwin-x64.tar.xz': '4daeec962855c1a6e66cda398a25037319dc1bbd4a0939188b3547afbbfb6490',
+  'linux-arm64.tar.gz': '261af2af250dfd7e9f25cf151d1b2713a0adf8f10a9ad116c4947f68627affe8',
+  'linux-arm64.tar.xz': '6e51a2ada00f0011cc266f65d98922b403d7ad88f809ca2aa615a5fe1ce6e86c',
+  'linux-x64.tar.gz': '061ec3e3062115705b56b51fa9cc330ab50d34b6969387d4e4b1a50c6809acc2',
+  'linux-x64.tar.xz': '4f2b175a6d53a5c617a80dba2676238a0688cef28c6da4eba35c7d844e66fcfb',
+  'win-arm64.zip': 'b3cc74a295b39d4f273271e96f58c06dd2b35757ca12abec64c7d0598b434f14',
+  'win-x64.zip': 'e612af99f626ab415ea225af6bce5c971feb448cb5cae250bb1c3fa50c5f7d9f',
+};
+const NODE_SOURCES = ['https://nodejs.org/dist', 'https://npmmirror.com/mirrors/node'];
+const unixNodeSums = Object.entries(NODE_SHA256).filter(([file]) => !file.startsWith('win'))
+  .map(([file, sum]) => `    ${file}) want=${sum} ;;`).join('\n');
+
+// Downloads from both sources at once; the first verified archive wins and the other download is
+// stopped. On any failure the user's Node.js is used. The installer's PATH gets it (node/npm below);
+// the service PATH keeps the user's Node for harnesses.
 const unixPrivateNode = `install_private_node() {
-  local os arch ext name base tmp sum
+  local os arch ext file want tmp ok pids="" i=0 src status
   case "$(uname -s)" in Darwin) os=darwin ;; Linux) os=linux ;; *) return 1 ;; esac
   case "$(uname -m)" in x86_64|amd64) arch=x64 ;; arm64|aarch64) arch=arm64 ;; *) return 1 ;; esac
   [ -x "$DIR/node/${NODE_VERSION}/bin/node" ] && return 0
   { [ $os = darwin ] || command -v xz >/dev/null; } && ext=tar.xz || ext=tar.gz
-  name="node-${NODE_VERSION}-$os-$arch.$ext"
-  base="\${BATON_NODE_MIRROR:-https://nodejs.org/dist}"
-  base="\${base%/}/${NODE_VERSION}"
+  case "$os-$arch.$ext" in
+${unixNodeSums}
+    *) return 1 ;;
+  esac
+  file="node-${NODE_VERSION}-$os-$arch.$ext"
   echo "Installing Node.js ${NODE_VERSION} for Baton Bridge..."
   rm -rf "$DIR"/node/.tmp.*
   mkdir -p "$DIR/node" && tmp=$(mktemp -d "$DIR/node/.tmp.XXXXXX") || return 1
-  fetch_node() { for i in 1 2 3; do curl -fsSL --connect-timeout 20 --speed-limit 1024 --speed-time 60 -o "$tmp/$1" "$base/$1" && return; sleep 2; done; return 1; }
-  fetch_node "$name" && fetch_node SHASUMS256.txt &&
-    sum=$( (sha256sum "$tmp/$name" 2>/dev/null || shasum -a 256 "$tmp/$name") | cut -d' ' -f1) &&
-    grep -qxF "$sum  $name" "$tmp/SHASUMS256.txt" &&
-    tar --no-same-owner -xf "$tmp/$name" -C "$tmp" && "$tmp/\${name%.tar.*}/bin/node" --version >/dev/null &&
-    rm -rf "$DIR/node/${NODE_VERSION}" && mv "$tmp/\${name%.tar.*}" "$DIR/node/${NODE_VERSION}"
-  local status=$?
+  trap 'kill $pids 2>/dev/null; wait; rm -rf "$tmp"; exit 130' INT TERM
+  for src in ${NODE_SOURCES.join(' ')}; do
+    i=$((i + 1))
+    ( trap 'kill $c 2>/dev/null; exit 1' TERM
+      curl -fsL --retry 2 --connect-timeout 20 --speed-limit 1024 --speed-time 60 -o "$tmp/$i" "$src/${NODE_VERSION}/$file" & c=$!
+      wait $c && [ "$( (sha256sum "$tmp/$i" 2>/dev/null || shasum -a 256 "$tmp/$i") | cut -d' ' -f1)" = "$want" ] &&
+        mv "$tmp/$i" "$tmp/$i.ok" ) &
+    pids="$pids $!"
+  done
+  while [ ! -e "$tmp/1.ok" ] && [ ! -e "$tmp/2.ok" ] && kill -0 $pids 2>/dev/null; do sleep 0.2; done
+  kill $pids 2>/dev/null; wait
+  ok=$(ls "$tmp"/*.ok 2>/dev/null | head -n 1)
+  [ -n "$ok" ] && tar --no-same-owner -xf "$ok" -C "$tmp" && "$tmp/\${file%.tar.*}/bin/node" --version >/dev/null &&
+    rm -rf "$DIR/node/${NODE_VERSION}" && mv "$tmp/\${file%.tar.*}" "$DIR/node/${NODE_VERSION}"
+  status=$?
   rm -rf "$tmp"
-  [ $status -eq 0 ] || echo "Warning: could not download and verify Node.js ${NODE_VERSION} from $base/$name; using the system Node.js." >&2
+  trap - INT TERM
+  [ $status -eq 0 ] || echo "Warning: could not download and verify Node.js ${NODE_VERSION} from nodejs.org or npmmirror.com; using the system Node.js." >&2
   return $status
 }
+# Once the service runs the new version, earlier private runtimes go.
+prune_private_node() { find "$DIR/node" -mindepth 1 -maxdepth 1 ! -name ${NODE_VERSION} -exec rm -rf {} + 2>/dev/null || true; }
 install_private_node && export PATH="$DIR/node/${NODE_VERSION}/bin:$PATH"`;
 
 function unixDeviceNameBlock(server, apiKey, name) {
@@ -163,29 +192,43 @@ function windowsInstallScript(url, server, apiKey, name) {
     "  $root = Join-Path $targetHome '.baton-bridge\\node'",
     "  $exe = Join-Path $root \"$version\\node.exe\"",
     "  if (Test-Path $exe) { return $exe }",
-    "  $base = $(if ($env:BATON_NODE_MIRROR) { $env:BATON_NODE_MIRROR.TrimEnd('/') } else { 'https://nodejs.org/dist' }) + \"/$version\"",
+    "  $sha = @{ " + Object.entries(NODE_SHA256).filter(([file]) => file.startsWith('win')).map(([file, sum]) => `'${file}' = '${sum}'`).join('; ') + " }[\"win-$arch.zip\"]",
     "  $tmp = Join-Path $root ('.tmp.' + [guid]::NewGuid().ToString('N'))",
+    "  $jobs = @()",
     "  try {",
     "    Write-Host \"Installing Node.js $version for Baton Bridge...\"",
     "    New-Item -ItemType Directory -Force -Path $tmp | Out-Null",
-    "    $ProgressPreference = 'SilentlyContinue'",
-    "    [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12",
-    "    foreach ($file in \"$name.zip\", 'SHASUMS256.txt') {",
-    "      foreach ($attempt in 1..3) {",
-    "        try { Invoke-WebRequest -UseBasicParsing -TimeoutSec 900 -Uri \"$base/$file\" -OutFile (Join-Path $tmp $file); break } catch { if ($attempt -eq 3) { throw } Start-Sleep -Seconds 2 }",
+    "    $jobs = @(foreach ($source in " + NODE_SOURCES.map(powershellLiteral).join(', ') + ") {",
+    "      Start-Job -ArgumentList \"$source/$version/$name.zip\", (Join-Path $tmp ([guid]::NewGuid().ToString('N'))), $sha -ScriptBlock {",
+    "        param($uri, $file, $sha)",
+    "        $ProgressPreference = 'SilentlyContinue'",
+    "        [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12",
+    "        Invoke-WebRequest -UseBasicParsing -TimeoutSec 900 -Uri $uri -OutFile $file",
+    "        if ((Get-FileHash $file -Algorithm SHA256).Hash -ne $sha) { throw \"SHA-256 mismatch: $uri\" }",
+    "        $file",
     "      }",
+    "    })",
+    "    $zip = $null",
+    "    $pending = $jobs",
+    "    while (-not $zip -and $pending) {",
+    "      $done = Wait-Job -Job $pending -Any",
+    "      $zip = Receive-Job $done -ErrorAction SilentlyContinue",
+    "      $pending = @($pending | Where-Object { $_ -ne $done })",
     "    }",
-    "    $expected = ((Select-String -Path (Join-Path $tmp 'SHASUMS256.txt') -SimpleMatch \"  $name.zip\" | Select-Object -First 1).Line -split ' ')[0]",
-    "    if (-not $expected -or (Get-FileHash (Join-Path $tmp \"$name.zip\") -Algorithm SHA256).Hash -ne $expected) { throw 'SHA-256 checksum mismatch' }",
-    "    tar.exe -xf (Join-Path $tmp \"$name.zip\") -C $tmp",
+    "    $jobs | Stop-Job",
+    "    if (-not $zip) { throw 'download or checksum failed from both sources' }",
+    "    tar.exe -xf $zip -C $tmp",
     "    if ($LASTEXITCODE -eq 0) { & (Join-Path $tmp \"$name\\node.exe\") --version | Out-Null }",
     "    if ($LASTEXITCODE -ne 0) { throw 'the extracted node.exe did not run' }",
     // Antivirus may still hold the new files open.
     "    foreach ($attempt in 1..5) { try { if (Test-Path (Split-Path $exe)) { Remove-Item (Split-Path $exe) -Recurse -Force }; Move-Item (Join-Path $tmp $name) (Split-Path $exe); break } catch { if ($attempt -eq 5) { throw } Start-Sleep -Seconds 1 } }",
     "    return $exe",
     "  } catch {",
-    "    Write-Host \"Warning: could not download and verify Node.js $version from $base ($($_.Exception.Message)); using the system Node.js.\" -ForegroundColor Yellow",
-    "  } finally { Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue }",
+    "    Write-Host \"Warning: could not download and verify Node.js $version from nodejs.org or npmmirror.com ($($_.Exception.Message)); using the system Node.js.\" -ForegroundColor Yellow",
+    "  } finally {",
+    "    $jobs | Remove-Job -Force -ErrorAction SilentlyContinue",
+    "    Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue",
+    "  }",
     "}",
     "$node = Get-Command node.exe -ErrorAction SilentlyContinue",
     "if (-not $node) { $node = Get-Command node -ErrorAction SilentlyContinue }",
@@ -392,6 +435,8 @@ function windowsInstallScript(url, server, apiKey, name) {
     "  $eventSummary = if ($taskEvents.Count -gt 0) { $taskEvents -join [Environment]::NewLine } else { 'No Task Scheduler operational event was available.' }",
     "  throw \"Baton Bridge failed to start within 10 seconds. $taskHint`nTask state: $taskState`nTask result: $taskResultText`nStart error: $taskError`nTask Scheduler: $eventSummary`nLog ($logPath):`n$logTail\"",
     "}",
+    // The service runs the new version now: earlier private runtimes go.
+    "Get-ChildItem (Join-Path $dir 'node') -Directory -ErrorAction SilentlyContinue | Where-Object Name -ne '" + NODE_VERSION + "' | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue",
     "Write-Output \"Baton Bridge installed and running for $deviceName.\"",
     "Write-Output \"  Node:    $nodePath ($nodeVersion)\"",
     "Write-Output \"  Profile: $targetHome\"",
@@ -491,6 +536,7 @@ export async function installScript({ headers }, apiKey, name, platform, presign
     'PLIST_EOF\n' +
     '  launchctl unload "$PLIST" 2>/dev/null || true\n' +
     '  launchctl load "$PLIST"\n' +
+    '  launchctl list com.baton.bridge >/dev/null 2>&1 && prune_private_node\n' +
     '  echo ""\n' +
     '  echo "================================================================"\n' +
     '  printf "  \\033[0;32mBridge installed and running successfully! (launchd)\\033[0m\\n"\n' +
@@ -528,6 +574,7 @@ export async function installScript({ headers }, apiKey, name, platform, presign
     '  systemctl --user daemon-reload\n' +
     '  systemctl --user enable baton-bridge\n' +
     '  systemctl --user restart baton-bridge\n' +
+    '  systemctl --user is-active --quiet baton-bridge && prune_private_node\n' +
     '  echo ""\n' +
     '  echo "================================================================"\n' +
     '  printf "  \\033[0;32mBridge installed and running successfully! (systemd)\\033[0m\\n"\n' +
