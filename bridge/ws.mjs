@@ -67,7 +67,7 @@ import {
 } from './live-turn-stream.mjs';
 import { CommandCatalogCache, commandCatalogPayload } from './command-catalog-cache.mjs';
 import { onAgentCountUpdates } from './agent-counts.mjs';
-import { configureNotifier, endTakeover, noteTakeover } from './notify.mjs';
+import { configureNotifier, endTakeover, flushQueue, noteTakeover } from './notify.mjs';
 import { ClientTurnOrder } from './client-turn-order.mjs';
 import { DirectRpcBridge, SessionSubscribers } from './direct-rpc.mjs';
 import { sessionIndex } from './session-index.mjs';
@@ -730,6 +730,18 @@ function probeConnection() {
   }
 }
 
+// Relay alerts count as sent once the account object acknowledges them; otherwise notify.mjs queues and resends.
+const ALERT_ACK_MS = 5000;
+const _alertAcks = new Map(); // eventId → resolve
+function relayAlert(frame) {
+  if (!wsSend(frame)) return false;
+  return new Promise((resolve) => {
+    const done = (ok) => { clearTimeout(timer); _alertAcks.delete(frame.eventId); resolve(ok); };
+    const timer = setTimeout(() => done(false), ALERT_ACK_MS);
+    _alertAcks.set(frame.eventId, done);
+  });
+}
+
 function sendHeartbeat() {
   const socket = _ws;
   if (!socket || socket.readyState !== WebSocket.OPEN || _heartbeatTimeout !== null) return;
@@ -842,6 +854,7 @@ function connect() {
       },
     });
     _directRpc.start();
+    if (_relay) void flushQueue(); // alerts left unacknowledged when the last socket dropped
     void catchUpAccountKey();
     void _checkUpdate?.();
     _heartbeatTimer = setInterval(sendHeartbeat, HEARTBEAT_INTERVAL);
@@ -984,6 +997,9 @@ async function handleMessage(msg) {
       resetConnection();
       await _onSuperseded?.();
       break;
+    case 'alert_ok':
+      _alertAcks.get(msg.eventId)?.(true);
+      break;
     case 'heartbeat':
       if (typeof msg.bridgeVersion === 'string' && msg.bridgeVersion
         && msg.bridgeVersion !== 'dev' && msg.bridgeVersion !== BRIDGE_VERSION) {
@@ -1056,7 +1072,7 @@ function viewedOnApp(rootSessionId, eventId) {
     _directRpc.publish({ action: 'notify_check', rootSessionId, eventId }, targets);
   });
 }
-configureNotifier({ post, sendAlert: (frame) => (_relay || _directRpc?.relay ? wsSend(frame) : null), history: params => historyService.history(params), viewed: viewedOnApp,
+configureNotifier({ post, sendAlert: (frame) => (_relay || _directRpc?.relay ? relayAlert(frame) : null), history: params => historyService.history(params), viewed: viewedOnApp,
   notifyKey: () => _directRpc?.keys?.notifyKey });
 setTransferKeys(() => _directRpc?.keys?.files() || null);
 setTransferAccess(() => {

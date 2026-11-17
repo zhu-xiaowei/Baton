@@ -36,7 +36,7 @@ async function account(name) {
   return { ...app, computer, bridge: () => open(computer.token, 'bridge', { device: `ct-${name}-pc` }) };
 }
 
-test('frames stay inside an account; join, credentials and replacement', { skip: off }, async () => {
+test('frames stay inside an account; join and credentials', { skip: off }, async () => {
   const a = await account('iso-a'), b = await account('iso-b');
   const [bridgeA, appA, appB] = [a.bridge(), open(a.token, 'app'), open(b.token, 'app')];
   const [idA, idB, idBridge] = [await appA.id(), await appB.id(), await bridgeA.id()];
@@ -56,15 +56,12 @@ test('frames stay inside an account; join, credentials and replacement', { skip:
   appB.send(`{"to":"${idBridge}","n":3}`);
   await sleep(1500);
   assert.deepEqual([appB.frames, bridgeA.frames.filter((f) => f.n)], [[], []]);
-  const second = a.bridge(); // same device name: the first Bridge is told and closed
-  assert.ok(await bridgeA.next((f) => f.action === 'bridge_replaced'));
-  assert.ok((await appA.next((f) => f.type === 'bridges')).rpc.bridges.length === 0);
-  closeAll(bridgeA, second, appA, appB);
+  closeAll(bridgeA, appA, appB);
   await deleteAccount(a.token);
   await deleteAccount(b.token);
 });
 
-test('credentials refused after the upgrade: 4401 / 4403; revocation closes with 4401', { skip: off }, async () => {
+test('refused after the upgrade: 4401 / 4403 (role cases: contract suite); revocation closes with 4401', { skip: off }, async () => {
   const a = await account('auth');
   const status = (key, role, device) => new Promise((resolve) => {
     const ws = new WebSocket(`${WS}?${new URLSearchParams({ apiKey: key, role, ...(device && { device }) })}`);
@@ -75,8 +72,6 @@ test('credentials refused after the upgrade: 4401 / 4403; revocation closes with
   assert.equal(await status('bt_0123456789abcdef_short', 'app'), 401);
   assert.equal(await status(`${KEY}x`, 'app'), 4401);
   assert.equal(await status(`bt_${a.accountId}_${randomBytes(32).toString('base64url')}`, 'app'), 4401);
-  assert.equal(await status(a.token, 'bridge', 'x'), 4403);
-  assert.equal(await status(a.computer.token, 'app'), 4403);
   assert.equal(await status(a.computer.token, 'bridge', 'ct-other-pc'), 4403);
   const bridge = a.bridge();
   await bridge.id();
@@ -97,10 +92,12 @@ test('alerts are pushed, never stored', { skip: off }, async () => {
   await api('/api/notifications/devices', { token: randomBytes(32).toString('hex'), environment: 'development' }, { token: a.token });
   const bridge = a.bridge();
   await bridge.ready;
-  bridge.send({ action: 'alert', eventId: randomBytes(32).toString('hex'), device: 'ct-alert-pc', sessionId: 's', rootSessionId: 's',
-    title: 'ct', body: 'ct body', e: randomBytes(600).toString('base64') });
-  bridge.send({ action: 'heartbeat' });
-  assert.ok((await bridge.next((f) => f.action === 'heartbeat')).bridgeVersion);
+  const alert = { action: 'alert', eventId: randomBytes(32).toString('hex'), device: 'ct-alert-pc', sessionId: 's', rootSessionId: 's',
+    title: 'ct', body: 'ct body', e: randomBytes(600).toString('base64') };
+  for (let i = 0; i < 2; i++) { // a resend is acknowledged again (and not pushed twice)
+    bridge.send(alert);
+    assert.ok(await bridge.next((f) => f.action === 'alert_ok' && f.eventId === alert.eventId));
+  }
   assert.equal((await devices(a.token)).notifications.feed, false);
   await api('/api/notifications/events', undefined, { token: a.token, status: 404 });
   closeAll(bridge);

@@ -105,7 +105,7 @@ export class AccountObject extends DurableObject {
       send(ws, { action: 'heartbeat', ts: nowInt(),
         ...(me.role === 'bridge' ? { bridgeVersion: this.env.BRIDGE_VERSION ?? this.env.APP_VERSION ?? 'dev' } : {}) });
     } else if (me.role === 'bridge' && action === 'direct_rpc') await this.directRpc(ws, me, body);
-    else if (me.role === 'bridge' && action === 'alert') await this.alert(me.account, body);
+    else if (me.role === 'bridge' && action === 'alert') await this.alert(ws, me.account, body);
   }
 
   async directRpc(ws, me, body) {
@@ -121,9 +121,14 @@ export class AccountObject extends DurableObject {
   }
 
   // A Bridge's alert, checked like the REST body, pushed to the account's iOS devices; nothing is stored.
-  async alert(account, { action, ...body }) {
+  // Acknowledged (`alert_ok`) once taken; a resend of an alert already taken is only acknowledged again.
+  async alert(ws, account, { action, ...body }) {
     const alert = validateAlert(body);
     if (!alert) return;
+    const seen = this.store('putItem', { Item: { pk: `ALERTED#${account}`, sk: alert.eventId, ttl: nowInt() + 86400 },
+      ConditionExpression: 'attribute_not_exists(pk)' });
+    send(ws, { action: 'alert_ok', eventId: alert.eventId });
+    if (seen.error) return;
     try {
       await this.core(account).notifications.deliver(account, alert);
     } catch (error) {
