@@ -58,7 +58,9 @@ function ensureToggle(el) {
   if (!button) {
     button = document.createElement('button');
     button.type = 'button';
-    button.className = 'workspace-switch side-dock-toggle';
+    // Same button classes as its neighbours, so hover feedback matches them.
+    button.className = 'workspace-switch side-dock-toggle'
+      + (el.id === 'internalBrowserPage' ? ' browser-button' : '');
     button.addEventListener('click', () => { maximized = !maximized; sync(); });
     const close = header.querySelector('[data-browser-action="close"]');
     header.insertBefore(button, close || null);
