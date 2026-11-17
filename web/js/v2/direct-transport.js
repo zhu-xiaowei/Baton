@@ -328,7 +328,7 @@ export function connect() {
     // Relay: subscriptions are no leases (the server reports closed Apps), so only the text ping.
     if (rpc?.relay) {
       pingTimer = setInterval(() => {
-        if (document.visibilityState === 'visible' && ws.readyState === WebSocket.OPEN) ws.send(PING);
+        if (document.visibilityState === 'visible' && ws.readyState === WebSocket.OPEN) probe({ stalled: true }); // rebuilt without a pong
       }, RELAY_PING_MS);
       return;
     }
@@ -372,6 +372,7 @@ export function connect() {
 function receive(ws, text) {
   let frame;
   try { frame = JSON.parse(text); } catch { return; }
+  if ('to' in frame && frame.action) return; // relayed from a Bridge (`to`): never one of the server's messages
   if (frame.action === 'whoami' && frame.connectionId) {
     const reconnected = !!lastId;
     replacedId = lastId;

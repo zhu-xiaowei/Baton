@@ -100,8 +100,7 @@ export class AccountObject extends DurableObject {
       return;
     }
     const action = body?.action;
-    if (action === 'realtime_ping') send(ws, { action: 'realtime_pong' });
-    else if (action === 'whoami') send(ws, { action: 'whoami', connectionId: me.id });
+    if (action === 'whoami') send(ws, { action: 'whoami', connectionId: me.id });
     else if (action === 'heartbeat') {
       send(ws, { action: 'heartbeat', ts: nowInt(),
         ...(me.role === 'bridge' ? { bridgeVersion: this.env.BRIDGE_VERSION ?? this.env.APP_VERSION ?? 'dev' } : {}) });
@@ -159,8 +158,8 @@ export class AccountObject extends DurableObject {
   }
 
   async retire(ws, code, reason) {
+    await this.leave(ws); // marked `closing` first: a dead socket stays listed for minutes
     try { ws.close(code, reason); } catch {}
-    await this.leave(ws);
   }
 
   // Once per socket (marked `closing`, which routing skips): Apps → peer_left to Bridges, joined Bridges → Apps.

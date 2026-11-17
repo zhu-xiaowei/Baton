@@ -37,6 +37,8 @@ export function need(body, ...fields) {
 // sockets: { query(account, role, device?), post(endpoint, id, data), deleteConnection(endpoint, id), handleDisconnect(id) }
 export function createAccounts({ env, table, auth, devices, sockets, log }) {
   const open = () => env.OPEN_REGISTRATION === 'true';
+  // Cloudflare: the Web App (WEB_URL) is on another origin than the API, which pairing links then name.
+  const api = () => (env.API_URL ? { api: env.API_URL } : {});
 
   async function conditional(write) {
     try {
@@ -157,7 +159,7 @@ export function createAccounts({ env, table, auth, devices, sockets, log }) {
       sealed: body.sealed, ttl: nowInt() + PAIR_SECONDS }, ConditionExpression: 'attribute_not_exists(pk)' })) === false) {
       throw new HTTPError(409, 'Code in use.');
     }
-    return { expiresIn: PAIR_SECONDS, web: env.WEB_URL ?? '' };
+    return { expiresIn: PAIR_SECONDS, web: env.WEB_URL ?? '', ...api() };
   }
 
   async function pairClaim({ body }) {
@@ -174,7 +176,7 @@ export function createAccounts({ env, table, auth, devices, sockets, log }) {
     const [code, poll] = [tokenUrlsafe(16), tokenUrlsafe(16)];
     await table.putItem({ Item: { ...await pairKey(code), kind: 'bridge', pollHash: await sha256(poll), deviceName: body.deviceName,
       ttl: nowInt() + PAIR_SECONDS } });
-    return { code, poll, expiresIn: PAIR_SECONDS, web: env.WEB_URL ?? '' };
+    return { code, poll, expiresIn: PAIR_SECONDS, web: env.WEB_URL ?? '', ...api() };
   }
 
   async function pairApprove({ body, auth: caller }) {

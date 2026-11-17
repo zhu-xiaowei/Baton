@@ -3,8 +3,8 @@
 // keys (token index, start tokens, pairing codes, recovery, rate counters) to one of 16 IndexObject shards.
 const fail = (code, message = code) => Object.assign(new Error(message), { code });
 
-// ---- Expressions: conditions (attribute_exists, attribute_not_exists, begins_with, comparisons, AND/OR/NOT, ( )) ----
-const TOKEN = /\s*(attribute_not_exists|attribute_exists|begins_with|AND\b|OR\b|NOT\b|<=|>=|<>|[(),=<>]|[#:]?[\w.-]+)/y;
+// ---- Expressions: conditions (attribute_exists, attribute_not_exists, begins_with, = < >, AND/OR) ----
+const TOKEN = /\s*(attribute_not_exists|attribute_exists|begins_with|AND\b|OR\b|[(),=<>]|[#:]?[\w.-]+)/y;
 function tokenize(text) {
   const out = [];
   TOKEN.lastIndex = 0;
@@ -26,8 +26,6 @@ function parseCondition(text, names, values) {
   };
   const primary = () => {
     const token = tokens[at];
-    if (token === '(') { next(); const inner = or(); expect(')'); return inner; }
-    if (token === 'NOT') { next(); const inner = primary(); return (item) => !inner(item); }
     if (token === 'attribute_exists' || token === 'attribute_not_exists' || token === 'begins_with') {
       next(); expect('(');
       const a = operand();
@@ -49,11 +47,10 @@ function parseCondition(text, names, values) {
 }
 
 function compare(a, op, b) {
-  if (a === undefined || b === undefined) return op === '<>';
+  if (a === undefined || b === undefined) return false;
   if (op === '=') return JSON.stringify(a) === JSON.stringify(b);
-  if (op === '<>') return JSON.stringify(a) !== JSON.stringify(b);
   if (typeof a !== typeof b || !['string', 'number'].includes(typeof a)) return false;
-  return { '<': a < b, '>': a > b, '<=': a <= b, '>=': a >= b }[op];
+  return op === '<' ? a < b : a > b;
 }
 
 // SET a = :v, #b = :w  ADD n :one  REMOVE c, d
@@ -106,7 +103,7 @@ export function createItems(sql) {
       const item = applyUpdate(structuredClone(old ?? { ...params.Key }), params.UpdateExpression, params.ExpressionAttributeNames,
         params.ExpressionAttributeValues);
       write(item);
-      return params.ReturnValues === 'ALL_NEW' ? { Attributes: item } : params.ReturnValues === 'ALL_OLD' ? { Attributes: old } : {};
+      return params.ReturnValues === 'ALL_NEW' ? { Attributes: item } : {};
     },
     deleteItem(params) {
       const old = read(params.Key.pk, params.Key.sk);

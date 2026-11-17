@@ -175,6 +175,8 @@ export class DirectRpcBridge {
       if (message.type !== 'joined') return this.retry(), true;
       this.joined = true;
       this.pending = false;
+      // peer_left may have been missed while away; live Apps subscribe again on the new keys.
+      this.subscribers.sessions.clear();
       console.log('[direct-rpc] joined');
       clearInterval(this.pingTimer);
       this.pingTimer = setInterval(() => this.ping(this.socket), RELAY_PING_MS);
@@ -232,13 +234,6 @@ export class DirectRpcBridge {
     if (text === '{"action":"realtime_pong"}') { clearTimeout(this.pongTimer); return; }
     let frame;
     try { frame = JSON.parse(text); } catch { return; }
-    this.receiveFrame(frame, text.length);
-  }
-
-  // An App frame, parsed (relay: from the control socket).
-  receiveFrame(frame, length) {
-    const socket = this.socket;
-    countFrame('in', frame.ch ? 'stream:' + frame.ch : (frame.kind || frame.action || '?') + (frame.method ? ':' + frame.method : ''), length);
     if (frame.action === 'direct_rpc' && frame.type === 'joined') {
       this.pending = false;
       console.log('[direct-rpc] joined');
@@ -248,6 +243,12 @@ export class DirectRpcBridge {
       return;
     }
     if (frame.action === 'direct_rpc' && frame.type === 'error') { socket.close(); return; }
+    this.receiveFrame(frame, text.length);
+  }
+
+  // An App frame, parsed (relay: one the server relayed, i.e. with `to`, from the control socket).
+  receiveFrame(frame, length) {
+    countFrame('in', frame.ch ? 'stream:' + frame.ch : (frame.kind || frame.action || '?') + (frame.method ? ':' + frame.method : ''), length);
     if (isStreamFrame(frame)) {
       const session = this.keys && (frame.pk ? this.keys.session(frame.pk) : this.keys.byTag(frame.s));
       if (!session) return;
@@ -391,8 +392,15 @@ export class DirectRpcBridge {
   async sendStream(ch, id, target, message, deflate) {
     const session = this.keys?.byTag(this.peers.get(target));
     if (!session) return;
-    const m = await sealStreamMessage({ kind: 'stream', ch, id }, await packStreamMessage(message, deflate ? deflateRawSync : null), session.seal);
-    await this.deliver([streamFrame(ch, id, null, m)], target, { stream: ch }, 'push');
+    // Relay: counted as buffered while it is sealed, so the preview pacing on the one socket sees it at once.
+    const size = message.data?.length || 0;
+    this.sealing = (this.sealing || 0) + size;
+    try {
+      const m = await sealStreamMessage({ kind: 'stream', ch, id }, await packStreamMessage(message, deflate ? deflateRawSync : null), session.seal);
+      await this.deliver([streamFrame(ch, id, null, m)], target, { stream: ch }, 'push');
+    } finally {
+      this.sealing -= size;
+    }
   }
 
   // Keys for this process; published by joining again (Apps then make new sessions).
@@ -422,7 +430,7 @@ export class DirectRpcBridge {
   }
 
   get bufferedAmount() {
-    return this.socket?.bufferedAmount || 0;
+    return (this.socket?.bufferedAmount || 0) + (this.relay ? this.sealing || 0 : 0);
   }
 
   async deliver(frames, target, label, action = 'rpc') {

@@ -865,7 +865,8 @@ function connect() {
     try {
       const text = data.toString();
       const msg = JSON.parse(text);
-      if (msg.kind && _directRpc?.relay) return _directRpc.receiveFrame(msg, text.length);
+      // Relayed App frames carry `to`; the server's own never do, so an App cannot pose as the server.
+      if (_directRpc?.relay && 'to' in msg) return _directRpc.receiveFrame(msg, text.length);
       if (msg.action === 'heartbeat') {
         _consecutiveFailures = 0;
         clearTimeout(_heartbeatTimeout);

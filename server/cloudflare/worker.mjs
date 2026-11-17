@@ -1,6 +1,7 @@
 // The hosted service's Worker: static files are served by Workers static assets without running this code
 // (`/` aside); REST and /ws go to the caller's AccountObject, found from the credential itself (tokens
 // `bt_<account>_…`, the deployment key → ACCOUNT_ID); public routes run here.
+import { PUBLIC } from '../core/app.mjs';
 import { TOKEN } from '../core/auth.mjs';
 import { compareDigest } from '../core/py.mjs';
 import { refuse, server, toResponse } from './ports.mjs';
@@ -8,7 +9,6 @@ import { createTable } from './store.mjs';
 
 export { AccountObject, IndexObject } from './account.mjs';
 
-const PUBLIC = new Set(['/api/version', '/api/account/register', '/api/account/recover', '/api/pair/claim', '/api/pair/start', '/api/pair/wait']);
 const nobody = { query: async () => [], post: async () => false, deleteConnection: async () => {}, handleDisconnect: async () => {},
   disconnectRemovedBridge: async () => {} };
 let publicServer;

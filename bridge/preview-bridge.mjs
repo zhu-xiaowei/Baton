@@ -12,7 +12,8 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 // 256 KB window, 512 KB pending. Data frames wait per stream while the shared channel holds `high` unsent bytes.
 function limits(frameBytes) {
   const { chunk, ack } = previewSizes(frameBytes);
-  return { chunk, window: 4 * ack, pending: 8 * ack, high: 4 * ack };
+  // `high` stays ≤ 512 KB: on relay the channel is the Bridge's only socket, which also carries Session pushes.
+  return { chunk, window: 4 * ack, pending: 8 * ack, high: Math.min(4 * ack, 512 * 1024) };
 }
 
 export function createPreviewBridge(options) {

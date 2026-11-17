@@ -67,7 +67,7 @@ export function createNotifications({ env, table, relayPost, log, random = Math.
         continue;
       }
       if (result.status === 200) return JSON.parse(result.data);
-      if (result.status !== 429 && result.status < 500) throw new Error(`Push relay rejected the alert (${result.status})`);
+      if (result.status !== 429 && result.status < 500) throw Object.assign(new Error(`Push relay rejected the alert (${result.status})`), { rejected: true });
     }
     throw new Error('Push relay unavailable');
   }
@@ -128,16 +128,20 @@ export function createNotifications({ env, table, relayPost, log, random = Math.
         ttl: Math.floor(nowMs / 1000) + 7 * 86400 } });
     }
     if (!relayConfigured()) return;
-    // The shared relay sees only sealed alerts here; others are fetched by ID.
-    const pushed = !feed || (event.e && new TextEncoder().encode(JSON.stringify(event)).length <= ALERT_PUSH_BYTES)
-      ? event : undefined;
+    // The relay and Apple see only sealed alerts; others are fetched by ID (none on a server without a feed).
+    let pushed = event.e && new TextEncoder().encode(JSON.stringify(event)).length <= ALERT_PUSH_BYTES ? event : undefined;
     const deadline = nowMs / 1000 + RELAY_BUDGET_SEC;
     const devices = await table.query({ KeyConditionExpression: '#pk = :pk', ExpressionAttributeNames: { '#pk': 'pk' },
       ExpressionAttributeValues: { ':pk': `PUSH_DEVICE#${account}` }, ConsistentRead: true });
     for (const device of devices.Items) {
       if (Math.trunc(device.ttl ?? 0) > nowMs / 1000) {
         try {
-          await sendApns(eventId, device, deadline, pushed);
+          // A relay that predates `alert` refuses it (413): the ID alone, as before.
+          await sendApns(eventId, device, deadline, pushed).catch((error) => {
+            if (!pushed || !error.rejected) throw error;
+            pushed = undefined;
+            return sendApns(eventId, device, deadline);
+          });
         } catch (error) {
           // The feed row is written: Android still gets it. The relay is down, so skip the rest.
           log(`Push relay unavailable; iOS alert dropped: ${error.message}`);
