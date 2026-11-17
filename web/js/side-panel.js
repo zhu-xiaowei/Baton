@@ -1,8 +1,8 @@
 import { state } from './state.js';
 import '../css/side-panel.css';
 
-// Wide pointer screens dock the full-screen tool pages to the right of an open
-// Session instead of covering it. Narrow/touch layouts are unchanged.
+// Wide pointer screens dock the full-screen tool pages to the right of a device's
+// pages instead of covering them. Narrow/touch layouts are unchanged.
 const PANELS = {
   projectTerminalPage: () => window.closeProjectTerminal?.(),
   gitStatusPage: () => window.deactivateGitStatus?.(),
@@ -14,6 +14,7 @@ const ENTRY_PANELS = [
   ['.project-terminal-entry', 'projectTerminalPage'],
   ['.git-status-entry', 'gitStatusPage'],
   ['.project-files-entry[aria-label="Project files"]', 'projectFilesPage'],
+  ['.project-files-entry[aria-label="Home files"]', 'projectFilesPage'],
 ];
 const RATIO_KEY = 'baton-side-panel-ratio';
 const MIN_PANEL = 320;
@@ -25,6 +26,8 @@ const RESTORE_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 14
 let visible = new Set();
 let maximized = false;
 let active = false;
+// Device + project of the page the docked tool was opened on.
+let owner = null;
 const handle = document.createElement('div');
 handle.className = 'side-dock-handle';
 handle.setAttribute('role', 'separator');
@@ -45,8 +48,7 @@ function panelWidth() {
 }
 
 function canDock() {
-  const session = state.appState.session;
-  return wide.matches && !!session && session !== '__new__';
+  return wide.matches && !!state.appState.device && state.appState.session !== '__new__';
 }
 
 function ensureToggle(el) {
@@ -81,6 +83,9 @@ function sync() {
     // One tool at a time; a file viewer may stack on the tool that opened it,
     // but not on the browser, whose native view would cover it.
     const opened = [...now].filter(el => !visible.has(el) && (el.id !== 'fileOverlay' || now.has(browser)));
+    if (opened.length || !active) {
+      owner = { device: state.appState.device, project: state.appState.project?.hash || null };
+    }
     if (opened.length) {
       for (const el of now) {
         if (!opened.includes(el)) { now.delete(el); PANELS[el.id](el); }
@@ -176,6 +181,9 @@ function keyInPanel(event) {
   if (event.target === document.body) return visible.has(lastPanel);
   return [...visible].some(el => el.contains(event.target));
 }
+// Navigation within the page's device + project keeps the docked tool open.
+window.sideDockKeeps = (device, projectHash) => active
+  && owner.device === device && owner.project === (projectHash || null);
 window.sideDockOutside = event => active && !keyInPanel(event);
 window.sideDockInside = event => active && keyInPanel(event);
 window.syncSidePanel = sync;

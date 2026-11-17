@@ -703,8 +703,9 @@ Replaced the old tmux send-keys approach (deleted in Phase 2E). Full design: `do
 
 ## Desktop Side Panel
 
-- On `(min-width: 768px) and (hover: hover) and (pointer: fine)` with a Session open, Terminal / Files / Git /
-  internal browser / file viewer dock to the right instead of covering the chat (`web/js/side-panel.js`, CSS only
+- On `(min-width: 768px) and (hover: hover) and (pointer: fine)` inside a device (project list, Session list,
+  Session; not New Session), Terminal / Files / Git / internal browser / file viewer dock to the right instead of
+  covering the page; a docked tool stays open across pages of the same device + project (`web/js/side-panel.js`, CSS only
   re-positions the existing full-screen pages; narrow and touch layouts are unchanged). Default width 40% clamped
   400–720px (panel ≥ 320, chat ≥ 380), drag handle persists a ratio, header toggle maximizes to full screen.
 - One tool at a time: a newly shown tool closes the others; the file viewer stacks over the tool that opened it,

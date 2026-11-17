@@ -25,6 +25,6 @@ body:not(.side-dock) .side-dock-toggle { display: none; }
 button.side-dock-toggle svg { width: 16px; height: 16px; }
 body[data-side-panel="projectTerminalPage"] #top-right .project-terminal-entry,
 body[data-side-panel="gitStatusPage"] #top-right .git-status-entry,
-body[data-side-panel="projectFilesPage"] #top-right .project-files-entry[aria-label="Project files"] {
+body[data-side-panel="projectFilesPage"] #top-right .project-files-entry:is([aria-label="Project files"], [aria-label="Home files"]) {
   color: var(--action-icon-hover-color); background: var(--surface-raised);
 }

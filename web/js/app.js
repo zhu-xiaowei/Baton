@@ -36,7 +36,7 @@ import { removeDevice } from './v2/pairing.js';
 import { parsePreviewTarget } from './preview-link.js';
 import { openExternalLink, previewNativeAvailable } from './native-shell.js';
 import { CHECK_ICON_SVG, FOLDER_ICON_SVG, GIT_BRANCH_ICON_SVG, TERMINAL_ICON_SVG } from './components/icons.js';
-import { shouldRestoreGitStatus } from './git/view-state.js';
+import { saveGitStatusView, shouldRestoreGitStatus } from './git/view-state.js';
 import { deleteProjectDataCache } from './cache/project-data-cache.js';
 import {
   browseNewProjectPath,
@@ -1622,10 +1622,23 @@ function renderSessions(device, projectHash, data) {
   showStats(data.sessions.length + ' session(s)');
 }
 
-async function loadSessions(device, projectHash, projectName) {
+// A docked tool stays open on another page of its device + project; the rest close.
+function closeProjectTools(device, projectHash) {
+  if (window.sideDockKeeps?.(device, projectHash)) return true;
   window.deactivateProjectTerminal?.();
   window.deactivateProjectFiles?.();
   window.deactivateGitStatus?.();
+  return false;
+}
+
+// Saved tool views name the Session they were opened on; a kept tool moves with the page.
+function saveKeptToolViews() {
+  if (state.gitStatusOpen) saveGitStatusView(state.appState);
+  if (document.getElementById('projectTerminalPage')) saveTerminalView(state.appState);
+}
+
+async function loadSessions(device, projectHash, projectName) {
+  var keptTools = closeProjectTools(device, projectHash);
   resetSessionThreads();
   rememberActiveListScroll();
   document.body.classList.add('browse-view');
@@ -1648,6 +1661,7 @@ async function loadSessions(device, projectHash, projectName) {
   showInputBar(false);
   updateBreadcrumb();
   saveNav();
+  if (keptTools) saveKeptToolViews();
   return loadPagedList(options, myNav);
 }
 
@@ -2010,9 +2024,7 @@ function savedNewSessionRuntime() {
 
 // ---- Messages ----
 async function loadMessages(sessionId, preview, options) {
-  window.deactivateProjectTerminal?.();
-  window.deactivateProjectFiles?.();
-  window.deactivateGitStatus?.();
+  var keptTools = closeProjectTools(state.appState.device, state.appState.project?.hash);
   options = options || {};
   var rootSessionId = options.rootSessionId || sessionId;
   var rootSessionPreview = options.rootSessionPreview
@@ -2058,6 +2070,7 @@ async function loadMessages(sessionId, preview, options) {
   content.innerHTML = skeletonMessages();
   showInputBar(true);
   saveNav(); // before the await: a stale-chunk reload must come back to this Session
+  if (keptTools) saveKeptToolViews();
   try {
     await window.loadViewerLibs();
   } catch (e) {
