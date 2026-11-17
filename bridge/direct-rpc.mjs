@@ -313,11 +313,12 @@ export class DirectRpcBridge {
     if (socket.readyState !== WebSocket.OPEN) return;
     socket.send(JSON.stringify({ action: 'realtime_ping' }));
     clearTimeout(this.pongTimer);
-    // Relay: the pong queues behind this socket's own output; a socket still draining it is alive.
-    let left = socket.bufferedAmount;
+    // Relay: the pong may queue behind this socket's own output; one still writing to the network is alive.
+    const written = () => socket._socket?.bytesWritten ?? 0;
+    let last = written();
     const check = () => {
-      if (!this.relay || !left || socket.bufferedAmount >= left) return socket.terminate();
-      left = socket.bufferedAmount;
+      if (!this.relay || written() === last) return socket.terminate();
+      last = written();
       (this.pongTimer = setTimeout(check, PONG_TIMEOUT_MS)).unref?.();
     };
     (this.pongTimer = setTimeout(check, PONG_TIMEOUT_MS)).unref?.();
