@@ -71,6 +71,7 @@ setNativeTabTitle('Settings');
   if (paired) devices().then(function (body) {
     listing = body;
     installBase = body.install || '';
+    if (installBase) document.querySelector('[data-panel="install"] .text').textContent = connectText('install', '');
     document.querySelectorAll('.hosted-only').forEach(function (row) { row.hidden = !body.hosted; });
     // A paired App of a self-hosted stack has no install command it could show (the public one is hosted only).
     if (!body.hosted) { document.querySelector('[data-tab="install"]').hidden = true; window.selectConnectTab('url'); }
