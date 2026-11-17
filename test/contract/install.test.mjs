@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { KEY, api, devices, headers, skip } from './client.mjs';
+import { KEY, WEB, api, devices, headers, skip } from './client.mjs';
 
 const keyed = skip || (!KEY && 'BATON_KEY is unset');
 
@@ -10,9 +10,9 @@ test('version', { skip }, async () => {
 });
 
 test('web files: HTML revalidates, hashed chunks are immutable (#191)', { skip }, async () => {
-  const html = await api('/');
+  const html = await api('/', undefined, { base: WEB });
   assert.equal(headers.get('cache-control'), 'no-cache');
-  await api(`/${/assets\/[^"']+-[\w-]{8}\.js/.exec(html)[0]}`);
+  await api(`/${/assets\/[^"']+-[\w-]{8}\.js/.exec(html)[0]}`, undefined, { base: WEB });
   assert.equal(headers.get('cache-control'), 'public, max-age=31536000, immutable');
 });
 
