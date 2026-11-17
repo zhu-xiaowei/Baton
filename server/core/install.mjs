@@ -53,7 +53,7 @@ const unixPrivateNode = `install_private_node() {
     sum=$( (sha256sum "$tmp/$name" 2>/dev/null || shasum -a 256 "$tmp/$name") | cut -d' ' -f1) &&
     grep -qxF "$sum  $name" "$tmp/SHASUMS256.txt" &&
     tar --no-same-owner -xf "$tmp/$name" -C "$tmp" && "$tmp/\${name%.tar.*}/bin/node" --version >/dev/null &&
-    mv "$tmp/\${name%.tar.*}" "$DIR/node/${NODE_VERSION}"
+    rm -rf "$DIR/node/${NODE_VERSION}" && mv "$tmp/\${name%.tar.*}" "$DIR/node/${NODE_VERSION}"
   local status=$?
   rm -rf "$tmp"
   [ $status -eq 0 ] || echo "Warning: could not download and verify Node.js ${NODE_VERSION} from $base/$name; using the system Node.js." >&2
@@ -181,7 +181,7 @@ function windowsInstallScript(url, server, apiKey, name) {
     "    if ($LASTEXITCODE -eq 0) { & (Join-Path $tmp \"$name\\node.exe\") --version | Out-Null }",
     "    if ($LASTEXITCODE -ne 0) { throw 'the extracted node.exe did not run' }",
     // Antivirus may still hold the new files open.
-    "    foreach ($attempt in 1..5) { try { Move-Item (Join-Path $tmp $name) (Split-Path $exe); break } catch { if ($attempt -eq 5) { throw } Start-Sleep -Seconds 1 } }",
+    "    foreach ($attempt in 1..5) { try { Remove-Item (Split-Path $exe) -Recurse -Force -ErrorAction SilentlyContinue; Move-Item (Join-Path $tmp $name) (Split-Path $exe); break } catch { if ($attempt -eq 5) { throw } Start-Sleep -Seconds 1 } }",
     "    return $exe",
     "  } catch {",
     "    Write-Host \"Warning: could not download and verify Node.js $version from $base ($($_.Exception.Message)); using the system Node.js.\" -ForegroundColor Yellow",
@@ -321,7 +321,7 @@ function windowsInstallScript(url, server, apiKey, name) {
     "$logPath = Join-Path $dir 'bridge.log'",
     "Remove-Item $logPath -Force -ErrorAction SilentlyContinue",
     "$wrapper = Join-Path $dir 'run-bridge.cmd'",
-    "$userNode = $nodeCandidates | Where-Object { $_ -and $_ -notlike '*\\.baton-bridge\\node\\*' -and (Test-Path $_) } | Select-Object -First 1",
+    "$userNode = @($nodePath) + $nodeCandidates | Where-Object { $_ -and $_ -notlike '*\\.baton-bridge\\node\\*' -and (Test-Path $_) } | Select-Object -First 1",
     "$wrapperLines = @(",
     "  '@echo off',",
     "  ('set \"USERPROFILE=' + $targetHome + '\"'),",
@@ -431,7 +431,6 @@ export async function installScript({ headers }, apiKey, name, platform, presign
     '\n' +
     nameBlock + '\n' +
     'NODE=$(command -v node)\n' +
-    'NODE_DIR=$(dirname "$NODE")\n' +
     'mkdir -p "$DIR" && cd "$DIR"\n' +
     'curl -sL "' + url + '" | tar xz 2>/dev/null\n' +
     'install_bridge_dependencies() {\n' +
