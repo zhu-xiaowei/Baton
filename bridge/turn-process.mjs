@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync, spawn } from 'node:child_process';
 import { BRIDGE_HOME } from './config.mjs';
+import { executableOptions } from './platform.mjs';
 import { processStartTime } from './session.mjs';
 
 const KILL_AFTER_MS = 30_000;
@@ -63,7 +64,7 @@ export async function sessionProcess(key, bin, args, options = {}) {
   entry = live.get(key);
   if (entry) return entry.child;
   const [command, argv] = unwrapShim(bin, args);
-  const child = spawn(command, argv, { stdio: 'pipe', windowsHide: true, ...options, detached: !IS_WINDOWS });
+  const child = spawn(command, argv, { stdio: 'pipe', windowsHide: true, ...options, env: executableOptions(command, options).env, detached: !IS_WINDOWS });
   entry = { child, finishing: false };
   entry.exited = new Promise((resolve) => {
     const done = () => {
