@@ -5,7 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createServer } from '../core/app.mjs';
 import { response, text } from '../core/http.mjs';
-import { HTTPError, floatRepr, pyStrip, randomHex } from '../core/py.mjs';
+import { HTTPError, floatRepr, pyStrip, randomHex, unquote } from '../core/py.mjs';
 import { signHeaders, signUrl } from '../../bridge/transfer-store.mjs';
 import { currentKey } from './api-key.mjs';
 import { credentials, region } from './aws.mjs';
@@ -248,7 +248,9 @@ export function createHandler(directory = WEB_DIR) {
     const method = event.httpMethod;
     const request = new Request(`http://localhost/?${query}`, { method, headers, body: ['GET', 'HEAD'].includes(method) ? undefined : body });
     const forwarded = pyStrip(headers.get('x-forwarded-proto') ?? '');
-    const reply = await server.handle(request, { path: event.path, clientIp: event.requestContext?.identity?.sourceIp ?? '',
+    // The Web Adapter resolved dot segments (a URL) and uvicorn percent-decoded the path.
+    const path = unquote(new URL(event.path, 'http://localhost').pathname);
+    const reply = await server.handle(request, { path, clientIp: event.requestContext?.identity?.sourceIp ?? '',
       scheme: ['http', 'https', 'ws', 'wss'].includes(forwarded) ? forwarded : 'http' });
     const binary = binaryBody(reply.headers);
     const bytes = method === 'HEAD' ? new Uint8Array() : reply.body;

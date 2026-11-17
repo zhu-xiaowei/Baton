@@ -209,3 +209,7 @@ export const pattern = (source, extra = {}) => ({ source, pattern: source.replac
 // A loads() result as plain JavaScript values.
 export const plain = (value) => (value instanceof Map ? Object.fromEntries([...value].map(([key, item]) => [key, plain(item)]))
   : Array.isArray(value) ? value.map(plain) : value instanceof PyFloat ? value.value : value);
+
+// urllib.parse.unquote: %XX runs decoded as UTF-8, invalid bytes replaced.
+export const unquote = (text) => text.replace(/(?:%[0-9a-fA-F]{2})+/g,
+  (run) => new TextDecoder().decode(Uint8Array.from(run.slice(1).split('%'), (pair) => parseInt(pair, 16))));
