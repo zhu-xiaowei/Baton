@@ -38,7 +38,7 @@ curl -fsSL https://raw.githubusercontent.com/zhu-xiaowei/baton/main/server/insta
 
 ### 2. 安装 Bridge
 
-需要 [Node.js](https://nodejs.org/) 22.15 或更高版本。
+安装脚本会自行下载 [Node.js](https://nodejs.org/) 24 运行时（失败时改用已安装的 Node.js 22.15 或更高版本）。
 
 1. 在浏览器中打开 **Start URL**（也可直接作为 Web 查看器使用）。
 2. 在 Setup 页面复制 **Install bridge** 提供的一行安装命令。

@@ -26,6 +26,9 @@ export function findExecutable(name, candidates = []) {
   }
 }
 
+// The private runtime the installer downloads (~/.baton-bridge/node/) stays off spawned harnesses' PATH.
+export const isPrivateNode = (file) => /[\\/]\.baton-bridge[\\/]node[\\/]/.test(file);
+
 export function executableOptions(binary, options = {}, runtime = {}) {
   const platform = runtime.platform || process.platform;
   const nodeExecutable = runtime.nodeExecutable || process.execPath;
@@ -38,7 +41,7 @@ export function executableOptions(binary, options = {}, runtime = {}) {
     : path.dirname(nodeExecutable);
   const delimiter = platform === 'win32' ? ';' : ':';
   const pathEntries = (env[pathKey] || '').split(delimiter).filter(Boolean);
-  if (nodeDirectory && !pathEntries.includes(nodeDirectory)) {
+  if (nodeDirectory && !isPrivateNode(nodeExecutable) && !pathEntries.includes(nodeDirectory)) {
     env[pathKey] = [nodeDirectory, ...pathEntries].join(delimiter);
   }
 
@@ -78,7 +81,9 @@ export function validateProductionDependencies(cwd) {
 }
 
 export function installProductionDependencies(cwd) {
-  const npmCli = path.join(path.dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js');
+  // The npm next to this node (Windows: beside node.exe; Unix: <prefix>/lib), so native modules match it.
+  const npmCli = ['node_modules', '../lib/node_modules'].map((dir) => path.join(path.dirname(process.execPath), dir, 'npm', 'bin', 'npm-cli.js'))
+    .find((file) => fs.existsSync(file));
   const args = [
     'ci',
     '--omit=dev',
@@ -87,14 +92,18 @@ export function installProductionDependencies(cwd) {
     '--no-audit',
     '--no-fund',
   ];
-  const npm = fs.existsSync(npmCli)
+  const npm = npmCli
     ? [process.execPath, [npmCli, ...args]]
     : [findExecutable('npm', [path.join(path.dirname(process.execPath), 'npm')]), args];
   if (!npm[0]) throw new Error('npm not found');
+  // Package scripts run `node` from PATH: this one, also when it is the private runtime.
+  const env = { ...process.env };
+  const pathKey = Object.keys(env).find((key) => key.toUpperCase() === 'PATH') || 'PATH';
+  env[pathKey] = `${path.dirname(process.execPath)}${path.delimiter}${env[pathKey] || ''}`;
   let error;
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
-      runExecutable(npm[0], npm[1], { cwd, stdio: 'ignore' });
+      runExecutable(npm[0], npm[1], { cwd, stdio: 'ignore', env });
       return validateProductionDependencies(cwd);
     } catch (cause) {
       error = cause;

@@ -2,7 +2,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { execFileSync } from 'child_process';
-import { findExecutable } from './platform.mjs';
+import { findExecutable, isPrivateNode } from './platform.mjs';
 
 function shellQuote(value) {
   return `'${String(value).replaceAll("'", "'\"'\"'")}'`;
@@ -48,8 +48,8 @@ function withEnvironmentFile(name, binary, options) {
   if ((options.platform || process.platform) === 'win32') return binary;
 
   const home = options.home || os.homedir();
-  const nodeDirectory = path.dirname(options.nodeExecutable || process.execPath);
-  const pathPrefix = [...new Set([nodeDirectory, path.join(home, '.local/bin')])].join(':');
+  const nodeExecutable = options.nodeExecutable || process.execPath;
+  const pathPrefix = [...new Set([...(isPrivateNode(nodeExecutable) ? [] : [path.dirname(nodeExecutable)]), path.join(home, '.local/bin')])].join(':');
   const envFile = shellQuote(options.envFile);
   return writeLauncher(`${name}-env`, [
     '#!/bin/bash',
