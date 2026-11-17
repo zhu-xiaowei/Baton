@@ -140,6 +140,23 @@ the user-facing one-line installer comes in phase 2 and reuses it. Resources: Wo
 AccountObject/IndexObject with SQLite migrations, R2 binding, service binding to the relay), PushRelay Worker
 (APNs key as secret), R2 bucket with CORS + lifecycle, custom domain.
 
+## 9a. Domains (user, 2026-11-17)
+
+| Host | Serves |
+|---|---|
+| `api.agentbaton.app` | REST + `/ws` (App and Bridge); the only server URL clients store |
+| `web.agentbaton.app` | the browser Web App (static assets) and pairing links / QR codes (later also the Universal / App Links verification files) |
+| `agentbaton.app` | future marketing homepage (not in PR 2), except `/install` and `/install.ps1`, which reach the service Worker and print scripts pointing at `api.agentbaton.app` |
+| `www.agentbaton.app` | 301 → apex |
+
+- One Worker with several custom domains; the hostnames are deploy-script parameters (`--api-domain`, `--web-domain`,
+  `--install-domain`). PR 2 tests with `pr2-api.agentbaton.app` + `pr2-web.agentbaton.app`; the production names are
+  attached at launch.
+- Self-host AWS keeps one origin for both. The Web App takes its API base from `<meta name="baton-api">`, which the
+  Cloudflare deploy fills in when the web and API hosts differ (empty: same origin). Pairing links carry the API
+  server (`s=`) when it is on another origin than the link. The API already answers CORS for any origin (preflight
+  with `Access-Control-Max-Age`, as the native app needs).
+
 ## 10. Tests and acceptance
 
 - Contract suite from PR 1 passes against the Cloudflare deployment.
