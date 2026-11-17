@@ -73,7 +73,7 @@ export function createAccounts({ env, table, auth, devices, sockets, log }) {
   const tokenKeys = (account, digest) => [{ pk: `TOKEN#${digest}`, sk: '-' }, { pk: `ACCOUNT#${account}`, sk: `TOKEN#${digest}` }];
 
   async function issue(account, kind, name, install = '') {
-    const token = `bt_${tokenUrlsafe(32)}`;
+    const token = `bt_${account}_${tokenUrlsafe(32)}`; // the account routes the token (Cloudflare)
     name = truncate(name, 64);
     install = install && await sha256(install);
     if (install) await drop(account, (await tokenRows(account)).filter((row) => row.install === install).map((row) => row.sk.slice(6)));
