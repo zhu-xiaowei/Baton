@@ -52,7 +52,7 @@ const unixPrivateNode = `install_private_node() {
   fetch_node "$name" && fetch_node SHASUMS256.txt &&
     sum=$( (sha256sum "$tmp/$name" 2>/dev/null || shasum -a 256 "$tmp/$name") | cut -d' ' -f1) &&
     grep -qxF "$sum  $name" "$tmp/SHASUMS256.txt" &&
-    tar -xf "$tmp/$name" -C "$tmp" && "$tmp/\${name%.tar.*}/bin/node" --version >/dev/null &&
+    tar --no-same-owner -xf "$tmp/$name" -C "$tmp" && "$tmp/\${name%.tar.*}/bin/node" --version >/dev/null &&
     mv "$tmp/\${name%.tar.*}" "$DIR/node/${NODE_VERSION}"
   local status=$?
   rm -rf "$tmp"
@@ -172,7 +172,7 @@ function windowsInstallScript(url, server, apiKey, name) {
     "    [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12",
     "    foreach ($file in \"$name.zip\", 'SHASUMS256.txt') {",
     "      foreach ($attempt in 1..3) {",
-    "        try { Invoke-WebRequest -UseBasicParsing -Uri \"$base/$file\" -OutFile (Join-Path $tmp $file); break } catch { if ($attempt -eq 3) { throw } Start-Sleep -Seconds 2 }",
+    "        try { Invoke-WebRequest -UseBasicParsing -TimeoutSec 900 -Uri \"$base/$file\" -OutFile (Join-Path $tmp $file); break } catch { if ($attempt -eq 3) { throw } Start-Sleep -Seconds 2 }",
     "      }",
     "    }",
     "    $expected = ((Select-String -Path (Join-Path $tmp 'SHASUMS256.txt') -SimpleMatch \"  $name.zip\" | Select-Object -First 1).Line -split ' ')[0]",
