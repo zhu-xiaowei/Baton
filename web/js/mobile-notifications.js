@@ -7,6 +7,7 @@ const ENABLED = 'baton-notifications-enabled';
 const PUSH_DEVICE = 'baton-push-device';
 const ASKED = 'baton-notifications-asked';
 const TARGET = 'baton-notification-target';
+const CONFIG = 'baton-notification-config';
 let platform, config, initialization, pendingTarget, permission;
 let status = '';
 
@@ -122,7 +123,9 @@ async function initialize() {
   const onClick = new Channel();
   onClick.onmessage = () => { void drain().catch(error => setStatus(error.message)); };
   await invoke('plugin:push|listen', { onClick });
-  await drain();
+  // Same server and key as last time (api.js clears it otherwise): a tap opens without waiting.
+  try { config = JSON.parse(localStorage.getItem(CONFIG) || 'null'); } catch {}
+  void drain().catch(error => setStatus(error.message));
   try { pendingTarget ||= JSON.parse(sessionStorage.getItem(TARGET) || 'null'); } catch {}
   sessionStorage.removeItem(TARGET);
   // Servers deployed before notifications existed answer 404.
@@ -130,6 +133,8 @@ async function initialize() {
     if (String(error.message).startsWith('404')) return null;
     throw error;
   });
+  if (config) localStorage.setItem(CONFIG, JSON.stringify(config));
+  else localStorage.removeItem(CONFIG);
   if (!config) return setStatus('Update the Baton server to enable notifications.');
   if (pendingTarget) void openNotification(pendingTarget);
   // On each page load: refreshes the iOS token TTL, restarts the Android service. The first
