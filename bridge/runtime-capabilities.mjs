@@ -42,6 +42,7 @@ export function resolveCodexBin(options = {}) {
     '/usr/local/bin/codex',
     '/opt/homebrew/bin/codex',
     '/usr/bin/codex',
+    ...(process.env.PATH || '').split(path.delimiter).filter(Boolean).map((dir) => path.join(dir, 'codex')),
   ]);
 }
 

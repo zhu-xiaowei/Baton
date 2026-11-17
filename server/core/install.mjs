@@ -46,17 +46,18 @@ const unixPrivateNode = `install_private_node() {
   base="\${BATON_NODE_MIRROR:-https://nodejs.org/dist}"
   base="\${base%/}/${NODE_VERSION}"
   echo "Installing Node.js ${NODE_VERSION} for Baton Bridge..."
+  rm -rf "$DIR"/node/.tmp.*
   mkdir -p "$DIR/node" && tmp=$(mktemp -d "$DIR/node/.tmp.XXXXXX") || return 1
-  curl -fsSL --retry 3 --connect-timeout 20 -o "$tmp/$name" "$base/$name" &&
-    curl -fsSL --retry 3 --connect-timeout 20 -o "$tmp/SHASUMS256.txt" "$base/SHASUMS256.txt" &&
+  local get="curl -fsSL --retry 3 --connect-timeout 20 --speed-limit 1024 --speed-time 60"
+  $get -o "$tmp/$name" "$base/$name" && $get -o "$tmp/SHASUMS256.txt" "$base/SHASUMS256.txt" &&
     sum=$( (sha256sum "$tmp/$name" 2>/dev/null || shasum -a 256 "$tmp/$name") | cut -d' ' -f1) &&
     grep -qxF "$sum  $name" "$tmp/SHASUMS256.txt" &&
     tar -xf "$tmp/$name" -C "$tmp" && "$tmp/\${name%.tar.*}/bin/node" --version >/dev/null &&
     mv "$tmp/\${name%.tar.*}" "$DIR/node/${NODE_VERSION}"
   local status=$?
   rm -rf "$tmp"
-  [ $status -eq 0 ] || { echo "Warning: could not download and verify Node.js ${NODE_VERSION} from $base/$name; using the system Node.js." >&2; return 1; }
-  find "$DIR/node" -mindepth 1 -maxdepth 1 ! -name ${NODE_VERSION} -exec rm -rf {} + 2>/dev/null || true
+  [ $status -eq 0 ] || echo "Warning: could not download and verify Node.js ${NODE_VERSION} from $base/$name; using the system Node.js." >&2
+  return $status
 }
 install_private_node && export PATH="$DIR/node/${NODE_VERSION}/bin:$PATH"`;
 
@@ -180,7 +181,6 @@ function windowsInstallScript(url, server, apiKey, name) {
     "    if ($LASTEXITCODE -eq 0) { & (Join-Path $tmp \"$name\\node.exe\") --version | Out-Null }",
     "    if ($LASTEXITCODE -ne 0) { throw 'the extracted node.exe did not run' }",
     "    Move-Item (Join-Path $tmp $name) (Split-Path $exe)",
-    "    Get-ChildItem $root -Directory | Where-Object { $_.Name -ne $version } | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue",
     "    return $exe",
     "  } catch {",
     "    Write-Host \"Warning: could not download and verify Node.js $version from $base ($($_.Exception.Message)); using the system Node.js.\" -ForegroundColor Yellow",
@@ -320,12 +320,13 @@ function windowsInstallScript(url, server, apiKey, name) {
     "$logPath = Join-Path $dir 'bridge.log'",
     "Remove-Item $logPath -Force -ErrorAction SilentlyContinue",
     "$wrapper = Join-Path $dir 'run-bridge.cmd'",
+    "$userNode = $nodeCandidates | Where-Object { $_ -and $_ -notlike '*\\.baton-bridge\\node\\*' -and (Test-Path $_) } | Select-Object -First 1",
     "$wrapperLines = @(",
     "  '@echo off',",
     "  ('set \"USERPROFILE=' + $targetHome + '\"'),",
     "  ('set \"HOME=' + $targetHome + '\"'),",
     // The user's Node.js, not the private one, for the harnesses the Bridge starts.
-    "  $(if ($node) { 'set \"PATH=' + (Split-Path $node.Source) + ';%PATH%\"' }),",
+    "  $(if ($userNode) { 'set \"PATH=' + (Split-Path $userNode) + ';%PATH%\"' }),",
     "  ('\"' + $nodePath + '\" \"' + $bridge + '\" >> \"' + $logPath + '\" 2>&1')",
     ")",
     "[System.IO.File]::WriteAllLines($wrapper, $wrapperLines, [System.Text.Encoding]::ASCII)",
@@ -503,6 +504,12 @@ export async function installScript({ headers }, apiKey, name, platform, presign
     'else\n' +
     '  # Linux: systemd\n' +
     '  SERVICE_DIR="$HOME/.config/systemd/user"\n' +
+    '  export XDG_RUNTIME_DIR=/run/user/$(id -u)\n' +
+    // The private runtime replaces the user's Node: their Node joins the user manager's PATH for harnesses.
+    '  MANAGER_PATH=$(systemctl --user show-environment 2>/dev/null | sed -n "s/^PATH=//p")\n' +
+    '  SERVICE_PATH=""\n' +
+    '  [ -n "$USER_NODE_DIR" ] && [ "$NODE" != "$USER_NODE" ] &&\n' +
+    '    SERVICE_PATH="Environment=\\"PATH=$USER_NODE_DIR:${MANAGER_PATH:-/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin}\\""\n' +
     '  mkdir -p "$SERVICE_DIR"\n' +
     '  cat > "$SERVICE_DIR/baton-bridge.service" << SVC_EOF\n' +
     '[Unit]\n' +
@@ -510,7 +517,7 @@ export async function installScript({ headers }, apiKey, name, platform, presign
     'After=network.target\n' +
     '[Service]\n' +
     'ExecStart=$NODE $DIR/bridge.mjs\n' +
-    '${USER_NODE_DIR:+Environment=PATH=$USER_NODE_DIR:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin}\n' +
+    '$SERVICE_PATH\n' +
     'Restart=on-failure\n' +
     'RestartSec=5\n' +
     'KillMode=process\n' +
@@ -518,7 +525,6 @@ export async function installScript({ headers }, apiKey, name, platform, presign
     'WantedBy=default.target\n' +
     'SVC_EOF\n' +
     '  sudo loginctl enable-linger $(whoami) 2>/dev/null || loginctl enable-linger $(whoami) 2>/dev/null || true\n' +
-    '  export XDG_RUNTIME_DIR=/run/user/$(id -u)\n' +
     '  systemctl --user daemon-reload\n' +
     '  systemctl --user enable baton-bridge\n' +
     '  systemctl --user restart baton-bridge\n' +
