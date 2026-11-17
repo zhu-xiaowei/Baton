@@ -114,7 +114,8 @@ export async function appKeys(k, since = 0) {
 }
 
 // Accounts and pairing (docs/v2-accounts-design.md §5). The server knows accountId and hash(joinSecret);
-// K travels sealed under `t`, which only the QR code carries, bound to its pairing code.
+// K travels sealed under `t`, which only the QR code carries, bound to its pairing code. A link carries one
+// secret `p`: `t` is p itself (sealPair derives its key with info 'pair'), the code a separate one-way HKDF of p.
 const b64url = (bytes) => toBase64(bytes).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 const hex = (bytes) => Array.from(bytes, (v) => v.toString(16).padStart(2, '0')).join('');
 const hkdfKey = async (raw) => subtle().importKey('raw', raw, 'HKDF', false, ['deriveKey']);
@@ -143,6 +144,7 @@ async function openKey(key, sealed, aad) {
   } catch { return null; }
 }
 
+export const pairCode = async (p) => b64url(await bits(await subtle().importKey('raw', p, 'HKDF', false, ['deriveBits']), 'pair-code', 128));
 export const sealPair = async (t, raw, code) => sealKey(await gcm(await hkdfKey(t), 'pair', 'encrypt'), raw, code);
 export const openPair = async (t, sealed, code) => openKey(await gcm(await hkdfKey(t), 'pair', 'decrypt'), sealed, code);
 

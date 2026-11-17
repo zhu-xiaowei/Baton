@@ -2,7 +2,7 @@
 // computer waiting to join. A signed-in App never seals K itself (it is not extractable, plan D2): an
 // online computer of the account does it (`pair_invite`, `pair_approve`).
 import { fromBase64 } from '../../../bridge/direct-rpc-protocol.mjs';
-import { accountOf, fingerprint, openPair, sealPair, sealRotation } from '../../../bridge/e2ee.mjs';
+import { accountOf, fingerprint, openPair, pairCode, sealPair, sealRotation } from '../../../bridge/e2ee.mjs';
 import { defaultServer, state } from '../state.js';
 import { loadAccountKey, saveAccountKey } from './account-key.js';
 import { cachedOnlineDevices, devices, request } from './direct-transport.js';
@@ -12,12 +12,19 @@ export function parseLink(text) {
   try { url = new URL(String(text).trim()); } catch { return null; }
   const params = new URLSearchParams(url.hash.slice(1));
   const kind = params.has('j') ? 'j' : params.has('c') ? 'c' : '';
-  const t = params.get('t');
+  // `p`, the link's one secret, is the value itself; older links carry the code there and the secret in `t`.
+  const t = params.get('t') || params.get(kind);
   if (!kind || !t) return null;
-  return { text: url.href, kind, code: params.get(kind), t: fromBase64(t.replace(/-/g, '+').replace(/_/g, '/')),
-    // A link to this very page is served by this deployment, whose API server it knows; `s` is for the native App.
-    server: url.origin === globalThis.location?.origin ? defaultServer()
-      : (/^https:\/\//.test(params.get('s') || '') && params.get('s').replace(/\/$/, '')) || url.origin + url.pathname.replace(/\/[^/]*$/, '') };
+  return { text: url.href, kind, code: params.get('t') ? params.get(kind) : null, t: fromBase64(t.replace(/-/g, '+').replace(/_/g, '/')),
+    // A link to this very page is served by this deployment, whose API server it knows; older links name theirs (`s`).
+    server: url.origin === globalThis.location?.origin ? defaultServer() : (/^https:\/\//.test(params.get('s') || '') && params.get('s').replace(/\/$/, '')) || '' };
+}
+
+// Another deployment's link (the native App, a pasted link): its page names its API server, or is served by it.
+async function serverOf(link) {
+  const page = new URL('index.html', link.text);
+  const html = await fetch(page).then((response) => (response.ok ? response.text() : ''), () => '');
+  return (/<meta name="baton-api" content="(https:\/\/[^"]+)"/.exec(html)?.[1] || page.origin + page.pathname.replace(/\/[^/]*$/, '')).replace(/\/$/, '');
 }
 
 // "iPhone" for the App, "Safari on iPhone" for a browser: how the account's device list tells them apart.
@@ -45,19 +52,21 @@ async function post(server, path, body, key) {
 // Signed out: an invite joins its account; a computer's code starts a new account with that computer.
 export async function signInWithLink(link) {
   let token, raw, added = '';
+  const server = link.server || await serverOf(link);
+  const code = link.code ?? await pairCode(link.t);
   if (link.kind === 'c') {
-    const reply = await post(link.server, '/api/pair/claim', { code: link.code, ...me() });
-    raw = await openPair(link.t, reply.sealed, link.code);
+    const reply = await post(server, '/api/pair/claim', { code, ...me() });
+    raw = await openPair(link.t, reply.sealed, code);
     // The server names the account's current key (`head`, a fingerprint): K must be that key.
     if (raw?.length !== 32 || (reply.head && (await accountOf(raw)).fp !== reply.head)) throw new Error('This code does not match its account.');
     token = reply.token;
   } else {
     raw = crypto.getRandomValues(new Uint8Array(32));
-    token = (await post(link.server, '/api/account/register', { ...await accountOf(raw), ...me() })).token;
-    added = (await post(link.server, '/api/pair/approve', { code: link.code, sealed: await sealPair(link.t, raw, link.code) }, token)).deviceName;
+    token = (await post(server, '/api/account/register', { ...await accountOf(raw), ...me() })).token;
+    added = (await post(server, '/api/pair/approve', { code, sealed: await sealPair(link.t, raw, code) }, token)).deviceName;
   }
-  await saveAccountKey(link.server, raw);
-  return { token, added };
+  await saveAccountKey(server, raw);
+  return { token, added, server };
 }
 
 export async function recoverAccount(server, raw) {

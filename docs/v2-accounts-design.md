@@ -82,8 +82,12 @@ devices queries `pk = ACCOUNT#<id>, begins_with(sk, 'TOKEN#')`.
 
 ## 5. Pairing (plan §5)
 
-QR / link payload: `https://<server>/pair#c=<code>&t=<t>`, `code` = 16 random bytes base64url, `t` = 16
-random bytes base64url. The fragment never reaches a server.
+QR / link payload: `https://<web>/#c=<p>` (hosted: `https://web.agentbaton.app/#j=<p>`), `p` = 16 random bytes
+base64url, the link's only secret. The server sees `code = base64url(HKDF(p, info 'pair-code', 16 bytes))`, chosen by the
+client (`pair/create`, `pair/start`; a `pair/start` without one still gets a server-made code), and `t = p`. The
+fragment never reaches a server. The link's page names its API server (`<meta name="baton-api">`, which deploy.mjs
+serves to any origin, so a native App reads it too); otherwise the page's origin is the API. The root page forwards
+`#j=`/`#c=` to landing. Apps still accept older links `#j=<code>&t=<t>&s=<api>`.
 
 Sealing (`bridge/e2ee.mjs`, browser; `e2ee-node.mjs`, Bridge): `pairKey = HKDF(t, info 'pair')`,
 `sealed = base64(nonce ‖ AES-GCM(pairKey, K, AAD = code))`. Opening checks the AAD, then `deriveAccount(K)
@@ -93,7 +97,7 @@ The account is created by the first App that scans, never by a computer: an acco
 a phone (no empty accounts to expire), and every computer and phone of one person ends up in the same account.
 
 1. **Any new computer.** The install command (hosted: public `curl -sL https://<server>/install | bash`, §6)
-   starts Bridge with no credential and no `K`. Bridge calls `pair/start`, prints `…/pair#j=<code>&t=<t>` as a QR
+   starts Bridge with no credential and no `K`. Bridge calls `pair/start`, prints `…/#j=<p>` as a QR
    code (+ link) **only when stdout is a TTY** (the installer runs `node bridge.mjs pair --once` in the
    foreground), and waits (`pair/wait`, a new code every 10 minutes while the terminal is open).
 2. **An App scans a join code** (existing barcode-scanner plugin; web: paste the link):
@@ -104,7 +108,7 @@ a phone (no empty accounts to expire), and every computer and phone of one perso
    accountKey: K, accountKeyAt, accounts: true}` in `config.json` (0600), prints "Joined, approved by <App
    name>" and starts. No confirmation dialog (decided).
 3. **Another phone / App.** A signed-in native App ("Add device") or a Bridge with `K` (`bridge.mjs pair`)
-   creates an App code (`pair/create`, QR `…/pair#c=<code>&t=<t>`). The new App scans or opens it; `claim` →
+   creates an App code (`pair/create`, QR `…/#c=<p>`). The new App scans or opens it; `claim` →
    token + sealed; opens `K`; stores token as `_ak`, server as `_as`, `K` (§7). It sees every computer of the
    account at once (`/devices` is per account).
 4. **Show a code again:** `node ~/.baton-bridge/bridge.mjs pair` (Bridge with `K`: App code; without: join

@@ -90,7 +90,7 @@ export function bridgeKeys(k, since = 0, exhausted = () => {}) {
   };
 }
 
-// Synchronous twins of e2ee.mjs accountOf / sealPair / openPair.
+// Synchronous twins of e2ee.mjs accountOf / pairCode / sealPair / openPair.
 export const accountOf = (k) => ({ accountId: hkdf(k, 'account', 8).toString('hex'), joinSecret: hkdf(k, 'join').toString('base64url'), fp: fingerprint(k) });
 
 // One 32-byte key sealed with AES-GCM: nonce ‖ ciphertext ‖ tag, base64.
@@ -109,6 +109,7 @@ function openKey(key, sealed, aad) {
   } catch { return null; }
 }
 
+export const pairCode = (p) => hkdf(p, 'pair-code', 16).toString('base64url');
 export const sealPair = (t, k, code) => sealKey(hkdf(t, 'pair'), k, code);
 export const openPair = (t, sealed, code) => openKey(hkdf(t, 'pair'), sealed, code);
 export const fingerprint = (k) => hkdf(k, 'fp', 8).toString('hex');

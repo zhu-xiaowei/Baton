@@ -77,11 +77,11 @@
      entry-index.js loads in parallel (browser default for type=module) and takes over interactivity. -->
 <script>
 (function () {
-  // Start URL shortcut: any ?t=<token> or ?key=<key> belongs on landing.html
-  // (where the exchange + login flow lives). Forward the query immediately,
+  // Start URL shortcut: any ?t=<token> or ?key=<key>, and pairing links (#j= / #c=), belong on
+  // landing.html (where the exchange + login flow lives). Forward them immediately,
   // before reading credentials, so links work whether or not user is signed in.
-  if (/[?&](t|key)=/.test(location.search)) {
-    location.replace('landing.html' + location.search);
+  if (/[?&](t|key)=/.test(location.search) || /^#[jc]=/.test(location.hash)) {
+    location.replace('landing.html' + location.search + location.hash);
     return;
   }
   var key = '';

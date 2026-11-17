@@ -276,7 +276,7 @@ setNativeTabTitle('Baton');
       return finishAdd(reply.deviceName);
     }
     var result = await signInWithLink(link);
-    setCredentials(result.token, link.server);
+    setCredentials(result.token, result.server);
     if (result.added) return finishAdd(result.added);
     location.replace('index.html');
   }

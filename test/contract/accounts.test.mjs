@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { test } from 'node:test';
-import { accountOf, openPair, openRotation, sealPair } from '../../bridge/e2ee-node.mjs';
+import { accountOf, openPair, openRotation, pairCode, sealPair } from '../../bridge/e2ee-node.mjs';
 import { GONE, KEY, ORIGIN, api, approve, code, deleteAccount, devices, finish, joinComputer, newAccount, randomIp, rotation,
   skip, startComputer } from './client.mjs';
 
 const appCode = async (token, k) => {
-  const c = code(), t = randomBytes(16);
+  const t = randomBytes(16), c = pairCode(t);
   assert.equal((await api('/api/pair/create', { code: c, sealed: sealPair(t, k, c) }, { token })).expiresIn, 600);
   return { c, t };
 };
@@ -31,6 +31,7 @@ test('two accounts pair, remove with rotation, recover and delete apart', { skip
 
   // A computer: a wrong poll, a second approver, a reused name all fail; the token comes once.
   const start = await startComputer('ct-mac');
+  await api('/api/pair/start', { deviceName: 'ct-mac', code: start.code }, { status: 409 });
   await api('/api/pair/wait', { code: start.code, poll: code() }, { status: 404 });
   assert.deepEqual(await api('/api/pair/wait', { code: start.code, poll: start.poll }), { pending: true });
   assert.deepEqual(await approve(a.token, a.k, start), { deviceName: 'ct-mac' });
