@@ -66,7 +66,7 @@ ${unixNodeSums}
   echo "Installing Node.js ${NODE_VERSION} for Baton Bridge..."
   rm -rf "$DIR"/node/.tmp.*
   mkdir -p "$DIR/node" && tmp=$(mktemp -d "$DIR/node/.tmp.XXXXXX") || return 1
-  trap 'kill $pids 2>/dev/null; wait; rm -rf "$tmp"; exit 130' INT TERM
+  trap 'kill $pids 2>/dev/null || :; wait; rm -rf "$tmp"; exit 130' INT TERM
   for src in ${NODE_SOURCES.join(' ')}; do
     i=$((i + 1))
     ( trap 'kill $c 2>/dev/null; exit 1' TERM
