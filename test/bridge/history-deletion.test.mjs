@@ -340,3 +340,15 @@ test('a native refusal does not fall back to unlinking a potentially active thre
   assert.equal(result.ok, false);
   assert.equal(fs.existsSync(file), true);
 });
+
+test('projects and their runtimes are deleted concurrently; a failing runtime fails only its project', async () => {
+  let active = 0, peak = 0;
+  const adapter = (runtime) => ({ runtime, features: { deleteHistory: true }, async deleteProjectHistory(ph) {
+    peak = Math.max(peak, ++active);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    active--;
+    return !(runtime === 'b' && ph === 'p2');
+  } });
+  const result = await deleteHistoryFiles({ projectHashes: ['p1', 'p2'] }, {}, [adapter('a'), adapter('b')]);
+  assert.deepEqual([peak, result.deletedProjects, result.errors], [4, 1, ['b: History files could not be deleted']]);
+});

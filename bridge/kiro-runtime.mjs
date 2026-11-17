@@ -2,6 +2,7 @@
 // named, or it may fall back to v2), which exits once the Session is Done (session/close, then EOF).
 // Text streams from ACP; every row comes from messages.jsonl, so a live turn and its history match.
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { execFile, execFileSync } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -304,8 +305,22 @@ async function rename(id, name, project) {
   return sessionIndex.view(recOf(id)).preview; // what Kiro stored (session.json keeps at most 80 characters)
 }
 
+// Deletes share one ACP process (no session, so no lease), ended a few seconds after the last one.
+let deleter = null;
 async function deleteSession(id) {
-  await promisify(execFile)(await kiroBin(), ['chat', '--delete-session', id], { timeout: 30_000 });
+  const d = deleter ||= { c: connect(os.homedir()), n: 0 };
+  d.n++;
+  clearTimeout(d.timer);
+  try {
+    await d.c.ready;
+    await d.c.rpc.request('session/delete', { sessionId: id }, { timeoutMs: 30_000 });
+  } catch {
+    if (deleter === d && (!d.c.rpc || d.c.rpc.error)) deleter = null; // the process failed: the next delete starts another
+    // kiro-cli without ACP session/delete
+    await promisify(execFile)(await kiroBin(), ['chat', '--delete-session', id], { timeout: 30_000 });
+  } finally {
+    if (--d.n === 0) d.timer = setTimeout(() => { if (deleter === d) deleter = null; close(d.c); }, 3000).unref();
+  }
   return true;
 }
 
@@ -423,7 +438,7 @@ const kiroInteraction = defineInteractionAdapter({
       argumentHint: c.input?.hint || '', behavior: c.input?.hint ? 'compose' : 'send' })), skills: [] };
   },
 
-  shutdown: () => Promise.all([...conns.values()].map(close)),
+  shutdown: () => Promise.all([...conns.values(), ...(deleter ? [deleter.c] : [])].map(close)),
 });
 
 export default defineRuntimeAdapter({
@@ -466,7 +481,7 @@ export default defineRuntimeAdapter({
     const ids = (sessionIndex.catalog().byProject.get(projectHash) || []).filter((row) => row.rec.runtime === 'kiro').map((row) => row.rec.id);
     // Session deletes are guarded by ws.mjs; a project's are checked here.
     if (ids.some((id) => conns.has(id) || kiroInteraction.heldElsewhere(id))) throw new Error('a Session is in use');
-    for (const id of ids) await deleteSession(id);
+    await Promise.all(ids.map(deleteSession));
     return true;
   },
   createStatusContext: () => ({ leases: kiro.catalog.running() }),
