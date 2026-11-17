@@ -11,6 +11,14 @@ const connect = (apiKey, role) => new Promise((resolve, reject) => {
   socket.on('error', reject);
 });
 
+const open = (apiKey, query) => new Promise((resolve, reject) => {
+  const socket = new WebSocket(`${WS}?${new URLSearchParams({ apiKey, ...query })}`);
+  const frames = [];
+  socket.on('message', (data) => frames.push(JSON.parse(data)));
+  socket.on('open', () => resolve(Object.assign(socket, { frames })));
+  socket.on('error', reject);
+});
+
 test('credential kinds', { skip }, async () => {
   const app = await newAccount('ct-kinds');
   assert.deepEqual(await api('/api/auth/start-token', {}, { token: app.token, status: 403 }), { error: 'forbidden' });
@@ -26,6 +34,14 @@ test('credential kinds', { skip }, async () => {
     assert.equal(await connect(app.token, 'app'), 101);
     assert.equal(await connect(`${KEY}x`, 'app'), 401);
     assert.equal(await connect(KEY, 'app'), 101);
+    // One socket per computer: a newer Bridge connection replaces the older one.
+    const bridge = { role: 'bridge', device: 'ct-kinds-pc' };
+    const first = await open(computer.token, bridge);
+    const closed = new Promise((resolve) => first.on('close', resolve));
+    const second = await open(computer.token, bridge);
+    await closed;
+    assert.deepEqual(first.frames, [{ action: 'bridge_replaced' }]);
+    second.close();
   }
   await deleteAccount(app.token);
 });

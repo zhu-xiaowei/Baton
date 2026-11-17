@@ -33,7 +33,7 @@ export function createServer(ports) {
   const { env, table, sockets, log } = ports;
   const auth = createAuth(ports);
   const devices = createDevices(table);
-  const accounts = createAccounts({ env, table, auth, devices, sockets, log, limits: ports.limits });
+  const accounts = createAccounts({ env, table, auth, devices, sockets, log });
   const notifications = createNotifications(ports);
 
   async function authenticate(context) {
@@ -159,5 +159,5 @@ export function createServer(ports) {
 
   const handle = createHttp({ routes, authenticate, web: ports.web, onError: (error) => log(error.stack || String(error)),
     keyUnavailable: (error) => error instanceof KeyUnavailable });
-  return { handle, auth, devices, accounts, notifications };
+  return { handle };
 }

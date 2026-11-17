@@ -44,7 +44,7 @@ const quotas = new Map();
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // One signed request; resolves the response text, throws AwsError with the service's error code.
-export async function call(service, { method = 'POST', url, headers = {}, body = '', signRegion = region() }) {
+export async function call(service, { method = 'POST', url, headers = {}, body = '' }) {
   const attempts = service === 'dynamodb' ? 4 : 3;
   let acquired = 0;
   for (let attempt = 1; ; attempt++) {
@@ -52,7 +52,7 @@ export async function call(service, { method = 'POST', url, headers = {}, body =
     let response;
     let badChecksum = false;
     try {
-      const signed = await signHeaders({ method, url, region: signRegion, service, credentials: credentials(), headers, body });
+      const signed = await signHeaders({ method, url, region: region(), service, credentials: credentials(), headers, body });
       response = await request(url, { method, headers: { ...headers, ...signed }, body, timeoutMs: 60_000 });
       const crc = response.headers['x-amz-crc32'];
       badChecksum = service === 'dynamodb' && crc !== undefined && Number(crc) !== zlib.crc32(response.text);

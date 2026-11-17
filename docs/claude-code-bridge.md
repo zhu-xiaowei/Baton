@@ -107,7 +107,7 @@ The system DNS resolver is unchanged.
   before Bridge updates. OS/network/backend delays can extend recovery time.
 
 Regression tests: `node --test test/bridge/sleep-gap-monitor.test.mjs test/bridge/updater.test.mjs`;
-the server side is covered by `npm run test:contract` against a deployment.
+Bridge socket ownership on the server is checked by `npm run test:contract` against a deployment.
 
 ### Data extraction
 

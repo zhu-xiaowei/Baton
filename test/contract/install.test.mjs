@@ -1,12 +1,19 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { KEY, api, devices, skip } from './client.mjs';
+import { KEY, api, devices, headers, skip } from './client.mjs';
 
 const keyed = skip || (!KEY && 'BATON_KEY is unset');
 
 test('version', { skip }, async () => {
   const { version, bridgeVersion } = await api('/api/version');
   assert.ok(typeof version === 'string' && version && typeof bridgeVersion === 'string' && bridgeVersion);
+});
+
+test('web files: HTML revalidates, hashed chunks are immutable (#191)', { skip }, async () => {
+  const html = await api('/');
+  assert.equal(headers.get('cache-control'), 'no-cache');
+  await api(`/${/assets\/[^"']+-[\w-]{8}\.js/.exec(html)[0]}`);
+  assert.equal(headers.get('cache-control'), 'public, max-age=31536000, immutable');
 });
 
 test('install scripts embed the caller\'s credential; the public one has none', { skip: keyed }, async () => {

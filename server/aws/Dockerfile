@@ -13,6 +13,7 @@ COPY server/core/ server/core/
 COPY server/aws/*.mjs server/aws/
 COPY bridge/transfer-store.mjs bridge/
 COPY --from=web-builder /build/dist web/
+RUN chmod -R a+rX server bridge web
 
 ARG APP_VERSION=dev
 ENV APP_VERSION=$APP_VERSION

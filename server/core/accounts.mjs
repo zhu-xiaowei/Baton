@@ -4,6 +4,7 @@ import { tokenHash } from './auth.mjs';
 import { HTTPError, compareDigest, nowInt, pattern, pyLen, pySlice, pyStrip, sha256, str, tokenUrlsafe } from './py.mjs';
 
 const PAIR_SECONDS = 600;
+const MAX_BRIDGES = 10;
 const MAX_ROTATIONS = 8;
 const GONE = 'This code is used or expired.';
 const required = { required: true };
@@ -34,7 +35,7 @@ export function need(body, ...fields) {
 }
 
 // sockets: { query(account, role, device?), post(endpoint, id, data), deleteConnection(endpoint, id), handleDisconnect(id) }
-export function createAccounts({ env, table, auth, devices, sockets, log, limits = { bridges: 10 } }) {
+export function createAccounts({ env, table, auth, devices, sockets, log }) {
   const open = () => env.OPEN_REGISTRATION === 'true';
 
   async function conditional(write) {
@@ -113,7 +114,7 @@ export function createAccounts({ env, table, auth, devices, sockets, log, limits
   // A name is the computer's identity: a second one with it would take the first one's place.
   async function roomFor(account, name) {
     const computers = (await tokenRows(account)).filter((row) => row.kind === 'bridge').map((row) => row.deviceName);
-    if (open() && computers.length >= limits.bridges) throw new HTTPError(409, `This account already has ${limits.bridges} computers.`);
+    if (open() && computers.length >= MAX_BRIDGES) throw new HTTPError(409, `This account already has ${MAX_BRIDGES} computers.`);
     if (computers.includes(name)) throw new HTTPError(409, `A computer named ${str(name)} is already in this account; reinstall with another name.`);
   }
 
