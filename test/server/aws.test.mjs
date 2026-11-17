@@ -1,0 +1,58 @@
+// What the URL contract suite (test/contract) cannot reach: push relay signing and retries, and the
+// deployment key check of the WebSocket and REST Lambdas, with AWS answered by a fake fetch.
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import { createNotifications } from '../../server/core/notifications.mjs';
+
+const KEY = 'deployment-key';
+Object.assign(process.env, { AWS_REGION: 'ap-northeast-1', AWS_ACCESS_KEY_ID: 'AKIDEXAMPLE', AWS_SECRET_ACCESS_KEY: 'secret',
+  AWS_SESSION_TOKEN: 'token', API_KEY_NAME: 'Baton-api-key', SYSTEM_TABLE: 'system', CONNECTIONS_TABLE: 'connections' });
+let apiGateway = () => ({ item: [{ name: 'Baton-api-key', enabled: true, value: KEY }] });
+const sent = [];
+globalThis.fetch = async (url, init) => {
+  sent.push({ url: String(url), headers: init.headers, body: init.body });
+  if (String(url).includes('apigateway')) return Response.json(apiGateway());
+  if (String(url).includes('lambda-url')) return sent.relay.shift()();
+  return Response.json({}); // DynamoDB PutItem
+};
+const connect = async (apiKey) => (await import('../../server/aws/ws-handler.mjs')).handler({
+  queryStringParameters: { apiKey, role: 'app' }, requestContext: { routeKey: '$connect', connectionId: 'c', domainName: 'control.test', stage: 'v1' } });
+
+test('an unreadable deployment key is a 503, never a guess', async () => {
+  apiGateway = () => { throw new Error('down'); };
+  const random = Math.random;
+  Math.random = () => 0; // botocore's backoff, without the waiting
+  assert.deepEqual(await connect(KEY), { statusCode: 503 });
+  const rest = await (await import('../../server/aws/http-handler.mjs')).createHandler('/nonexistent')({
+    httpMethod: 'GET', path: '/api/bridge/devices', headers: { 'x-api-key': KEY } });
+  assert.deepEqual([rest.statusCode, rest.body], [503, '{"error":"temporarily unavailable"}']);
+  Math.random = random;
+});
+
+test('WebSocket connections accept only the current deployment key, pinned to its account', async () => {
+  apiGateway = () => ({ item: [{ name: 'Baton-api-key', enabled: true, value: KEY }] });
+  assert.deepEqual(await connect('guess'), { statusCode: 401 });
+  assert.deepEqual(await connect(''), { statusCode: 401 });
+  process.env.ACCOUNT_ID = 'pinned';
+  assert.deepEqual(await connect(KEY), { statusCode: 200 });
+  assert.equal(JSON.parse(sent.at(-1).body).Item.accountId.S, 'pinned');
+  delete process.env.ACCOUNT_ID;
+});
+
+test('the push relay is signed, retries throttling with full jitter and a dropped connection at once', async () => {
+  const { relayPost } = await import('../../server/aws/http-handler.mjs');
+  const waits = [];
+  const ok = () => new Response('{"status": 200}');
+  const status = (code) => () => new Response('', { status: code });
+  const { relay } = createNotifications({ env: { PUSH_RELAY_URL: 'https://abc.lambda-url.us-west-2.on.aws/' }, relayPost,
+    random: () => 1, sleep: async (sec) => { waits.push(sec); } });
+  sent.relay = [status(429), status(503), status(502), ok, () => { throw new TypeError('fetch failed'); }, ok, status(400)];
+  assert.deepEqual(await relay({ token: 'a' }), { status: 200 });
+  assert.deepEqual(waits, [2, 4, 8]);
+  const signed = sent.at(-1).headers;
+  assert.match(signed.authorization, /us-west-2\/lambda\/aws4_request/);
+  assert.equal(signed['x-amz-security-token'], 'token');
+  assert.deepEqual(await relay({ token: 'a' }), { status: 200 }); // dropped while frozen: reconnect, no backoff
+  assert.equal(waits.length, 3);
+  await assert.rejects(relay({ token: 'a' }), /rejected the alert \(400\)/);
+});

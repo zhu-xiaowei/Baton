@@ -793,7 +793,7 @@ All endpoints use a unified error format:
 The server keeps no Session data. `Connections` (PK `connectionId`, GSI `accountId-role-index`,
 24h TTL) holds WS connection records with role/device routing. `SystemTable` (`pk`/`sk`, TTL) holds
 token, push-device and notification rows, and one device row per Bridge: `pk DEVICE#<accountId>`,
-`sk <deviceName>`, with `deviceDisplayName`, `os`, `lastConnected` (`server/src/devices.py`).
+`sk <deviceName>`, with `deviceDisplayName`, `os`, `lastConnected` (`server/core/devices.mjs`).
 
 ---
 

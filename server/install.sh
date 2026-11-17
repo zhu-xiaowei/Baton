@@ -176,7 +176,6 @@ ACCOUNT_ID="$STS_OUT"
 echo "Deploying Baton — region=$REGION, stack=$STACK_NAME, account=$ACCOUNT_ID"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-SRC_DIR="$SCRIPT_DIR/src"
 TEMPLATE="$SCRIPT_DIR/template/Baton.template"
 WEB_DIR="$SCRIPT_DIR/../web"
 ROOT_DIR="$SCRIPT_DIR/.."
@@ -228,11 +227,12 @@ echo "[1/4] Building server Docker image (version=$APP_VERSION)..."
 
 aws ecr create-repository --repository-name "$REPO_NAME" --region "$REGION" >/dev/null 2>&1 || true
 
-# Stage build context: server/src + web + root frontend files. Vite build runs inside Dockerfile.
+# Stage build context: server/core + server/aws + web + root frontend files. Vite build runs inside Dockerfile.
 BUILD_CTX=$(mktemp -d)
 trap 'rm -rf "$BUILD_CTX"' EXIT
-cp -r "$SRC_DIR"/. "$BUILD_CTX/"
-rm -f "$BUILD_CTX/test_api.py" 2>/dev/null || true
+cp "$SCRIPT_DIR/aws/Dockerfile" "$BUILD_CTX/"
+mkdir -p "$BUILD_CTX/server"
+cp -r "$SCRIPT_DIR/core" "$SCRIPT_DIR/aws" "$BUILD_CTX/server/"
 cp -r "$WEB_DIR" "$BUILD_CTX/web"
 mkdir -p "$BUILD_CTX/bridge"
 cp "$ROOT_DIR/bridge/preview-protocol.mjs" \
@@ -415,7 +415,7 @@ WS_ZIP=$(mktemp -t baton-ws-lambda.XXXX)
 rm -f "$WS_ZIP"
 WS_ZIP="$WS_ZIP.zip"
 WS_CODE_KEY="deploy/ws/${APP_VERSION}-$(date +%s)-$$.zip"
-(cd "$SRC_DIR" && zip -qr "$WS_ZIP" api_key.py auth.py bridge_ws.py devices.py direct_rpc_ws.py -x '*/__pycache__/*' '*.pyc')
+(cd "$ROOT_DIR" && zip -qr "$WS_ZIP" server/core/*.mjs server/aws/*.mjs bridge/transfer-store.mjs)
 aws s3 cp "$WS_ZIP" "s3://${S3_BUCKET}/${WS_CODE_KEY}" --region "$REGION" --only-show-errors
 rm -f "$WS_ZIP"
 fi
