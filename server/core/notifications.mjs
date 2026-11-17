@@ -3,7 +3,7 @@
 // The Bridge decides and words each alert (bridge/notify.mjs) and posts it here. Android polls
 // the feed; an iOS push carries only an event ID, which the notification extension resolves
 // here. Alerts carry no transcript or credential.
-import { DIGIT, HTTPError, dumps, pattern } from './py.mjs';
+import { HTTPError, pattern } from './util.mjs';
 
 // API Gateway answers at 29 s; past this the feed row (already written) is enough for Android.
 const RELAY_BUDGET_SEC = 20;
@@ -27,8 +27,8 @@ const Alert = [
   // The fields above, sealed by the Bridge (bridge/notify.mjs); only the phone can open them.
   ['e', max(8000)],
 ];
-const EVENT_ID = new RegExp(`^EVENT#${DIGIT}{16}#[a-f0-9]{64}$`, 'u');
-const CURSOR = new RegExp(`^EVENT#${DIGIT}{16}#([a-f0-9]{64}|~)$`, 'u');
+const EVENT_ID = /^EVENT#\d{16}#[a-f0-9]{64}$/;
+const CURSOR = /^EVENT#\d{16}#([a-f0-9]{64}|~)$/;
 const eventKey = (ms) => `EVENT#${String(Math.floor(ms)).padStart(16, '0')}`;
 
 // relayPost(url, body, timeoutSec) → { status, data } POSTs once to the push relay (throws when unreachable).
@@ -39,7 +39,7 @@ export function createNotifications({ env, table, relayPost, log, random = Math.
 
   // POST one alert to the shared APNs relay (push-relay/); it returns APNs' status and reason.
   async function relay(request, deadline = null, attempts = 4) {
-    const body = dumps(request, true);
+    const body = JSON.stringify(request);
     deadline = deadline || Date.now() / 1000 + RELAY_BUDGET_SEC;
     for (let attempt = 0; attempt < attempts; attempt++) {
       if (attempt) {

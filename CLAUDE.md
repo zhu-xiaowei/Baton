@@ -437,8 +437,8 @@ template. S3 bucket / ECR repo / AWS account id are derived automatically by
 ### Server
 - JavaScript server (no dependencies: `node:https` + SigV4 for DynamoDB/STS/API Gateway) in a Node 22 Docker Lambda, API Key auth.
   `server/core` holds the routes and rules on a `ports` object (store, sockets, credentials, push);
-  `server/aws` is the Lambda adapter. It is a behaviour-identical port of the earlier Python/FastAPI
-  server (responses byte-identical, incl. error details); `npm run test:contract` checks any deployment by URL. API Gateway checks `x-api-key` on `/api/*`; WS
+  `server/aws` is the Lambda adapter. It ports the earlier Python/FastAPI server: same routes, rules, DynamoDB
+  rows and the responses clients see; `npm run test:contract` checks any deployment by URL. API Gateway checks `x-api-key` on `/api/*`; WS
   `$connect` compares `?apiKey=` with the deployment key, which both Lambdas read from API Gateway
   by name (`server/aws/api-key.mjs`, cached 5 min; a failed lookup keeps the last value, and with no
   value REST/WS answer 503 rather than guess an account) — the key is

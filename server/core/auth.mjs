@@ -1,5 +1,5 @@
 // Resolves a request's credential (deployment API key or device token) to its account, once per request.
-import { compareDigest, now, sha256 } from './py.mjs';
+import { compareDigest, now, sha256 } from './util.mjs';
 
 const SEEN_SECONDS = 3600;
 
@@ -14,7 +14,7 @@ export function createAuth({ env, table, currentKey, log }) {
 
   async function isCurrent(key) {
     const current = await currentKey();
-    return !!(key && current) && compareDigest(key, current, true);
+    return !!(key && current) && compareDigest(key, current);
   }
 
   // Pinned at deploy (install.sh) so a rotated key keeps the data; any other key still gets its own

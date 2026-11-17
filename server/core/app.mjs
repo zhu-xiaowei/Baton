@@ -6,7 +6,7 @@ import { createDevices } from './devices.mjs';
 import { createHttp, json, text } from './http.mjs';
 import { checkDeviceName, installScript } from './install.mjs';
 import { createNotifications } from './notifications.mjs';
-import { now, nowInt, pyLen, pyStrip, randomHex } from './py.mjs';
+import { length, now, nowInt, randomHex } from './util.mjs';
 
 const PROTOCOL_VERSION = 2;
 const PUBLIC = new Set(['/api/version', '/api/account/register', '/api/account/recover', '/api/pair/claim', '/api/pair/start', '/api/pair/wait']);
@@ -37,7 +37,7 @@ export function createServer(ports) {
   const notifications = createNotifications(ports);
 
   async function authenticate(context) {
-    const path = context.urlPath;
+    const path = context.path;
     if (context.method === 'OPTIONS' || !path.startsWith('/api/') || PUBLIC.has(path)) return null;
     let resolved;
     try {
@@ -56,8 +56,8 @@ export function createServer(ports) {
   const wsUrl = () => (env.WS_API_ENDPOINT ? env.WS_API_ENDPOINT.replaceAll('https://', 'wss://') : '');
 
   async function redeemToken(token) {
-    token = pyStrip(token || '');
-    if (!token || pyLen(token) > 128) return null;
+    token = (token || '').trim();
+    if (!token || length(token) > 128) return null;
     const item = (await table.getItem({ Key: { pk: 'TOKEN', sk: token }, ConsistentRead: true })).Item;
     // DynamoDB TTL deletes lazily, so expiry is checked here.
     if (!item || Math.trunc(item.ttl || 0) < now() || item.keyName !== auth.keyName()) return null;

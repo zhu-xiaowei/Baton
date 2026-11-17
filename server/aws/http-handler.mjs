@@ -1,12 +1,10 @@
-// The REST API Lambda (API Gateway proxy events), as the Python server ran behind the Lambda Web Adapter.
-import { createHmac } from 'node:crypto';
+// The REST API Lambda: API Gateway proxy events in, the server's responses out.
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { signHeaders } from '../../bridge/transfer-store.mjs';
+import { signHeaders, signUrl } from '../../bridge/transfer-store.mjs';
 import { createServer } from '../core/app.mjs';
 import { createDevices } from '../core/devices.mjs';
-import { pyStrip, unquote } from '../core/py.mjs';
 import { currentKey } from './api-key.mjs';
 import { credentials, region, request } from './aws.mjs';
 import { rpcInfo } from './credentials.mjs';
@@ -32,22 +30,12 @@ export async function relayPost(url, body, timeoutSec) {
   }
 }
 
-const rfc3986 = (value) => encodeURIComponent(value).replace(/[!'()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
-
-// boto3's generate_presigned_url('get_object'): S3 signature version 2 on the global endpoint.
+// The Bridge package's download URL for install scripts (valid one hour).
 async function presign() {
   const bucket = process.env.BRIDGE_IMAGES_BUCKET ?? '';
   if (!bucket) return null;
-  const { accessKeyId, secretAccessKey, sessionToken } = credentials();
-  const key = 'install/bridge.tar.gz';
-  const expires = String(Math.floor(Date.now() / 1000 + 3600));
-  const token = sessionToken ? [['x-amz-security-token', sessionToken]] : [];
-  const signature = createHmac('sha1', secretAccessKey)
-    .update(`GET\n\n\n${expires}\n${token.map(([name, value]) => `${name}:${value}\n`).join('')}/${bucket}/${key}`).digest('base64');
-  const query = [['AWSAccessKeyId', accessKeyId], ['Signature', signature], ...token, ['Expires', expires]];
-  // A name that is not a DNS label (dots) is addressed by path on the regional endpoint.
-  const base = /^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/.test(bucket) ? `${bucket}.s3.amazonaws.com` : `s3.${region()}.amazonaws.com/${bucket}`;
-  return `https://${base}/${key}?${query.map(([name, value]) => `${name}=${rfc3986(value)}`).join('&')}`;
+  return signUrl({ method: 'GET', host: `${bucket}.s3.${region()}.amazonaws.com`, path: '/install/bridge.tar.gz', region: region(),
+    credentials: credentials(), expires: 3600 });
 }
 
 // ---- Lambda entry ----
@@ -62,32 +50,25 @@ export function createHandler(directory = WEB_DIR) {
   }
   return async (event) => {
     server ||= await init();
-    // Header values reached the Python server as UTF-8 bytes read back as Latin-1.
     const headers = new Headers();
-    for (const [name, value] of Object.entries(event.headers ?? {})) {
-      if (value !== null) headers.set(name, Buffer.from(String(value), 'utf8').toString('latin1'));
-    }
+    for (const [name, value] of Object.entries(event.headers ?? {})) if (value !== null) headers.set(name, value);
     const query = new URLSearchParams();
     for (const [name, values] of Object.entries(event.multiValueQueryStringParameters ?? {})) for (const value of values ?? []) query.append(name, value);
     if (![...query].length) for (const [name, value] of Object.entries(event.queryStringParameters ?? {})) query.append(name, value);
     const body = event.body === null || event.body === undefined ? undefined : Buffer.from(event.body, event.isBase64Encoded ? 'base64' : 'utf8');
     const method = event.httpMethod;
     const request = new Request(`http://localhost/?${query}`, { method, headers, body: ['GET', 'HEAD'].includes(method) ? undefined : body });
-    const forwarded = pyStrip(headers.get('x-forwarded-proto') ?? '');
-    // The Web Adapter resolved dot segments (a URL) and uvicorn percent-decoded the path.
-    const path = unquote(new URL(event.path, 'http://localhost').pathname);
-    const reply = await server.handle(request, { path, clientIp: event.requestContext?.identity?.sourceIp ?? '',
-      scheme: ['http', 'https', 'ws', 'wss'].includes(forwarded) ? forwarded : 'http' });
-    const binary = binaryBody(reply.headers);
+    // API Gateway passes the path as sent: dot segments resolved and percent-decoded here.
+    let path = new URL(event.path, 'http://localhost').pathname;
+    try {
+      path = decodeURIComponent(path);
+    } catch {}
+    const reply = await server.handle(request, { path, clientIp: event.requestContext?.identity?.sourceIp ?? '' });
+    const binary = !/^(text\/|application\/json|image\/svg\+xml)/.test(reply.headers['content-type'] ?? 'text/');
     const bytes = method === 'HEAD' ? new Uint8Array() : reply.body;
     return { statusCode: reply.status, headers: reply.headers, isBase64Encoded: binary && bytes.length > 0,
       body: Buffer.from(bytes).toString(binary ? 'base64' : 'utf8') };
   };
 }
-
-// Lambda Web Adapter's rule: a body with Content-Encoding or a non-text type travels base64.
-const TEXT = /^(text|application\/(json|javascript|xml|yaml))/;
-const binaryBody = ({ 'content-encoding': encoding, 'content-type': type }) => !!encoding
-  || (type !== undefined && !TEXT.test(type) && !/\+(xml|yaml|json)$/.test(type.trim().split(';')[0]));
 
 export const handler = createHandler();

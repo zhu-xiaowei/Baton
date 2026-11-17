@@ -1,6 +1,6 @@
 // WebSocket connections in ConnectionsTable and API Gateway @connections: which socket is a device's
 // current Bridge, sending, closing, and the v2 direct-channel join (bridge_data ⇄ control socket).
-import { nowInt, randomHex, sha256 } from '../core/py.mjs';
+import { nowInt, randomHex, sha256 } from '../core/util.mjs';
 import { call } from './aws.mjs';
 import { dataEndpoint, issueCredentials, rpcInfo, storageInfo } from './credentials.mjs';
 

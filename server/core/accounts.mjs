@@ -1,7 +1,7 @@
 // Accounts, device tokens and pairing (docs/v2-accounts-design.md). The server never sees K: it keeps
 // hash(joinSecret), token hashes, and K sealed under a pairing secret that only the QR code carries.
 import { tokenHash } from './auth.mjs';
-import { HTTPError, compareDigest, nowInt, pattern, pyLen, pySlice, pyStrip, sha256, str, tokenUrlsafe } from './py.mjs';
+import { HTTPError, compareDigest, length, nowInt, pattern, sha256, tokenUrlsafe, truncate } from './util.mjs';
 
 const PAIR_SECONDS = 600;
 const MAX_BRIDGES = 10;
@@ -50,7 +50,7 @@ export function createAccounts({ env, table, auth, devices, sockets, log }) {
   // API Gateway appends the address it saw; behind CloudFront that is CloudFront, which appended the viewer
   // before it. Only CloudFront knows the origin secret, so a direct caller cannot pose as it.
   function ip({ headers, clientIp }) {
-    const hops = (headers.get('x-forwarded-for') ?? '').split(',').map(pyStrip).filter(Boolean);
+    const hops = (headers.get('x-forwarded-for') ?? '').split(',').map((hop) => hop.trim()).filter(Boolean);
     if (!hops.length) return clientIp;
     const secret = env.ORIGIN_SECRET ?? '';
     const viaCdn = !!secret && compareDigest(headers.get('x-baton-origin') ?? '', secret);
@@ -74,7 +74,7 @@ export function createAccounts({ env, table, auth, devices, sockets, log }) {
 
   async function issue(account, kind, name, install = '') {
     const token = `bt_${tokenUrlsafe(32)}`;
-    name = pySlice(name, 0, 64);
+    name = truncate(name, 64);
     install = install && await sha256(install);
     if (install) await drop(account, (await tokenRows(account)).filter((row) => row.install === install).map((row) => row.sk.slice(6)));
     const [index, listed] = tokenKeys(account, await tokenHash(token));
@@ -115,7 +115,7 @@ export function createAccounts({ env, table, auth, devices, sockets, log }) {
   async function roomFor(account, name) {
     const computers = (await tokenRows(account)).filter((row) => row.kind === 'bridge').map((row) => row.deviceName);
     if (open() && computers.length >= MAX_BRIDGES) throw new HTTPError(409, `This account already has ${MAX_BRIDGES} computers.`);
-    if (computers.includes(name)) throw new HTTPError(409, `A computer named ${str(name)} is already in this account; reinstall with another name.`);
+    if (computers.includes(name)) throw new HTTPError(409, `A computer named ${name} is already in this account; reinstall with another name.`);
   }
 
   async function selfHosted(account) {
@@ -167,7 +167,7 @@ export function createAccounts({ env, table, auth, devices, sockets, log }) {
 
   async function pairStart({ body, ...request }) {
     need(body, 'deviceName');
-    if (pyLen(body.deviceName) > 64) { // a computer connects by this name: it must fit its token row as it is
+    if (length(body.deviceName) > 64) { // a computer connects by this name: it must fit its token row as it is
       throw new HTTPError(422, 'Device name is too long (64 characters at most).');
     }
     await rate(`start#${ip(request)}`, 10);

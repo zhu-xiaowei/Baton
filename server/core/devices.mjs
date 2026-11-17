@@ -1,13 +1,13 @@
 // Device rows in SystemTable: each Bridge connection writes its own; /devices and the install
 // script's name check read them; removing a device deletes it.
-import { nowInt, pySlice } from './py.mjs';
+import { nowInt, truncate } from './util.mjs';
 
 export function createDevices(table) {
   const pk = (accountId) => `DEVICE#${accountId}`;
   return {
     put: (accountId, device, displayName = '', os = '') => table.putItem({ Item: {
-      pk: pk(accountId), sk: device, deviceName: device, deviceDisplayName: pySlice(displayName || device, 0, 64),
-      os: pySlice(os, 0, 16), lastConnected: nowInt(),
+      pk: pk(accountId), sk: device, deviceName: device, deviceDisplayName: truncate(displayName || device, 64),
+      os: truncate(os, 16), lastConnected: nowInt(),
     } }),
     async list(accountId) {
       const params = { KeyConditionExpression: '#pk = :pk', ExpressionAttributeNames: { '#pk': 'pk' },

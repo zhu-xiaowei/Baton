@@ -1,5 +1,5 @@
 // Bridge install scripts (/api/install, /auth/install, /install) and the device-name check they call.
-import { casefold, isPrintable, pyLen, pyStrip } from './py.mjs';
+import { isPrintable, length } from './util.mjs';
 
 const powershellLiteral = (value) => `'${String(value || '').replace(/'/g, "''")}'`;
 const shellLiteral = (value) => `'${String(value || '').replace(/'/g, `'"'"'`)}'`;
@@ -11,22 +11,22 @@ const DUPLICATE_DEVICE_NAME = 'That device name is already in use. Choose anothe
 const DEVICE_NAME_CHECK_FAILED = 'Could not validate device name. Check your connection and try again.';
 
 export function checkDeviceName(items, name, mode, current = '') {
-  name = pyStrip(String(name || ''));
+  name = String(name || '').trim();
   if (mode === 'identity') {
     if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$/.test(name)) return ['', INVALID_INTERNAL_NAME];
   } else if (mode === 'display') {
-    if (!(pyLen(name) >= 1 && pyLen(name) <= 32) || !isPrintable(name)) return ['', INVALID_DISPLAY_NAME];
+    if (!(length(name) >= 1 && length(name) <= 32) || !isPrintable(name)) return ['', INVALID_DISPLAY_NAME];
   } else {
     return ['', 'Invalid validation mode.'];
   }
-  const candidate = casefold(name);
-  current = casefold(String(current || ''));
+  const candidate = name.toLowerCase();
+  current = String(current || '').toLowerCase();
   for (const item of items) {
     const identity = String(item.deviceName ?? '');
-    if (current && casefold(identity) === current) continue;
+    if (current && identity.toLowerCase() === current) continue;
     const display = String(item.deviceDisplayName || identity);
     const values = mode === 'identity' ? [identity, display] : [display];
-    if (values.some((value) => casefold(pyStrip(value)) === candidate)) return ['', DUPLICATE_DEVICE_NAME];
+    if (values.some((value) => value.trim().toLowerCase() === candidate)) return ['', DUPLICATE_DEVICE_NAME];
   }
   return [name, ''];
 }
@@ -339,12 +339,9 @@ function windowsInstallScript(url, server, apiKey, name) {
 export async function installScript({ headers }, apiKey, name, platform, presign) {
   const url = await presign();
   if (url === null) return { error: 'bucket not configured' };
-  // Use x-forwarded headers from API GW if available; the scheme as uvicorn's proxy headers set it.
-  const forwarded = headers.get('x-forwarded-proto');
-  const scheme = ['http', 'https', 'ws', 'wss'].includes(pyStrip(forwarded ?? '')) ? pyStrip(forwarded) : 'http';
-  const proto = forwarded ?? scheme;
-  const host = headers.get('host') ?? '';
-  const server = host ? `${proto}://${host}/v1` : `${scheme}:///v1`;
+  // Use x-forwarded headers from API GW if available
+  const proto = headers.get('x-forwarded-proto') ?? 'http';
+  const server = `${proto}://${headers.get('host') ?? ''}/v1`;
   if (platform.toLowerCase() === 'windows') return { text: windowsInstallScript(url, server, apiKey, name) };
   const nameBlock = unixDeviceNameBlock(server, apiKey, name);
   const script = (

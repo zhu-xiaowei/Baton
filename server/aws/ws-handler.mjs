@@ -2,7 +2,7 @@
 // v2 direct-channel join. Messages between App and Bridge do not pass here (data API integration).
 import { KeyUnavailable, createAuth } from '../core/auth.mjs';
 import { createDevices } from '../core/devices.mjs';
-import { JSONDecodeError, loads, nowInt, plain } from '../core/py.mjs';
+import { nowInt } from '../core/util.mjs';
 import { currentKey } from './api-key.mjs';
 import { createTable } from './dynamodb.mjs';
 import { bridgeOwnerKey, createSockets } from './sockets.mjs';
@@ -76,12 +76,11 @@ async function connect(event, context, connectionId, connectedEndpoint, sockets,
 async function message(event, connectionId, endpoint, sockets) {
   let body;
   try {
-    body = plain(loads('body' in event ? event.body : '{}'));
-  } catch (error) {
-    if (error instanceof JSONDecodeError) return { statusCode: 400 };
-    throw error;
+    body = JSON.parse(event.body ?? '{}');
+  } catch {
+    return { statusCode: 400 };
   }
-  if (body === null || typeof body !== 'object' || Array.isArray(body)) throw new TypeError('message is not an object');
+  if (body === null || typeof body !== 'object' || Array.isArray(body)) return { statusCode: 400 };
   const action = body.action ?? '';
 
   // Connection info: if missing (e.g. the table was cleared), force a reconnect, which rewrites the record.
