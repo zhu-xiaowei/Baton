@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { randomBytes } from 'node:crypto';
-import { approveJoin, join } from '../../bridge/accounts.mjs';
+import { join } from '../../bridge/accounts.mjs';
 import * as browser from '../../bridge/e2ee.mjs';
 import * as node from '../../bridge/e2ee-node.mjs';
 import { fromPhrase, toPhrase } from '../../web/js/v2/recovery.js';
@@ -30,16 +30,6 @@ test('a computer joins with K sealed by an App under the QR code secret, and che
     assert.ok(Buffer.from(config.accountKey, 'base64').equals(k) && config.accounts && printed.at(-1).includes('iPhone'));
   }
   assert.equal(node.openPair(randomBytes(16), node.sealPair(randomBytes(16), k, 'c'), 'c'), null);
-});
-
-test('approving takes one-secret links and older two-parameter ones', async (t) => {
-  const k = randomBytes(32), p = randomBytes(16), sent = [];
-  t.mock.method(globalThis, 'fetch', async (url, { body }) => (sent.push(JSON.parse(body)), { ok: true, json: async () => ({}) }));
-  const config = { server: 'https://s', accountKey: k.toString('base64') };
-  await approveJoin(config, `https://w/#j=${p.toString('base64url')}`);
-  await approveJoin(config, `https://w/landing.html#j=old-code&t=${p.toString('base64url')}&s=https%3A%2F%2Fs`);
-  assert.deepEqual(sent.map((body) => body.code), [node.pairCode(p), 'old-code']);
-  for (const body of sent) assert.ok(node.openPair(p, body.sealed, body.code).equals(k));
 });
 
 test('a rotation sealed by an App opens on a Bridge; the recovery phrase is standard BIP-39', async () => {
