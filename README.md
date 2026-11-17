@@ -8,7 +8,7 @@ Pick up your [Claude Code](https://github.com/anthropics/claude-code), [Codex](h
   <img src="docs/assets/promo.avif" alt="Baton" width="100%">
 </p>
 
-Baton provides non-intrusive, real-time streaming and rendering for Claude Code, Codex, Pi, Hermes, OpenCode, Kiro and DeepSeek Harness sessions across your devices. Everything is end-to-end encrypted and your conversations stay on your own computer: use the free hosted service, or self-host on AWS.
+Baton provides non-intrusive, real-time streaming and rendering for Claude Code, Codex, Pi, Hermes, OpenCode, Kiro and DeepSeek Harness sessions across your devices. Everything is end-to-end encrypted and your conversations stay on your own computer.
 
 
 ## Quick Start
@@ -21,26 +21,25 @@ On the computer where your agents run:
 curl -fsSL https://agentbaton.app/install | bash
 ```
 
-On native Windows, run this in PowerShell using **Run as administrator**:
+<details>
+<summary>Windows</summary>
+
+In PowerShell, using **Run as administrator**:
 
 ```powershell
 irm https://agentbaton.app/install.ps1 | iex
 ```
 
-The installer brings its own Node.js runtime and prints a QR code.
+</details>
 
-### 2. Get the App
+### 2. Get the App and scan
 
 | iOS | Android | HarmonyOS | macOS | Windows | Linux |
 |:---:|:---:|:---:|:---:|:---:|:---:|
 | <img src="docs/assets/baton_ios.avif" width="88" alt="iOS"> | <img src="docs/assets/baton_android.avif" width="88" alt="Android"> | <img src="docs/assets/harmonyos.avif" width="88" alt="HarmonyOS"> | <img src="docs/assets/macOS.avif" width="88" alt="macOS"> | <img src="docs/assets/windows.avif" width="88" alt="Windows"> | <img src="docs/assets/linux.avif" width="88" alt="Linux"> |
 | [TestFlight](https://testflight.apple.com/join/UekStGCA) | [Baton.apk](https://github.com/zhu-xiaowei/baton/releases) | [Build & install](harmony/README.md) | [Baton.dmg](https://github.com/zhu-xiaowei/baton/releases) | [Baton.exe](https://github.com/zhu-xiaowei/baton/releases) | [Baton.deb](https://github.com/zhu-xiaowei/baton/releases) |
 
-Or open [web.agentbaton.app](https://web.agentbaton.app) in a browser.
-
-### 3. Scan the QR code
-
-The first scan creates your account. To add another computer, install Bridge there and scan its QR code with the App.
+Scan the QR code the installer printed, or open [web.agentbaton.app](https://web.agentbaton.app) in a browser. The first scan creates your account; to add another computer, install Bridge there and scan its QR code.
 
 ---
 
@@ -115,7 +114,7 @@ The first scan creates your account. To add another computer, install Bridge the
 ```
 ┌────────────────┐               ┌──────────────────────┐               ┌──────────────────┐
 │     Bridge     │ ◀────WS─────▶ │        Relay         │ ◀────WS─────▶ │     App/Web      │
-│ (local hosts)  │               │ (Cloudflare or AWS)  │               │  (phone/desktop) │
+│ (local hosts)  │               │                      │               │  (phone/desktop) │
 └────────────────┘               └──────────┬───────────┘               └──────────────────┘
                                             │
                                             ▼
@@ -125,7 +124,7 @@ The first scan creates your account. To add another computer, install Bridge the
                                  └──────────────────────┘
 ```
 
-**Bridge** discovers agent sessions, normalizes their events, preserves main/subagent relationships, and handles local agent control, project files, Git commands, and terminal processes. **Relay** authenticates the devices of one account and forwards their end-to-end encrypted messages; it keeps only account, device and token records (sessions stay on your computer) and a 1-day transfer area for files. The hosted service runs on Cloudflare Workers with one Durable Object per account; a self-hosted server runs on AWS API Gateway and Lambda. **App/Web** loads cached history, subscribes to session and root-agent updates, aggregates nested threads under the main session, and routes user actions back to the correct local runtime.
+**Bridge** discovers agent sessions, normalizes their events, preserves main/subagent relationships, and handles local agent control, project files, Git commands, and terminal processes. **Relay** authenticates the devices of one account and forwards their end-to-end encrypted messages; it keeps only account, device and token records (sessions stay on your computer) and a 1-day transfer area for files. **App/Web** loads cached history, subscribes to session and root-agent updates, aggregates nested threads under the main session, and routes user actions back to the correct local runtime.
 
 ---
 
@@ -145,8 +144,6 @@ Takes ~6-8 minutes. Prints a **Start URL** and QR code on success. Supports `--r
 
 
 ### 2. Install Bridge
-
-The installer downloads its own [Node.js](https://nodejs.org/) 24 runtime (any failure falls back to an installed Node.js 22.15+).
 
 1. Open the **Start URL** in your browser (this is also the web viewer)
 2. Copy the one-line **Install bridge** command from the Setup page
