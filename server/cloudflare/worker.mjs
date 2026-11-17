@@ -3,7 +3,7 @@
 // `bt_<account>_…`, the deployment key → ACCOUNT_ID); public routes run here.
 import { PUBLIC } from '../core/app.mjs';
 import { TOKEN } from '../core/auth.mjs';
-import { compareDigest } from '../core/py.mjs';
+import { compareDigest } from '../core/util.mjs';
 import { refuse, server, toResponse } from './ports.mjs';
 import { createTable } from './store.mjs';
 
@@ -15,6 +15,7 @@ const remote = (env) => {
   const call = (id, method, data) => { const [account, socket] = id.split(':'); return object(account).sockets(method, [null, socket, data]); };
   return { query: async (account, role, device) => (await object(account).sockets('query', [null, role, device]))
     .map((record) => ({ ...record, connectionId: `${account}:${record.connectionId}` })),
+  get: (id) => { const [account, socket] = id.split(':'); return object(account).sockets('get', [socket]); },
   post: (_, id, data) => call(id, 'post', data), deleteConnection: (_, id) => call(id, 'deleteConnection'), handleDisconnect: async () => {},
   disconnectRemovedBridge: (account, endpoint, device) => object(account).sockets('disconnectRemovedBridge', [account, endpoint, device]) };
 };
@@ -22,7 +23,7 @@ let publicServer;
 
 function accountOf(credential, env) {
   if (credential.startsWith('bt_')) return TOKEN.exec(credential)?.[1] ?? null;
-  return env.API_KEY && env.ACCOUNT_ID && credential && compareDigest(credential, env.API_KEY, true) ? env.ACCOUNT_ID : null;
+  return env.API_KEY && env.ACCOUNT_ID && credential && compareDigest(credential, env.API_KEY) ? env.ACCOUNT_ID : null;
 }
 
 const notFound = () => new Response('Not Found', { status: 404 });

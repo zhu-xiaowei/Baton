@@ -2,7 +2,7 @@
 // own sockets (WebSocket Hibernation API), so frames can never cross accounts (docs/v2-cloudflare-design.md).
 import { DurableObject } from 'cloudflare:workers';
 import { validateAlert } from '../core/notifications.mjs';
-import { nowInt, randomHex } from '../core/py.mjs';
+import { nowInt, randomHex } from '../core/util.mjs';
 import { MAX_FRAME_BYTES, refuse, server, toResponse } from './ports.mjs';
 import { createCredentials, storageInfo } from './r2.mjs';
 import { createItems, createTable, serve } from './store.mjs';
@@ -210,6 +210,7 @@ export class AccountObject extends DurableObject {
     const byId = (id) => this.live(`id:${id}`)[0]?.[0];
     return {
       query: async (_, role, device = '') => this.live(role).filter(([, a]) => !device || a.device === device).map(([, a]) => this.record(a)),
+      get: async (id) => { const ws = byId(id); return ws && this.record(ws.deserializeAttachment()); },
       post: async (_, id, data) => { const ws = byId(id); return !!ws && send(ws, data); },
       deleteConnection: async (_, id) => { const ws = byId(id); if (ws) await this.retire(ws, 4401, 'revoked'); },
       handleDisconnect: async () => ({ statusCode: 200 }),
