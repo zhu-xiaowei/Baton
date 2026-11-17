@@ -307,8 +307,12 @@ if (typeof document !== 'undefined' && document.addEventListener) {
 }
 
 // The server is reached through its CloudFront domain, which also serves /data.
+let transportAsked = false;
 export function connect() {
   if (!state.KEY || !state.SERVER || refused) return;
+  // Nothing known yet (first start): the server names its transport (relay or the data API) before a socket opens.
+  if (!rpc) restore();
+  if (!rpc && !transportAsked) { transportAsked = true; devices().catch(() => {}).finally(connect); return; }
   if (socket?.readyState === WebSocket.OPEN) return probe();
   if (socket?.readyState === WebSocket.CONNECTING) return;
   const started = performance.now();
