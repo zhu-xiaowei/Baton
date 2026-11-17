@@ -40,7 +40,7 @@ Takes ~6-8 minutes. Prints a **Start URL** and QR code on success. Supports `--r
 
 ### 2. Install Bridge
 
-The installer downloads its own [Node.js](https://nodejs.org/) 24 runtime (any failure falls back to an installed Node.js 22.15+). Set `BATON_NODE_MIRROR` to a mirror of `https://nodejs.org/dist` if needed.
+The installer downloads its own [Node.js](https://nodejs.org/) 24 runtime (any failure falls back to an installed Node.js 22.15+). To use a mirror of `https://nodejs.org/dist`, run `export BATON_NODE_MIRROR=<mirror URL>` (PowerShell: `$env:BATON_NODE_MIRROR = '<mirror URL>'`) before the install command.
 
 1. Open the **Start URL** in your browser (this is also the web viewer)
 2. Copy the one-line **Install bridge** command from the Setup page

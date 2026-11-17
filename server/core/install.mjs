@@ -48,8 +48,8 @@ const unixPrivateNode = `install_private_node() {
   echo "Installing Node.js ${NODE_VERSION} for Baton Bridge..."
   rm -rf "$DIR"/node/.tmp.*
   mkdir -p "$DIR/node" && tmp=$(mktemp -d "$DIR/node/.tmp.XXXXXX") || return 1
-  local get="curl -fsSL --retry 3 --connect-timeout 20 --speed-limit 1024 --speed-time 60"
-  $get -o "$tmp/$name" "$base/$name" && $get -o "$tmp/SHASUMS256.txt" "$base/SHASUMS256.txt" &&
+  fetch_node() { for i in 1 2 3; do curl -fsSL --connect-timeout 20 --speed-limit 1024 --speed-time 60 -o "$tmp/$1" "$base/$1" && return; sleep 2; done; return 1; }
+  fetch_node "$name" && fetch_node SHASUMS256.txt &&
     sum=$( (sha256sum "$tmp/$name" 2>/dev/null || shasum -a 256 "$tmp/$name") | cut -d' ' -f1) &&
     grep -qxF "$sum  $name" "$tmp/SHASUMS256.txt" &&
     tar -xf "$tmp/$name" -C "$tmp" && "$tmp/\${name%.tar.*}/bin/node" --version >/dev/null &&
@@ -180,7 +180,8 @@ function windowsInstallScript(url, server, apiKey, name) {
     "    tar.exe -xf (Join-Path $tmp \"$name.zip\") -C $tmp",
     "    if ($LASTEXITCODE -eq 0) { & (Join-Path $tmp \"$name\\node.exe\") --version | Out-Null }",
     "    if ($LASTEXITCODE -ne 0) { throw 'the extracted node.exe did not run' }",
-    "    Move-Item (Join-Path $tmp $name) (Split-Path $exe)",
+    // Antivirus may still hold the new files open.
+    "    foreach ($attempt in 1..5) { try { Move-Item (Join-Path $tmp $name) (Split-Path $exe); break } catch { if ($attempt -eq 5) { throw } Start-Sleep -Seconds 1 } }",
     "    return $exe",
     "  } catch {",
     "    Write-Host \"Warning: could not download and verify Node.js $version from $base ($($_.Exception.Message)); using the system Node.js.\" -ForegroundColor Yellow",

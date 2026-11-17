@@ -38,7 +38,7 @@ Tarda unos 6–8 minutos. Al finalizar, muestra una **Start URL** y un código Q
 
 ### 2. Instalar el Bridge
 
-El instalador descarga su propio entorno de [Node.js](https://nodejs.org/) 24 (si falla, usa un Node.js 22.15 o posterior ya instalado). Para usar un espejo de `https://nodejs.org/dist`, define `BATON_NODE_MIRROR`.
+El instalador descarga su propio entorno de [Node.js](https://nodejs.org/) 24 (si falla, usa un Node.js 22.15 o posterior ya instalado). Para usar un espejo de `https://nodejs.org/dist`, ejecuta `export BATON_NODE_MIRROR=<URL del espejo>` (PowerShell: `$env:BATON_NODE_MIRROR = '<URL del espejo>'`) antes del comando de instalación.
 
 1. Abre la **Start URL** en tu navegador (también sirve como visor web).
 2. Copia el comando de una línea **Install bridge** de la página Setup.
