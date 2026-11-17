@@ -168,3 +168,47 @@ AccountObject/IndexObject with SQLite migrations, R2 binding, service binding to
 3. APNs payload size with the sealed alert for the longest titles (stay < 4 KB, clip as today).
 4. Self-hosted Cloudflare installs (phase 2) cannot bind to the hosted relay: decide then (public relay route with a
    per-install credential, or the AWS relay).
+
+## 13. Changes from the pre-tests (2026-11-17, measured; scripts in agentpeek-v2-relay/.scratch/pr2-verify/)
+
+These override the sections above where they differ.
+
+1. **Static assets (§8)**: `html_handling: "none"` alone answers `/` with 404. Use `none` + the `_headers` below +
+   a tiny Worker that only maps `/` to `/index.html` (asset hits still run no Worker code). Upload with a real MIME
+   type per file. HTML loses its ETag at the edge (always a full 200) — accepted.
+   `/*  ! Cache-Control` · `/*.html  Cache-Control: no-cache` · `/assets/*.js|css  public, max-age=31536000, immutable`.
+2. **Frames (§3)**: 1 MiB passes both ways (p50 73–87 ms); the real limit is 32 MiB − 72 B and oversize frames are
+   dropped silently in both directions, so senders check `maxFrameBytes` themselves and the object closes a peer
+   that exceeds it.
+3. **Liveness (§3)**: `getWebSocketAutoResponseTimestamp` works (updated per auto-answered text ping, survives
+   hibernation, null before the first ping → use the connect time). Protocol-level pings neither update it nor wake
+   the object, so every client sends the text `{"action":"realtime_ping"}`. A dead TCP socket stays in
+   `getWebSockets()` as OPEN for ~8–9 min and its `webSocketClose` arrives ~9 min late: the sweep marks
+   `closing` in the attachment before `close(4000)`, routing skips `closing` sockets, every send is in try/catch,
+   `peer_left` is de-duplicated. Because a room of ping-only sockets never wakes the object, an alarm runs **only
+   while App sockets are attached** (every 120 s, cancelled when the last App leaves) — a few alarms per active
+   hour instead of one per minute per account.
+4. **Auth (§3)**: browsers and Node cannot read an upgrade's 401/403, so a revoked token would look like a network
+   error and retry forever. The object accepts the upgrade and closes with **4401** (bad/revoked token) or **4403**
+   (wrong role/device); clients stop retrying on those codes. Malformed tokens are still rejected by the Worker.
+5. **Placement (§3)**: cross-region calls add ~175 ms (REST RPC 17–19 ms local vs ~180–190 ms). The account
+   object is first touched by the pairing Bridge (its `pair/start` and first connect go to the account object), so
+   it lands near the computer; no hint otherwise.
+6. **Deploys (§3, §9)**: hibernated sockets survive; sockets on an active object run old code up to 300 s
+   (`deferred`) and then drop with 1006 (no `webSocketClose`). Clients treat 1006 without reason as
+   reconnect-and-resume (they do today); the protocol stays compatible across at least two consecutive versions.
+   The deploy script uses `POST …/versions` then `POST …/deployments` and checks the new version is live (two plain
+   uploads silently produced no new version).
+7. **APNs payload (§6, §12-3)**: current clipping counts code points, not bytes — worst case 6,013 B (emoji/control
+   characters) > 4,096. Drop the duplicate `title` from the sealed part and cap fields by JSON-escaped UTF-8 bytes
+   (`projectHash` ≤ 400, `projectName` ≤ 240, `sessionTitle` ≤ 360, `body` ≤ 900) → worst case 3,801 B. Both relays
+   reject requests > 4 KB of payload; the Lambda relay's 1,024 B request limit rises to 8 KB.
+8. **CPU (Free plan)**: warm handlers p50 0.3–0.7 ms, p99 ≤ 2.2 ms; keep p99 < 5 ms, page REST lists, no heavy
+   libraries.
+9. **R2 credentials (§5, §12-2 closed)**: issuance p50 424 ms / p95 738 ms, 50 parallel fine, limit 1,200 calls per
+   5 min per token (shared with other API calls), usable immediately, no expiry in the response. Policy: 1 h per
+   account, prefix **with trailing slash** `t/<accountId>/`, expiry computed by us (−30 s), refreshed early, one
+   refresh in flight per account, keep the old one on 429/5xx, clients retry once with fresh credentials on 403.
+   Presigned URLs die with their credentials; revocation is only possible for all credentials at once.
+10. **APNs from a Worker (§6)**: real pushes to the user's iPhone returned 200 (Worker fetch ~75 ms from IAD).
+    Module-level JWT caching may not hit across requests; assume signing per request (cheap ES256).
