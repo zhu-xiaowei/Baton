@@ -58,3 +58,14 @@ test('the push relay is signed, retries throttling with full jitter and a droppe
   assert.equal(waits.length, 3);
   await assert.rejects(relay({ token: 'a' }), /rejected the alert \(400\)/);
 });
+
+test('logging out closes every socket of that token, though the role index has no tokenHash', async () => {
+  const { createAccounts } = await import('../../server/core/accounts.mjs');
+  const closed = [];
+  const sockets = { query: async (_, role) => [{ connectionId: role }], get: async (id) => ({ tokenHash: id === 'app_data' ? 'mine' : 'other' }),
+    deleteConnection: async (_, id) => closed.push(id), handleDisconnect: async () => {}, post: async () => {} };
+  const table = { query: async () => ({ Items: [] }), deleteItem: async () => {} };
+  const accounts = createAccounts({ env: { WS_API_ENDPOINT: 'w', TERMINAL_DIRECT_ENDPOINT: 'd' }, table, sockets, log: () => {} });
+  await accounts.routes.find((route) => route.path === '/api/tokens/revoke').handler({ body: {}, auth: { accountId: 'a', tokenHash: 'mine' } });
+  assert.deepEqual(closed, ['app_data']);
+});

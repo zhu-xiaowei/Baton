@@ -210,7 +210,8 @@ export function createAccounts({ env, table, auth, devices, sockets, log }) {
     for (const role of ['app', 'bridge', 'app_data', 'bridge_data']) {
       const endpoint = env[role.endsWith('_data') ? 'TERMINAL_DIRECT_ENDPOINT' : 'WS_API_ENDPOINT'] ?? '';
       for (const item of endpoint ? await sockets.query(account, role) : []) {
-        if (digest && item.tokenHash !== digest) continue;
+        // The role index projects only deviceName: read the connection itself for its token.
+        if (digest && (item.tokenHash ?? (await sockets.get(item.connectionId))?.tokenHash) !== digest) continue;
         try {
           if (notice && role === 'bridge') await sockets.post(endpoint, item.connectionId, { action: notice });
           await sockets.deleteConnection(endpoint, item.connectionId);
@@ -233,9 +234,12 @@ export function createAccounts({ env, table, auth, devices, sockets, log }) {
       UpdateExpression: 'SET joinSecretHash = :hash, head = :next, rotations = :chain',
       ExpressionAttributeValues: { ':hash': join, ':next': rotation.next, ':fp': rotation.fp,
         ':chain': [...chain, { fp: rotation.fp, sealed: rotation.sealed }] } };
-    const keys = [...digests.flatMap((digest) => tokenKeys(account, digest)), { pk: `JOIN#${current.joinSecretHash}`, sk: '-' }];
+    // The recovery index moves only when the join secret changed (one transaction may not touch a row twice).
+    const moved = join !== current.joinSecretHash;
+    const keys = [...digests.flatMap((digest) => tokenKeys(account, digest)), ...(moved ? [{ pk: `JOIN#${current.joinSecretHash}`, sk: '-' }] : [])];
     try {
-      await table.transactWriteItems({ TransactItems: [{ Update: update }, { Put: { Item: { pk: `JOIN#${join}`, sk: '-', accountId: account } } },
+      await table.transactWriteItems({ TransactItems: [{ Update: update },
+        ...(moved ? [{ Put: { Item: { pk: `JOIN#${join}`, sk: '-', accountId: account } } }] : []),
         ...keys.map((Key) => ({ Delete: { Key } }))] });
     } catch (error) {
       if (error.code !== 'TransactionCanceledException') throw error;
