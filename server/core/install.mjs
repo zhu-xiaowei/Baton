@@ -34,7 +34,7 @@ export function checkDeviceName(items, name, mode, current = '') {
   return [name, ''];
 }
 
-// SHA-256 of the official archives the installers use (`node scripts/node-checksums.mjs <version>` prints this).
+// SHA-256 of the official archives the installers use (after changing NODE_VERSION, `node scripts/node-checksums.mjs` prints this).
 export const NODE_SHA256 = {
   'darwin-arm64.tar.xz': '1d64136c8a43d648d1b3bad10797a4c995b1ca032d2bde8799de43b37f058fe5',
   'darwin-x64.tar.xz': '4daeec962855c1a6e66cda398a25037319dc1bbd4a0939188b3547afbbfb6490',
@@ -69,7 +69,7 @@ ${unixNodeSums}
   # bash 3.2's kill fails as a whole when one pid is gone, so each download is checked on its own.
   running() { for p in $pids; do kill -0 $p 2>/dev/null && return 0; done; return 1; }
   stop_downloads() { for p in $pids; do kill $p 2>/dev/null || :; done; wait; }
-  trap 'stop_downloads; rm -rf "$tmp"; exit 130' INT TERM
+  trap 'stop_downloads; rm -rf "$tmp"; exit 130' INT TERM HUP
   for src in ${NODE_SOURCES.join(' ')}; do
     i=$((i + 1))
     ( trap 'kill $c 2>/dev/null; exit 1' TERM
@@ -85,7 +85,7 @@ ${unixNodeSums}
     rm -rf "$DIR/node/${NODE_VERSION}" && mv "$tmp/\${file%.tar.*}" "$DIR/node/${NODE_VERSION}"
   status=$?
   rm -rf "$tmp"
-  trap - INT TERM
+  trap - INT TERM HUP
   [ $status -eq 0 ] || echo "Warning: could not download and verify Node.js ${NODE_VERSION} from nodejs.org or npmmirror.com; using the system Node.js." >&2
   return $status
 }
