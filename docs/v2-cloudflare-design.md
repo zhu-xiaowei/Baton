@@ -73,7 +73,10 @@ request) and requests; idle hibernated sockets and auto-answered pings cost noth
 The "store" port of `server/core` is implemented by RPC calls from the Worker to these objects (one DO request
 each). Removal + rotation runs as one SQLite transaction inside the account object; the JOIN# change is a second
 call to the index object, ordered so a crash leaves the old state valid (same order as PR #229).
-Measured: index-object lookups 2–5 ms vs 24–37 ms for D1; both single-use correct (§3 of the plan).
+Measured: index-object lookups 2–5 ms vs 24–37 ms for D1; both single-use correct (§3 of the plan). The index
+object is chosen for consistency and simplicity (one storage technology, nothing extra to provision in the
+installer) and latency; sharding by the first hex character (16 objects) is Cloudflare's guidance against one hot
+single-threaded object, and costs the same per call.
 
 ## 5. Files (R2)
 
@@ -84,7 +87,10 @@ Measured: index-object lookups 2–5 ms vs 24–37 ms for D1; both single-use co
 - Credentials: the Worker issues R2 temporary credentials scoped to `t/<accountId>/` (Cloudflare API, 1 h), cached
   per account in the object; outside the prefix → 403 (verified).
 - Retention (hosted): lifecycle 1 day; the Bridge deletes a phone → computer upload once it has stored it. Self-host
-  on AWS keeps 7 days. Old attachments fall back to the Bridge's local copy (check every entry point).
+  on AWS keeps 7 days. Old attachments fall back to the Bridge's local copy (check every entry point); a missing
+  Bridge → App object is simply uploaded again on the next open (content-hash HEAD misses).
+- No size rule for cost: R2 bills the daily peak (a 1 GB file kept a day ≈ $0.0005) and ingress is free. Abuse is
+  bounded later by a per-account daily upload quota (phase 4 limits), sized from measured usage.
 
 ## 6. Notifications (C3)
 
@@ -101,6 +107,9 @@ iOS NotificationService: open `e` from the payload with the shared-keychain key;
   servers send both; rows stay for Android).
 - Bad device tokens (410 Unregistered) remove the push device, as today.
 - Queued alerts while the Bridge is offline keep the existing Bridge-side queue (`notify.mjs`).
+- Follow-up (phase 4, D5): Android's existing foreground service holds the App's relay socket instead of polling
+  the feed (idle sockets are free on Cloudflare and ≈ $0.012/device-month on API Gateway vs ≈ 170k feed requests);
+  the object pushes the sealed alert to it and Kotlin opens it as today. Then AWS needs no feed rows either.
 
 ## 7. Clients
 
@@ -117,7 +126,8 @@ iOS NotificationService: open `e` from the payload with the shared-keychain key;
 
 ## 8. Web app, install, version
 
-- Static assets: `assets.config` with `html_handling: "none"` + `_headers` (immutable hashed assets, `no-cache`
+- Static assets (free and unlimited when no Worker code runs; an R2 public bucket would bill Class B reads and has
+  no SPA routing): `assets.config` with `html_handling: "none"` + `_headers` (immutable hashed assets, `no-cache`
   HTML) to match #191 without a Worker invocation per file — verify `/setup` → 404; fall back to wrapping
   `env.ASSETS` if not.
 - `/install`, `/auth/install`, `/api/version` from `server/core`; the Bridge package from R2.
