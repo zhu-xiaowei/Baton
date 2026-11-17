@@ -181,7 +181,7 @@ function windowsInstallScript(url, server, apiKey, name) {
     "    if ($LASTEXITCODE -eq 0) { & (Join-Path $tmp \"$name\\node.exe\") --version | Out-Null }",
     "    if ($LASTEXITCODE -ne 0) { throw 'the extracted node.exe did not run' }",
     // Antivirus may still hold the new files open.
-    "    foreach ($attempt in 1..5) { try { Remove-Item (Split-Path $exe) -Recurse -Force -ErrorAction SilentlyContinue; Move-Item (Join-Path $tmp $name) (Split-Path $exe); break } catch { if ($attempt -eq 5) { throw } Start-Sleep -Seconds 1 } }",
+    "    foreach ($attempt in 1..5) { try { if (Test-Path (Split-Path $exe)) { Remove-Item (Split-Path $exe) -Recurse -Force }; Move-Item (Join-Path $tmp $name) (Split-Path $exe); break } catch { if ($attempt -eq 5) { throw } Start-Sleep -Seconds 1 } }",
     "    return $exe",
     "  } catch {",
     "    Write-Host \"Warning: could not download and verify Node.js $version from $base ($($_.Exception.Message)); using the system Node.js.\" -ForegroundColor Yellow",
