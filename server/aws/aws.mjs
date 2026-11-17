@@ -1,6 +1,25 @@
-// AWS API calls with fetch + SigV4 (bridge/transfer-store.mjs), the Lambda role's credentials and
-// botocore's legacy retry policy: DynamoDB 10 attempts from 50 ms, others 5 from 0-1 s, doubling.
+// AWS API calls with SigV4 (bridge/transfer-store.mjs), the Lambda role's credentials and botocore's
+// legacy retry policy: DynamoDB 10 attempts from 50 ms, others 5 from 0-1 s, doubling.
+import https from 'node:https';
 import { signHeaders } from '../../bridge/transfer-store.mjs';
+
+// Connections stay open while the instance is warm, as botocore's do (fetch closes them after 4 s idle).
+const agent = new https.Agent({ keepAlive: true });
+let send = (url, { method, headers, body, timeoutMs }) => new Promise((resolve, reject) => {
+  const request = https.request(url, { method, agent, timeout: timeoutMs,
+    headers: { ...headers, ...(body ? { 'content-length': Buffer.byteLength(body) } : {}) } }, (response) => {
+    const chunks = [];
+    response.on('data', (chunk) => chunks.push(chunk));
+    response.on('end', () => resolve({ status: response.statusCode, headers: response.headers, text: Buffer.concat(chunks).toString() }));
+    response.on('error', reject);
+  });
+  request.on('timeout', () => request.destroy(new Error('timed out')));
+  request.on('error', reject);
+  request.end(body || undefined);
+});
+// One HTTPS request: { status, headers (lower-case names), text }. Tests replace it.
+export const request = (url, options) => send(url, options);
+export const setRequest = (next) => { send = next; };
 
 export const region = () => process.env.AWS_REGION;
 export const credentials = () => ({ accessKeyId: process.env.AWS_ACCESS_KEY_ID, secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
@@ -24,10 +43,9 @@ export async function call(service, { method = 'POST', url, headers = {}, body =
     let error;
     try {
       const signed = await signHeaders({ method, url, region: signRegion, service, credentials: credentials(), headers, body });
-      const response = await fetch(url, { method, headers: { ...headers, ...signed }, body: method === 'GET' ? undefined : body });
-      const text = await response.text();
-      if (response.ok) return text;
-      error = parseError(response, text);
+      const response = await request(url, { method, headers: { ...headers, ...signed }, body });
+      if (response.status < 300) return response.text;
+      error = parseError(response);
     } catch (thrown) {
       error = thrown; // the network, as botocore's socket errors
     }
@@ -37,8 +55,8 @@ export async function call(service, { method = 'POST', url, headers = {}, body =
   }
 }
 
-function parseError(response, text) {
-  let code = response.headers.get('x-amzn-errortype') ?? '';
+function parseError({ status, headers, text }) {
+  let code = headers['x-amzn-errortype'] ?? '';
   let message = text;
   try {
     const body = JSON.parse(text);
@@ -48,5 +66,5 @@ function parseError(response, text) {
     code ||= /<Code>([^<]*)<\/Code>/.exec(text)?.[1] ?? '';
     message = /<Message>([^<]*)<\/Message>/.exec(text)?.[1] ?? text;
   }
-  return new AwsError(code.split(':')[0].split('#').pop() || String(response.status), message, response.status);
+  return new AwsError(code.split(':')[0].split('#').pop() || String(status), message, status);
 }

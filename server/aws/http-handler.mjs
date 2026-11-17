@@ -7,7 +7,7 @@ import { createServer } from '../core/app.mjs';
 import { createDevices } from '../core/devices.mjs';
 import { pyStrip, unquote } from '../core/py.mjs';
 import { currentKey } from './api-key.mjs';
-import { credentials, region } from './aws.mjs';
+import { credentials, region, request } from './aws.mjs';
 import { rpcInfo } from './credentials.mjs';
 import { createTable } from './dynamodb.mjs';
 import { createSockets } from './sockets.mjs';
@@ -15,7 +15,7 @@ import { web } from './web-files.mjs';
 
 const WEB_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'web');
 
-// Kept-alive by fetch; one fresh retry if the connection was dropped while the Lambda was frozen.
+// On the kept-alive connection; one fresh retry if it was dropped while the Lambda was frozen.
 export async function relayPost(url, body, timeoutSec) {
   const host = new URL(url).hostname.split('.');
   const signRegion = host.length > 2 && host[1] === 'lambda-url' ? host[2] : region();
@@ -23,8 +23,8 @@ export async function relayPost(url, body, timeoutSec) {
     try {
       const headers = { 'content-type': 'application/json' };
       const signed = await signHeaders({ method: 'POST', url, region: signRegion, service: 'lambda', credentials: credentials(), headers, body });
-      const reply = await fetch(url, { method: 'POST', headers: { ...headers, ...signed }, body, signal: AbortSignal.timeout(Math.ceil(timeoutSec * 1000)) });
-      return { status: reply.status, data: await reply.text() };
+      const reply = await request(url, { method: 'POST', headers: { ...headers, ...signed }, body, timeoutMs: timeoutSec * 1000 });
+      return { status: reply.status, data: reply.text };
     } catch (error) {
       if (fresh) throw error;
     }

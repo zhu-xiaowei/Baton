@@ -1,7 +1,8 @@
 // What the URL contract suite (test/contract) cannot reach: push relay signing and retries, and the
-// deployment key check of the WebSocket and REST Lambdas, with AWS answered by a fake fetch.
+// deployment key check of the WebSocket and REST Lambdas, with AWS answered by a fake transport.
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { setRequest } from '../../server/aws/aws.mjs';
 import { createNotifications } from '../../server/core/notifications.mjs';
 
 const KEY = 'deployment-key';
@@ -9,12 +10,13 @@ Object.assign(process.env, { AWS_REGION: 'ap-northeast-1', AWS_ACCESS_KEY_ID: 'A
   AWS_SESSION_TOKEN: 'token', API_KEY_NAME: 'Baton-api-key', SYSTEM_TABLE: 'system', CONNECTIONS_TABLE: 'connections' });
 let apiGateway = () => ({ item: [{ name: 'Baton-api-key', enabled: true, value: KEY }] });
 const sent = [];
-globalThis.fetch = async (url, init) => {
-  sent.push({ url: String(url), headers: init.headers, body: init.body });
-  if (String(url).includes('apigateway')) return Response.json(apiGateway());
-  if (String(url).includes('lambda-url')) return sent.relay.shift()();
-  return Response.json({}); // DynamoDB PutItem
-};
+const reply = (status, text = '{}') => ({ status, headers: {}, text });
+setRequest(async (url, options) => {
+  sent.push({ url, ...options });
+  if (url.includes('apigateway')) return reply(200, JSON.stringify(apiGateway()));
+  if (url.includes('lambda-url')) return sent.relay.shift()();
+  return reply(200); // DynamoDB PutItem
+});
 const connect = async (apiKey) => (await import('../../server/aws/ws-handler.mjs')).handler({
   queryStringParameters: { apiKey, role: 'app' }, requestContext: { routeKey: '$connect', connectionId: 'c', domainName: 'control.test', stage: 'v1' } });
 
@@ -42,11 +44,11 @@ test('WebSocket connections accept only the current deployment key, pinned to it
 test('the push relay is signed, retries throttling with full jitter and a dropped connection at once', async () => {
   const { relayPost } = await import('../../server/aws/http-handler.mjs');
   const waits = [];
-  const ok = () => new Response('{"status": 200}');
-  const status = (code) => () => new Response('', { status: code });
+  const ok = () => reply(200, '{"status": 200}');
+  const status = (code) => () => reply(code, '');
   const { relay } = createNotifications({ env: { PUSH_RELAY_URL: 'https://abc.lambda-url.us-west-2.on.aws/' }, relayPost,
     random: () => 1, sleep: async (sec) => { waits.push(sec); } });
-  sent.relay = [status(429), status(503), status(502), ok, () => { throw new TypeError('fetch failed'); }, ok, status(400)];
+  sent.relay = [status(429), status(503), status(502), ok, () => { throw Object.assign(new Error('socket hang up'), { code: 'ECONNRESET' }); }, ok, status(400)];
   assert.deepEqual(await relay({ token: 'a' }), { status: 200 });
   assert.deepEqual(waits, [2, 4, 8]);
   const signed = sent.at(-1).headers;
