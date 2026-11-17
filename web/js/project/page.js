@@ -31,7 +31,9 @@ function ensurePage() {
     },
   });
   document.addEventListener('keydown', function (event) {
-    if (!page.hidden && event.key === 'Escape' && typeof onBack === 'function') {
+    if (!page.hidden && event.key === 'Escape' && typeof onBack === 'function'
+      && document.getElementById('fileOverlay')?.style.display !== 'flex'
+      && !window.sideDockOutside?.(event)) {
       onBack();
     }
   });
@@ -75,6 +77,7 @@ export function renderProjectFilesBreadcrumb(items) {
     button.addEventListener('click', onGit);
     breadcrumb.appendChild(button);
   }
+  window.syncSidePanel?.();
 }
 
 export function setProjectFilesLoading(loading) {

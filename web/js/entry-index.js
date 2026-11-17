@@ -22,6 +22,7 @@ import './app.js';
 import './preview-prewarm.js';
 import './project/browser.js';
 import './scroll-indicator.js';
+import './side-panel.js';
 import { initMacosZoom } from './macos-zoom.js';
 import { initPageZoomShortcuts } from './page-zoom.js';
 import { initMacosTabs } from './macos-tabs.js';

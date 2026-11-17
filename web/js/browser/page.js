@@ -396,7 +396,8 @@ export function openBrowserPage(options = {}) {
     if (action === 'close') close();
   });
   function onEscape(event) {
-    if (event.key !== 'Escape' || event.target.closest?.('.modal-overlay')) return;
+    if (event.key !== 'Escape' || event.target.closest?.('.modal-overlay')
+      || window.sideDockOutside?.(event)) return;
     event.preventDefault();
     event.stopImmediatePropagation();
     if (document.activeElement === address) {

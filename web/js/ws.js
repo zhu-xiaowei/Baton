@@ -2417,8 +2417,9 @@ document.addEventListener('keydown', function (e) {
   if (e.isComposing || e.keyCode === 229) return;
   // Yield to open overlays/modals that give Esc its own meaning.
   if (document.getElementById('permission-prompt')) return;
+  if (window.sideDockInside?.(e)) return;
   var fileO = document.getElementById('fileOverlay');
-  if (fileO && fileO.style.display === 'flex') return;
+  if (fileO && fileO.style.display === 'flex' && !window.sideDockOutside?.(e)) return;
   var imgO = document.getElementById('imgOverlay');
   if (imgO && imgO.style.display === 'flex') return;
   var newP = document.getElementById('newProjectModal');

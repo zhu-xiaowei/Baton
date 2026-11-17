@@ -701,6 +701,18 @@ Replaced the old tmux send-keys approach (deleted in Phase 2E). Full design: `do
   20 most-recent completed of any type. Device/Project rows show `N running · N needs input`
   (`needsInputCount`). `completed` is not shown on the device rows.
 
+## Desktop Side Panel
+
+- On `(min-width: 768px) and (hover: hover) and (pointer: fine)` with a Session open, Terminal / Files / Git /
+  internal browser / file viewer dock to the right instead of covering the chat (`web/js/side-panel.js`, CSS only
+  re-positions the existing full-screen pages; narrow and touch layouts are unchanged). Default width 40% clamped
+  400–720px (panel ≥ 320, chat ≥ 380), drag handle persists a ratio, header toggle maximizes to full screen.
+- One tool at a time: a newly shown tool closes the others; the file viewer stacks over the tool that opened it,
+  except the browser (its native view would cover it). The matching top-bar button is highlighted via
+  `body[data-side-panel]`, and clicking it again closes the tool.
+- Esc belongs to a docked tool only when the key comes from inside it (or, with focus on body, the panel last
+  clicked); otherwise it keeps the chat's interrupt.
+
 ## Light / Dark Theme
 
 - Two palettes with identical token names: `web/css/themes/dark.css` (`:root`, the default, values match the
