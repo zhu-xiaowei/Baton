@@ -689,7 +689,7 @@ Replaced the old tmux send-keys approach (deleted in Phase 2E). Full design: `do
 - API Gateway `ApiKeyRequired: false` — auth handled by the server's middleware
 
 ### Deployment
-- `server/aws/Dockerfile`: Vite build → `web/`, served by `server/aws/http-handler.mjs` (Starlette StaticFiles semantics)
+- `server/aws/Dockerfile`: Vite build → `web/`, served by `server/aws/web-files.mjs` (ETag revalidation, #191 cache headers)
 - `install.sh`: copies `web/` to Docker build context, deploys via CodeBuild
 - Deploy output: single setup URL with embedded token (12h TTL, reusable until then)
 
