@@ -53,7 +53,7 @@ const unixNodeSums = Object.entries(NODE_SHA256).filter(([file]) => !file.starts
 // stopped. On any failure the user's Node.js is used. The installer's PATH gets it (node/npm below);
 // the service PATH keeps the user's Node for harnesses.
 const unixPrivateNode = `install_private_node() {
-  local os arch ext file want tmp ok pids="" i=0 src status
+  local os arch ext file want tmp ok pids="" i=0 src status p
   case "$(uname -s)" in Darwin) os=darwin ;; Linux) os=linux ;; *) return 1 ;; esac
   case "$(uname -m)" in x86_64|amd64) arch=x64 ;; arm64|aarch64) arch=arm64 ;; *) return 1 ;; esac
   [ -x "$DIR/node/${NODE_VERSION}/bin/node" ] && return 0
@@ -66,7 +66,10 @@ ${unixNodeSums}
   echo "Installing Node.js ${NODE_VERSION} for Baton Bridge..."
   rm -rf "$DIR"/node/.tmp.*
   mkdir -p "$DIR/node" && tmp=$(mktemp -d "$DIR/node/.tmp.XXXXXX") || return 1
-  trap 'kill $pids 2>/dev/null || :; wait; rm -rf "$tmp"; exit 130' INT TERM
+  # bash 3.2's kill fails as a whole when one pid is gone, so each download is checked on its own.
+  running() { for p in $pids; do kill -0 $p 2>/dev/null && return 0; done; return 1; }
+  stop_downloads() { for p in $pids; do kill $p 2>/dev/null || :; done; wait; }
+  trap 'stop_downloads; rm -rf "$tmp"; exit 130' INT TERM
   for src in ${NODE_SOURCES.join(' ')}; do
     i=$((i + 1))
     ( trap 'kill $c 2>/dev/null; exit 1' TERM
@@ -75,8 +78,8 @@ ${unixNodeSums}
         mv "$tmp/$i" "$tmp/$i.ok" ) &
     pids="$pids $!"
   done
-  while [ ! -e "$tmp/1.ok" ] && [ ! -e "$tmp/2.ok" ] && kill -0 $pids 2>/dev/null; do sleep 0.2; done
-  kill $pids 2>/dev/null; wait
+  while [ ! -e "$tmp/1.ok" ] && [ ! -e "$tmp/2.ok" ] && running; do sleep 0.2; done
+  stop_downloads
   ok=$(ls "$tmp"/*.ok 2>/dev/null | head -n 1)
   [ -n "$ok" ] && tar --no-same-owner -xf "$ok" -C "$tmp" && "$tmp/\${file%.tar.*}/bin/node" --version >/dev/null &&
     rm -rf "$DIR/node/${NODE_VERSION}" && mv "$tmp/\${file%.tar.*}" "$DIR/node/${NODE_VERSION}"
