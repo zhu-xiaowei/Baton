@@ -93,14 +93,10 @@ export function installProductionDependencies(cwd) {
     ? [process.execPath, [npmCli, ...args]]
     : [findExecutable('npm', [path.join(path.dirname(process.execPath), 'npm')]), args];
   if (!npm[0]) throw new Error('npm not found');
-  // Package scripts run `node` from PATH: this one, also when it is the private runtime.
-  const env = { ...process.env };
-  const pathKey = Object.keys(env).find((key) => key.toUpperCase() === 'PATH') || 'PATH';
-  env[pathKey] = `${path.dirname(process.execPath)}${path.delimiter}${env[pathKey] || ''}`;
   let error;
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
-      runExecutable(npm[0], npm[1], { cwd, stdio: 'ignore', env });
+      runExecutable(npm[0], npm[1], { cwd, stdio: 'ignore' });
       return validateProductionDependencies(cwd);
     } catch (cause) {
       error = cause;
