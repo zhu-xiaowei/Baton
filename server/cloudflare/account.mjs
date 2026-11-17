@@ -80,9 +80,9 @@ export class AccountObject extends DurableObject {
   }
 
   async webSocketMessage(ws, message) {
+    await this.sweep();
     const me = ws.deserializeAttachment();
     if (!me || me.closing) return;
-    await this.sweep();
     const size = typeof message === 'string' ? (message.length * 3 <= MAX_FRAME_BYTES ? 0 : encoder.encode(message).length) : message.byteLength;
     if (size > MAX_FRAME_BYTES) return this.retire(ws, 1009, 'frame too large');
     if (typeof message !== 'string') return;
@@ -193,6 +193,11 @@ export class AccountObject extends DurableObject {
     const message = JSON.stringify({ action: 'direct_rpc', type: 'bridges',
       rpc: await this.rpcInfo(account, this.live('bridge').map(([, a]) => this.record(a))) });
     for (const [app] of apps) send(app, message);
+  }
+
+  // The sockets port for core running in the Worker (public routes that replace a token).
+  sockets(method, args) {
+    return this.socketsPort()[method](...args);
   }
 
   // core's sockets port (server/aws/sockets.mjs); closing for a revoked credential is 4401, which stops reconnects.

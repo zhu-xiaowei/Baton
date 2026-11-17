@@ -313,8 +313,14 @@ export class DirectRpcBridge {
     if (socket.readyState !== WebSocket.OPEN) return;
     socket.send(JSON.stringify({ action: 'realtime_ping' }));
     clearTimeout(this.pongTimer);
-    this.pongTimer = setTimeout(() => socket.terminate(), PONG_TIMEOUT_MS);
-    this.pongTimer.unref?.();
+    // Relay: the pong queues behind this socket's own output; a socket still draining it is alive.
+    let left = socket.bufferedAmount;
+    const check = () => {
+      if (!this.relay || !left || socket.bufferedAmount >= left) return socket.terminate();
+      left = socket.bufferedAmount;
+      (this.pongTimer = setTimeout(check, PONG_TIMEOUT_MS)).unref?.();
+    };
+    (this.pongTimer = setTimeout(check, PONG_TIMEOUT_MS)).unref?.();
   }
 
   async serve(frame, counted = true) {

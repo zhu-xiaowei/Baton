@@ -9,8 +9,15 @@ import { createTable } from './store.mjs';
 
 export { AccountObject, IndexObject } from './account.mjs';
 
-const nobody = { query: async () => [], post: async () => false, deleteConnection: async () => {}, handleDisconnect: async () => {},
-  disconnectRemovedBridge: async () => {} };
+// Public routes (recover, claim) may replace a token: its sockets close in its account's object; ids carry the account.
+const remote = (env) => {
+  const object = (account) => env.ACCOUNT.get(env.ACCOUNT.idFromName(account));
+  const call = (id, method, data) => { const [account, socket] = id.split(':'); return object(account).sockets(method, [null, socket, data]); };
+  return { query: async (account, role, device) => (await object(account).sockets('query', [null, role, device]))
+    .map((record) => ({ ...record, connectionId: `${account}:${record.connectionId}` })),
+  post: (_, id, data) => call(id, 'post', data), deleteConnection: (_, id) => call(id, 'deleteConnection'), handleDisconnect: async () => {},
+  disconnectRemovedBridge: (account, endpoint, device) => object(account).sockets('disconnectRemovedBridge', [account, endpoint, device]) };
+};
 let publicServer;
 
 function accountOf(credential, env) {
@@ -65,7 +72,7 @@ export default {
     if (account) headers.set('x-baton-account', account);
     const forwarded = new Request(url, { method: request.method, headers, body: request.body });
     if (account) return env.ACCOUNT.get(env.ACCOUNT.idFromName(account)).fetch(forwarded);
-    publicServer ||= server(env, { table: createTable(env), sockets: nobody, rpcInfo: async () => null });
+    publicServer ||= server(env, { table: createTable(env), sockets: remote(env), rpcInfo: async () => null });
     return toResponse(await publicServer.handle(forwarded, { path, clientIp: ip, scheme: 'https' }), request.method);
   },
 };

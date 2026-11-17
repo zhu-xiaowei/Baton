@@ -715,6 +715,8 @@ export function publishNotice(sessionId, content, liveTurn) {
 
 function probeConnection() {
   const socket = _ws;
+  // Relay: the text ping (DirectRpcBridge) tells liveness; a protocol ping would wait behind App traffic.
+  if (_directRpc?.relay) return;
   if (!socket || socket.readyState !== WebSocket.OPEN || _resumeProbeTimer !== null) return;
   const timeout = _resumeProbeTimer = setTimeout(() => {
     if (_ws !== socket || _resumeProbeTimer !== timeout) return;
@@ -733,6 +735,8 @@ function sendHeartbeat() {
   if (!socket || socket.readyState !== WebSocket.OPEN || _heartbeatTimeout !== null) return;
   const timeout = _heartbeatTimeout = setTimeout(() => {
     if (_ws !== socket || _heartbeatTimeout !== timeout) return;
+    // Relay: the reply may wait behind App traffic; the text ping tells liveness.
+    if (_directRpc?.relay) { _heartbeatTimeout = null; return; }
     console.log(`[ws] heartbeat timed out after ${HEARTBEAT_TIMEOUT}ms, reconnecting`);
     scheduleReconnect();
   }, HEARTBEAT_TIMEOUT);

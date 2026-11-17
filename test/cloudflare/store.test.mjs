@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
-import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { createItems, home } from '../../server/cloudflare/store.mjs';
 
-const db = new DatabaseSync(':memory:');
-const items = createItems({ exec: (q, ...args) => { const s = db.prepare(q); const rows = s.columns().length ? s.all(...args) : (s.run(...args), []); return Object.assign(rows, { toArray: () => rows }); } });
+const sqlite = await import('node:sqlite').catch(() => null); // Node ≥ 22.5
+const db = sqlite && new sqlite.DatabaseSync(':memory:');
+const items = sqlite && createItems({ exec: (q, ...args) => { const s = db.prepare(q); const rows = s.columns().length ? s.all(...args) : (s.run(...args), []); return Object.assign(rows, { toArray: () => rows }); } });
 
-test('the DynamoDB subset core uses, over SQLite', () => {
+test('the DynamoDB subset core uses, over SQLite', { skip: !sqlite && 'node:sqlite is unavailable' }, () => {
   const rate = { Key: { pk: 'RATE#x', sk: '1' }, UpdateExpression: 'ADD n :one SET #ttl = :ttl', ConditionExpression: 'attribute_not_exists(n) OR n < :limit',
     ExpressionAttributeNames: { '#ttl': 'ttl' }, ExpressionAttributeValues: { ':one': 1, ':limit': 2, ':ttl': 9 } };
   items.updateItem(rate);

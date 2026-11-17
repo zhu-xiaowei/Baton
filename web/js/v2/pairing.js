@@ -3,7 +3,7 @@
 // online computer of the account does it (`pair_invite`, `pair_approve`).
 import { fromBase64 } from '../../../bridge/direct-rpc-protocol.mjs';
 import { accountOf, fingerprint, openPair, sealPair, sealRotation } from '../../../bridge/e2ee.mjs';
-import { state } from '../state.js';
+import { defaultServer, state } from '../state.js';
 import { loadAccountKey, saveAccountKey } from './account-key.js';
 import { cachedOnlineDevices, devices, request } from './direct-transport.js';
 
@@ -15,7 +15,9 @@ export function parseLink(text) {
   const t = params.get('t');
   if (!kind || !t) return null;
   return { text: url.href, kind, code: params.get(kind), t: fromBase64(t.replace(/-/g, '+').replace(/_/g, '/')),
-    server: (/^https:\/\//.test(params.get('s') || '') && params.get('s').replace(/\/$/, '')) || url.origin + url.pathname.replace(/\/[^/]*$/, '') };
+    // A link to this very page is served by this deployment, whose API server it knows; `s` is for the native App.
+    server: url.origin === globalThis.location?.origin ? defaultServer()
+      : (/^https:\/\//.test(params.get('s') || '') && params.get('s').replace(/\/$/, '')) || url.origin + url.pathname.replace(/\/[^/]*$/, '') };
 }
 
 // "iPhone" for the App, "Safari on iPhone" for a browser: how the account's device list tells them apart.

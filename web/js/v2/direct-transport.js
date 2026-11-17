@@ -312,7 +312,7 @@ export function connect() {
   if (!state.KEY || !state.SERVER || refused) return;
   // Nothing known yet (first start): the server names its transport (relay or the data API) before a socket opens.
   if (!rpc) restore();
-  if (!rpc && !transportAsked) { transportAsked = true; devices().catch(() => {}).finally(connect); return; }
+  if (!rpc && (devicesInflight || !transportAsked)) { transportAsked = true; (devicesInflight || devices()).catch(() => {}).finally(connect); return; }
   if (socket?.readyState === WebSocket.OPEN) return probe();
   if (socket?.readyState === WebSocket.CONNECTING) return;
   const started = performance.now();

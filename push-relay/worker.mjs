@@ -102,6 +102,15 @@ async function send(env, request, jwt) {
 
 const reply = (status, body) => Response.json(body, { status });
 
+// As the Lambda's allow(): at most 60 alerts a minute per device token, per isolate.
+const recent = new Map();
+function allow(token, now = Date.now()) {
+  if (recent.size > 10000) recent.clear();
+  const [start, count] = recent.get(token) || [now, 0];
+  recent.set(token, now - start >= 60000 ? [now, 1] : [start, count + 1]);
+  return now - start >= 60000 || count < 60;
+}
+
 export default {
   async fetch(request, env) {
     // A public request (workers.dev or a route) carries the visitor's IP; a service binding's does not.
@@ -116,6 +125,7 @@ export default {
     }
     const invalid = invalidRequest(body);
     if (invalid) return reply(400, { error: invalid });
+    if (!allow(body.token)) return reply(429, { error: 'Too many notifications for this device' });
     if (encoder.encode(payload(body.id, body.alert)).length > 4096) return reply(413, { error: 'Notification too large' });
     try {
       const token = await providerJwt(env);

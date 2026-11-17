@@ -216,7 +216,10 @@ export function createTable(env, self = null) {
       };
       for (const [at, items] of others) for (const item of items.filter((i) => !i.Delete)) await single(at, item);
       await run(JSON.parse(primary), 'transact', groups.get(primary));
-      for (const [at, items] of others) for (const item of items.filter((i) => i.Delete)) await single(at, item);
+      // Committed: what is left is clean-up, never a reason to fail the removal.
+      for (const [at, items] of others) {
+        for (const item of items.filter((i) => i.Delete)) await single(at, item).catch((error) => console.log(`clean-up delete failed: ${error.message}`));
+      }
       return {};
     },
   };
