@@ -37,7 +37,7 @@ irm https://agentbaton.app/install.ps1 | iex
 | <img src="docs/assets/baton_ios.avif" width="88" alt="iOS"> | <img src="docs/assets/baton_android.avif" width="88" alt="Android"> | <img src="docs/assets/harmonyos.avif" width="88" alt="HarmonyOS"> | <img src="docs/assets/macOS.avif" width="88" alt="macOS"> | <img src="docs/assets/windows.avif" width="88" alt="Windows"> | <img src="docs/assets/linux.avif" width="88" alt="Linux"> |
 | [TestFlight](https://testflight.apple.com/join/UekStGCA) | [Baton.apk](https://github.com/zhu-xiaowei/baton/releases) | [Build & install](harmony/README.md) | [Baton.dmg](https://github.com/zhu-xiaowei/baton/releases) | [Baton.exe](https://github.com/zhu-xiaowei/baton/releases) | [Baton.deb](https://github.com/zhu-xiaowei/baton/releases) |
 
-Scan the QR code in your terminal with the App, or open the link printed below it in a browser.
+Scan the QR code in your terminal with the App, or paste the **Start URL** printed below it into the App or a browser.
 
 ---
 
