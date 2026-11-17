@@ -160,17 +160,19 @@ export async function signHeaders({ method, url, region, service, credentials, h
   return { ...added, authorization: `AWS4-HMAC-SHA256 Credential=${credentials.accessKeyId}/${scope}, SignedHeaders=${names.join(';')}, Signature=${signature}` };
 }
 
-// A URL for `t/<accountId>/<key>`. `access` is { bucket, region, accountId, accelerate,
-// credentials: { accessKeyId, secretAccessKey, sessionToken, expiresAt } }.
+// A URL for `t/<accountId>/<key>`. `access` is { bucket, region, accountId, accelerate, endpoint?,
+// credentials: { accessKeyId, secretAccessKey, sessionToken, expiresAt } }. With `endpoint` (R2) the
+// bucket goes in the path.
 export async function presign(access, method, key, { headers = {}, query = {}, accelerate = false, now = new Date() } = {}) {
   if (!KEY.test(key)) throw new Error('Invalid file key');
-  const { bucket, region, accountId, credentials } = access;
+  const { bucket, region, accountId, credentials, endpoint } = access;
   const expires = Math.min(MAX_EXPIRES, Math.floor(credentials.expiresAt - now.getTime() / 1000) - 5);
   if (expires < 1) throw new Error('Storage credentials expired');
+  const path = `/t/${rfc3986(accountId)}/${rfc3986(key)}`;
   return signUrl({
     method, region, credentials, expires, headers, query, now,
-    host: accelerate ? `${bucket}.s3-accelerate.amazonaws.com` : `${bucket}.s3.${region}.amazonaws.com`,
-    path: `/t/${rfc3986(accountId)}/${rfc3986(key)}`,
+    ...(endpoint ? { host: new URL(endpoint).host, path: `/${rfc3986(bucket)}${path}` }
+      : { host: accelerate ? `${bucket}.s3-accelerate.amazonaws.com` : `${bucket}.s3.${region}.amazonaws.com`, path }),
   });
 }
 

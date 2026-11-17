@@ -67,7 +67,7 @@ import {
 } from './live-turn-stream.mjs';
 import { CommandCatalogCache, commandCatalogPayload } from './command-catalog-cache.mjs';
 import { onAgentCountUpdates } from './agent-counts.mjs';
-import { configureNotifier, endTakeover, noteTakeover } from './notify.mjs';
+import { configureNotifier, endTakeover, flushQueue, noteTakeover } from './notify.mjs';
 import { ClientTurnOrder } from './client-turn-order.mjs';
 import { DirectRpcBridge, SessionSubscribers } from './direct-rpc.mjs';
 import { sessionIndex } from './session-index.mjs';
@@ -90,12 +90,15 @@ let _resumeProbeTimer = null;
 let _pendingPing = null;
 let _pingSequence = 0;
 let _consecutiveFailures = 0;
+let _relay = false; // the server announced relay transport (one socket); kept for reconnect timing
 const _sendWhenConnected = [];
 const HEARTBEAT_INTERVAL = 4 * 60_000;
 const HEARTBEAT_TIMEOUT = 10_000;
 const PING_INTERVAL = 20_000;
 const PING_TIMEOUT = 5_000;
 const RECONNECT_DELAY = 5_000;
+const RELAY_RETRY_JITTER = 5_000;
+const RELAY_RETRY_MAX = 60_000;
 const CONNECT_TIMEOUT = 5_000;
 
 // onExit only fires when a process exits during an active turn or with prompts unanswered.
@@ -216,7 +219,8 @@ async function terminalStream(frame) {
 
 async function previewStream(frame) {
   _previewBridgeLoading ||= import('./preview-bridge.mjs').then(({ createPreviewBridge }) => {
-    _previewBridge = createPreviewBridge({ channel: (frame) => streamChannel('preview', frame.id, frame.from, frame.inflate === 1) });
+    _previewBridge = createPreviewBridge({ channel: (frame) => streamChannel('preview', frame.id, frame.from, frame.inflate === 1),
+      frameBytes: () => (_directRpc?.relay ? _directRpc.maxFrameBytes : 0) });
     return _previewBridge;
   }).catch(error => { _previewBridgeLoading = null; throw error; });
   try {
@@ -711,6 +715,8 @@ export function publishNotice(sessionId, content, liveTurn) {
 
 function probeConnection() {
   const socket = _ws;
+  // Joined on relay: the text ping (DirectRpcBridge) tells liveness; a protocol ping would wait behind App traffic.
+  if (_directRpc?.joined) return;
   if (!socket || socket.readyState !== WebSocket.OPEN || _resumeProbeTimer !== null) return;
   const timeout = _resumeProbeTimer = setTimeout(() => {
     if (_ws !== socket || _resumeProbeTimer !== timeout) return;
@@ -724,11 +730,25 @@ function probeConnection() {
   }
 }
 
+// Relay alerts count as sent once the account object acknowledges them; otherwise notify.mjs queues and resends.
+const ALERT_ACK_MS = 5000;
+const _alertAcks = new Map(); // eventId → resolve
+function relayAlert(frame) {
+  if (!wsSend(frame)) return false;
+  return new Promise((resolve) => {
+    const done = (ok) => { clearTimeout(timer); _alertAcks.delete(frame.eventId); resolve(ok); };
+    const timer = setTimeout(() => done(false), ALERT_ACK_MS);
+    _alertAcks.set(frame.eventId, done);
+  });
+}
+
 function sendHeartbeat() {
   const socket = _ws;
   if (!socket || socket.readyState !== WebSocket.OPEN || _heartbeatTimeout !== null) return;
   const timeout = _heartbeatTimeout = setTimeout(() => {
     if (_ws !== socket || _heartbeatTimeout !== timeout) return;
+    // Relay: the reply may wait behind App traffic; the text ping tells liveness.
+    if (_directRpc?.joined) { _heartbeatTimeout = null; return; }
     console.log(`[ws] heartbeat timed out after ${HEARTBEAT_TIMEOUT}ms, reconnecting`);
     scheduleReconnect();
   }, HEARTBEAT_TIMEOUT);
@@ -780,6 +800,7 @@ function connect() {
       accounts: !!_config.accounts,
       saveAccountKey: (raw) => { Object.assign(_config, { accountKey: raw.toString('base64'), accountKeyAt: Date.now() }); saveConfig(_config); },
       sendControl: message => send(JSON.stringify(message)),
+      controlSocket: socket,
       subscribers: _subscribers,
       limited: limitedRequest,
       streams: { terminal: terminalStream, preview: previewStream },
@@ -833,6 +854,7 @@ function connect() {
       },
     });
     _directRpc.start();
+    if (_relay) void flushQueue(); // alerts left unacknowledged when the last socket dropped
     void catchUpAccountKey();
     void _checkUpdate?.();
     _heartbeatTimer = setInterval(sendHeartbeat, HEARTBEAT_INTERVAL);
@@ -858,7 +880,10 @@ function connect() {
   socket.on('message', async (data) => {
     if (_ws !== socket) return;
     try {
-      const msg = JSON.parse(data.toString());
+      const text = data.toString();
+      const msg = JSON.parse(text);
+      // Relayed App frames carry `to`; the server's own never do, so an App cannot pose as the server.
+      if (_directRpc?.relay && 'to' in msg) return _directRpc.receiveFrame(msg, text.length);
       if (msg.action === 'heartbeat') {
         _consecutiveFailures = 0;
         clearTimeout(_heartbeatTimeout);
@@ -872,6 +897,13 @@ function connect() {
 
   socket.on('close', (code, reason) => {
     if (_ws !== socket) return;
+    // Relay refusals: 4401 a removed device (paired) or a wrong key, 4403 a wrong role or device.
+    if (code === 4401 && _config?.accounts) { void handleMessage({ action: 'device_removed' }); return; }
+    if (code === 4401 || code === 4403) {
+      console.log(`[ws] refused by the server (code=${code}); stopping reconnects`);
+      resetConnection();
+      return;
+    }
     console.log(`[ws] disconnected (code=${code}, reason=${reason?.toString() || ''}), reconnecting...`);
     scheduleReconnect();
   });
@@ -922,10 +954,13 @@ function resetConnection() {
 
 function scheduleReconnect() {
   if (!_config) return;
+  _relay ||= !!_directRpc?.relay;
   resetConnection();
   if (_reconnectTimer) return;
   _consecutiveFailures += 1;
-  const delay = _consecutiveFailures === 1 ? 0 : RECONNECT_DELAY;
+  // Relay: many Bridges reconnect at once after a deploy, so every retry is jittered and backs off.
+  const delay = _relay ? Math.round(Math.random() * RELAY_RETRY_JITTER) + Math.min(RELAY_RETRY_MAX, _consecutiveFailures === 1 ? 0 : 1000 * 2 ** (_consecutiveFailures - 2))
+    : _consecutiveFailures === 1 ? 0 : RECONNECT_DELAY;
   console.log(`[ws] retry ${_consecutiveFailures} in ${delay}ms`);
   _reconnectTimer = setTimeout(() => {
     _reconnectTimer = null;
@@ -961,6 +996,9 @@ async function handleMessage(msg) {
       _reconnectTimer = null;
       resetConnection();
       await _onSuperseded?.();
+      break;
+    case 'alert_ok':
+      _alertAcks.get(msg.eventId)?.(true);
       break;
     case 'heartbeat':
       if (typeof msg.bridgeVersion === 'string' && msg.bridgeVersion
@@ -1034,7 +1072,7 @@ function viewedOnApp(rootSessionId, eventId) {
     _directRpc.publish({ action: 'notify_check', rootSessionId, eventId }, targets);
   });
 }
-configureNotifier({ post, history: params => historyService.history(params), viewed: viewedOnApp,
+configureNotifier({ post, sendAlert: (frame) => (_relay || _directRpc?.relay ? relayAlert(frame) : null), history: params => historyService.history(params), viewed: viewedOnApp,
   notifyKey: () => _directRpc?.keys?.notifyKey });
 setTransferKeys(() => _directRpc?.keys?.files() || null);
 setTransferAccess(() => {

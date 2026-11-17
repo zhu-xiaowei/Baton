@@ -4,7 +4,7 @@ import './theme.js';
 //   https://<server>/?t=<token>            (install.sh: 12h, Setup: 10 min; reusable until then)
 //   https://<server>/?key=<apiKey>         (older Setup pages)
 import { harmonyBridge, harmonyCall } from './harmony.js';
-import { state } from './state.js';
+import { defaultServer, state } from './state.js';
 import './api.js';
 import { initMacosTabs, setNativeTabTitle } from './macos-tabs.js';
 import { parseLink, recoverAccount, signInWithLink, viaComputer } from './v2/pairing.js';
@@ -56,7 +56,7 @@ setNativeTabTitle('Baton');
   // Browser auto-login from a Start URL pointing at this origin.
   if (!isNativeApp && (urlToken || urlKey)) {
     showLoading('Connecting');
-    var browserServer = location.origin + location.pathname.replace(/\/[^/]*$/, '');
+    var browserServer = defaultServer();
     var prom = urlToken
       ? exchangeToken(browserServer, urlToken).then(function (k) { return routeAfterLogin(k, browserServer); })
       : routeAfterLogin(urlKey, browserServer);

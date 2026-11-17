@@ -3,10 +3,13 @@ import { test } from 'node:test';
 import WebSocket from 'ws';
 import { KEY, WS, api, deleteAccount, headers, joinComputer, newAccount, skip } from './client.mjs';
 
-// Resolves with the HTTP status of the WebSocket upgrade (101 when accepted), closing the socket.
+// Resolves with the HTTP status of the WebSocket upgrade (101 once a heartbeat is answered), closing the socket.
+// Cloudflare accepts first and closes with 4401/4403, read as 401/403.
 const connect = (apiKey, role) => new Promise((resolve, reject) => {
   const socket = new WebSocket(`${WS}?${new URLSearchParams({ apiKey, role })}`);
-  socket.on('open', () => { socket.close(); resolve(101); });
+  socket.on('open', () => socket.send(JSON.stringify({ action: 'heartbeat' })));
+  socket.on('message', () => { socket.close(); resolve(101); });
+  socket.on('close', (code) => resolve({ 4401: 401, 4403: 403 }[code] ?? code));
   socket.on('unexpected-response', (_req, res) => { resolve(res.statusCode); res.destroy(); });
   socket.on('error', reject);
 });

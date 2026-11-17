@@ -9,7 +9,7 @@ import { createNotifications } from './notifications.mjs';
 import { length, now, nowInt, randomHex } from './util.mjs';
 
 const PROTOCOL_VERSION = 2;
-const PUBLIC = new Set(['/api/version', '/api/account/register', '/api/account/recover', '/api/pair/claim', '/api/pair/start', '/api/pair/wait']);
+export const PUBLIC = new Set(['/api/version', '/api/account/register', '/api/account/recover', '/api/pair/claim', '/api/pair/start', '/api/pair/wait']);
 // Paths only some credential kinds may use: start-token hands out the deployment key, and an
 // install script embeds the caller's credential as the new Bridge's.
 const KINDS = { '/api/auth/start-token': ['key'], '/api/install': ['key', 'bridge'] };

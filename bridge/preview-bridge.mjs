@@ -1,17 +1,20 @@
 import net from 'node:net';
-import { PREVIEW_ACK_BYTES, validatePreviewMessage } from './preview-protocol.mjs';
+import { previewSizes, validatePreviewMessage } from './preview-protocol.mjs';
 
-const CHUNK_BYTES = 16 * 1024;
-const WINDOW_BYTES = 4 * PREVIEW_ACK_BYTES;
-const MAX_PENDING_BYTES = 512 * 1024;
 const MAX_STREAMS = 24;
 const MAX_TUNNELS = 4;
-// Data frames wait per stream while the shared channel holds this much unsent output.
-const CHANNEL_HIGH_BYTES = 256 * 1024;
 const LOOPBACK_HOSTS = ['127.0.0.1', '::1'];
 // A tunnel without streams and without frames this long is closed; the App starts it again.
 const IDLE_MS = 10 * 60_000;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// Per tunnel, from the frame limit at its start (`options.frameBytes()`, relay only); AWS: 16 KB chunks,
+// 256 KB window, 512 KB pending. Data frames wait per stream while the shared channel holds `high` unsent bytes.
+function limits(frameBytes) {
+  const { chunk, ack } = previewSizes(frameBytes);
+  // `high` stays ≤ 512 KB: on relay the channel is the Bridge's only socket, which also carries Session pushes.
+  return { chunk, window: 4 * ack, pending: 8 * ack, high: Math.min(4 * ack, 512 * 1024) };
+}
 
 export function createPreviewBridge(options) {
   const sessions = new Map();
@@ -58,7 +61,7 @@ export function createPreviewBridge(options) {
       progressed = false;
       for (const stream of session.streams.values()) {
         if (stream.closed || !stream.queue.length) continue;
-        if (session.channel.bufferedAmount >= CHANNEL_HIGH_BYTES) {
+        if (session.channel.bufferedAmount >= session.limits.high) {
           session.pumpTimer = setTimeout(() => pump(session), 5);
           return;
         }
@@ -102,15 +105,16 @@ export function createPreviewBridge(options) {
     });
     socket.on('data', bytes => {
       if (stream.closed || session.closed) return;
-      for (let offset = 0; offset < bytes.length; offset += CHUNK_BYTES) {
-        const chunk = bytes.subarray(offset, offset + CHUNK_BYTES);
+      const { chunk: size, window, pending } = session.limits;
+      for (let offset = 0; offset < bytes.length; offset += size) {
+        const chunk = bytes.subarray(offset, offset + size);
         const seq = stream.nextOutgoing++;
         stream.outstanding.set(seq, chunk.length);
         stream.outstandingBytes += chunk.length;
         stream.queue.push({ type: 'bytes', streamId, seq, data: chunk.toString('base64') });
       }
-      if (stream.outstandingBytes >= WINDOW_BYTES) socket.pause();
-      if (stream.outstandingBytes > MAX_PENDING_BYTES) return closeStream(session, stream);
+      if (stream.outstandingBytes >= window) socket.pause();
+      if (stream.outstandingBytes > pending) return closeStream(session, stream);
       pump(session);
     });
     socket.on('end', () => {
@@ -182,7 +186,7 @@ export function createPreviewBridge(options) {
         stream.outstanding.delete(seq);
         stream.outstandingBytes -= size;
       }
-      if (stream.outstandingBytes < WINDOW_BYTES && stream.connected) stream.socket.resume();
+      if (stream.outstandingBytes < session.limits.window && stream.connected) stream.socket.resume();
       return;
     }
     if (message.type === 'fin') {
@@ -195,9 +199,9 @@ export function createPreviewBridge(options) {
     }
     if (message.type !== 'bytes') return closeStream(session, stream);
     const bytes = Buffer.from(message.data, 'base64');
-    if (!bytes.length || bytes.length > CHUNK_BYTES
+    if (!bytes.length || bytes.length > session.limits.chunk
       || message.seq > stream.nextIncoming + 32
-      || stream.pendingBytes + bytes.length > MAX_PENDING_BYTES
+      || stream.pendingBytes + bytes.length > session.limits.pending
       || (stream.finSeq !== null && message.seq > stream.finSeq)) {
       return closeStream(session, stream);
     }
@@ -223,15 +227,15 @@ export function createPreviewBridge(options) {
     handle(frame) {
       if (disposed || !UUID.test(frame.id)) return;
       let message;
-      try { message = validatePreviewMessage(frame.m, 'app'); } catch { return; }
       let session = sessions.get(frame.id);
+      try { message = validatePreviewMessage(frame.m, 'app', (session?.limits || limits(options.frameBytes?.())).chunk); } catch { return; }
       if (message.type === 'start') {
         if (!session) {
           if (sessions.size >= MAX_TUNNELS) {
             options.channel(frame).send({ type: 'error', code: 'tunnel_limit', streamId: frame.id });
             return;
           }
-          session = { id: frame.id, port: message.port, channel: options.channel(frame),
+          session = { id: frame.id, port: message.port, channel: options.channel(frame), limits: limits(options.frameBytes?.()),
             streams: new Map(), closed: false, pumpTimer: null, lastSeen: Date.now() };
           sessions.set(session.id, session);
         }

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { test } from 'node:test';
-import { KEY, api, deleteAccount, newAccount, skip } from './client.mjs';
+import { KEY, api, deleteAccount, devices, newAccount, skip } from './client.mjs';
 
 // Push devices live in an account that never posts an alert: alerts there would reach the shared APNs relay.
 test('push devices register, validate and remove', { skip }, async () => {
@@ -14,8 +14,12 @@ test('push devices register, validate and remove', { skip }, async () => {
   await deleteAccount(phone.token);
 });
 
-test('event feed and single events', { skip }, async () => {
+test('event feed and single events', { skip }, async (t) => {
   const app = await newAccount('ct-feed');
+  if ((await devices(app.token)).notifications.feed === false) { // Cloudflare: alerts travel in the push only
+    await deleteAccount(app.token);
+    return t.skip('this server keeps no notification feed');
+  }
   const feed = (cursor, status) => api(`/api/notifications/events${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`,
     undefined, { token: app.token, status });
   const baseline = await feed();

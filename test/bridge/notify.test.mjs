@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { alertFor, completionSummary, configureNotifier, flushQueue, observeSessions } from '../../bridge/notify.mjs';
+import { payload } from '../../push-relay/apns_relay.mjs';
+import { payload as workerPayload } from '../../push-relay/worker.mjs';
 
 const ROW = { sessionId: 'codex:session', project: 'project', projectName: 'workspace/github/Baton', deviceName: 'Mac',
   status: 'running', preview: 'Fix login' };
@@ -18,7 +20,7 @@ function pages(...list) {
 test('status changes alert as the server worker did', async () => {
   pages([user('go'), text('Fixed it.')]);
   const done = await alertFor(ROW, DONE);
-  assert.equal(done.title, 'Baton · Fix login');
+  assert.deepEqual([done.projectName, done.sessionTitle, done.title], ['Baton', 'Fix login', undefined]);
   assert.equal(done.body, '✅ Done · Fixed it.');
   assert.equal(done.rootSessionId, 'codex:session');
   assert.equal((await alertFor(ROW, WAITING)).body, '🟡 Needs input · npm test');
@@ -36,7 +38,7 @@ test('status changes alert as the server worker did', async () => {
   assert.ok(await alertFor(ROW, { ...DONE, localIdleSec: 600 }));
   // A child waiting for input makes its root need input.
   assert.ok(await alertFor(ROW, { ...ROW, needsInputAgentCount: 1 }));
-  assert.match((await alertFor(ROW, { ...DONE, preview: '' })).title, /Session session/);
+  assert.match((await alertFor(ROW, { ...DONE, preview: '' })).sessionTitle, /Session session/);
   // Cut by characters: half an emoji makes the server reject the alert.
   pages([user('go'), text('a'.repeat(239) + '😀 tail')]);
   assert.ok((await alertFor(ROW, DONE)).body.endsWith('a😀'));
@@ -95,4 +97,20 @@ test('reported rows alert once, not while viewed, and are queued while the serve
   report([], { agentCountUpdates: [{ sessionId: 'a', project: 'p', needsInputAgentCount: 1 }] });
   await settle();
   assert.match(posted.at(-1).body, /Needs input/);
+});
+
+test('the worst-case sealed alert fits one APNs payload', async () => {
+  const sent = [];
+  configureNotifier({ viewed: async () => false, notifyKey: () => Buffer.alloc(32, 1), post: async () => null,
+    sendAlert: (frame) => sent.push(frame) > 0 });
+  const odd = (n) => '\u0001😀"'.repeat(n);
+  const row = { id: 'x'.repeat(200), runtime: 'claude', project: odd(400), projectName: odd(80), preview: odd(120),
+    threadRootId: 'r'.repeat(200), status: 'running' };
+  observeSessions({ deviceName: 'd'.repeat(200), sessions: [row] });
+  observeSessions({ deviceName: 'd'.repeat(200), sessions: [{ ...row, status: 'needs_input', agentDetail: odd(240) }] });
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  const { action, ...alert } = sent[0];
+  const bytes = Buffer.byteLength(payload('EVENT#' + '1'.repeat(16) + '#' + alert.eventId, { ...alert, accountId: 'a'.repeat(16) }));
+  assert.ok(action === 'alert' && alert.e && bytes <= 4096, `${bytes} B`);
+  assert.equal(workerPayload('i', alert), payload('i', alert));
 });

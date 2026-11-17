@@ -7,6 +7,7 @@ const SEEN_SECONDS = 3600;
 export class KeyUnavailable extends Error {}
 
 export const tokenHash = (token) => sha256(token);
+export const TOKEN = /^bt_([0-9a-f]{16})_[\w-]{43}$/;
 
 // `currentKey()` reads the deployment's single API key (AWS: from API Gateway, never from a table).
 export function createAuth({ env, table, currentKey, log }) {
@@ -24,6 +25,13 @@ export function createAuth({ env, table, currentKey, log }) {
     return (await sha256(key)).slice(0, 16);
   }
 
+  // Cloudflare: the token names its account, whose own row is read (no global index).
+  async function listed(credential, digest) {
+    const account = TOKEN.exec(credential)?.[1];
+    const row = account && (await table.getItem({ Key: { pk: `ACCOUNT#${account}`, sk: `TOKEN#${digest}` }, ConsistentRead: true })).Item;
+    return row && { ...row, accountId: account };
+  }
+
   // { accountId, kind, deviceName, tokenHash } or null.
   async function resolve(credential) {
     if (!credential) return null;
@@ -32,7 +40,8 @@ export function createAuth({ env, table, currentKey, log }) {
     const digest = await tokenHash(credential);
     const time = now();
     // Consistent reads: a token issued a moment ago must resolve (a refused paired Bridge uninstalls itself).
-    const row = (await table.getItem({ Key: { pk: `TOKEN#${digest}`, sk: '-' }, ConsistentRead: true })).Item;
+    const row = env.TOKENS_BY_ACCOUNT ? await listed(credential, digest)
+      : (await table.getItem({ Key: { pk: `TOKEN#${digest}`, sk: '-' }, ConsistentRead: true })).Item;
     if (!row || !(await table.getItem({ Key: { pk: `ACCOUNT#${row.accountId}`, sk: 'META' }, ConsistentRead: true })).Item) return null;
     const result = { accountId: row.accountId, kind: row.kind, deviceName: row.deviceName ?? '', tokenHash: digest };
     if ((seen.get(digest) ?? 0) < time - SEEN_SECONDS) { // per instance: at most hourly

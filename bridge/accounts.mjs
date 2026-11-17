@@ -20,7 +20,9 @@ async function call(config, path, body, fetchImpl = fetch) {
 }
 
 // `web` (the server's reply): where the App is served, which also serves its data socket.
-const link = (kind, code, t, web) => `${web}/landing.html#${kind}=${code}&t=${t.toString('base64url')}`;
+// `api`: a server whose Web App has its own origin names its API server (`s`).
+const link = (kind, code, t, web, server, api) => `${web || server}/landing.html#${kind}=${code}&t=${t.toString('base64url')}`
+  + (api ? `&s=${encodeURIComponent(api)}` : '');
 const sealed = (config, t, code) => sealPair(t, Buffer.from(config.accountKey, 'base64'), code);
 
 function show(print, url) {
@@ -32,9 +34,9 @@ function show(print, url) {
 export async function join(config, { print = console.log, sleep = pause, fetchImpl = fetch } = {}) {
   for (;;) {
     const t = randomBytes(16);
-    const { code, poll, expiresIn, web } = await call(config, '/api/pair/start', { deviceName: config.deviceName }, fetchImpl);
+    const { code, poll, expiresIn, web, api } = await call(config, '/api/pair/start', { deviceName: config.deviceName }, fetchImpl);
     print('\nScan with the Baton app on your phone to add this computer:');
-    show(print, link('j', code, t, web || config.server));
+    show(print, link('j', code, t, web, config.server, api));
     for (const end = Date.now() + expiresIn * 1000; Date.now() < end; await sleep(2000)) {
       const reply = await call(config, '/api/pair/wait', { code, poll }, fetchImpl).catch((error) => (error.status === 404 ? null : { pending: true }));
       if (!reply) break;
@@ -52,8 +54,8 @@ export async function join(config, { print = console.log, sleep = pause, fetchIm
 export async function createInvite(config) {
   const t = randomBytes(16);
   const code = randomBytes(16).toString('base64url');
-  const { expiresIn, web } = await call(config, '/api/pair/create', { code, sealed: sealed(config, t, code) });
-  return { link: link('c', code, t, web || config.server), expiresIn };
+  const { expiresIn, web, api } = await call(config, '/api/pair/create', { code, sealed: sealed(config, t, code) });
+  return { link: link('c', code, t, web, config.server, api), expiresIn };
 }
 
 // Adds the computer that printed `url` to this computer's account (`pair <link>`, the App's `pair_approve`).

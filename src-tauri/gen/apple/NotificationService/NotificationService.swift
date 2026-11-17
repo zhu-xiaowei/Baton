@@ -3,9 +3,10 @@ import Foundation
 import Security
 import UserNotifications
 
-// A push carries only an event ID: the relay and Apple never see the text. Resolve it
-// against the user's own server (credentials shared by the app through a keychain group);
-// if that fails in time, the placeholder from the push is shown and the tap still works.
+// A push carries an event ID and usually the alert sealed by the Bridge: the relay and Apple never
+// see the text. Open it from the push, else resolve the ID against the user's own server
+// (credentials shared by the app through a keychain group); if that fails in time, the
+// placeholder from the push is shown and the tap still works.
 final class NotificationService: UNNotificationServiceExtension {
   private var deliver: ((UNNotificationContent) -> Void)?
   private var content: UNMutableNotificationContent?
@@ -18,8 +19,15 @@ final class NotificationService: UNNotificationServiceExtension {
     let content = request.content.mutableCopy() as! UNMutableNotificationContent
     self.content = content
     deliver = contentHandler
+    let saved = Self.credentials()
+    var pushed: [String: Any] = [:]
+    for (key, value) in content.userInfo { if let key = key as? String { pushed[key] = value } }
+    if pushed["eventId"] != nil, let event = Self.open(pushed, saved?.2 ?? "") {
+      Self.show(event, in: content)
+      return finish()
+    }
     guard let id = content.userInfo["id"] as? String,
-          let (server, apiKey, notifyKey) = Self.credentials(),
+          let (server, apiKey, notifyKey) = saved,
           var url = URLComponents(string: server + "/api/notifications/event") else {
       return finish()
     }
@@ -30,17 +38,21 @@ final class NotificationService: UNNotificationServiceExtension {
       if (response as? HTTPURLResponse)?.statusCode == 200,
          let data = data,
          let event = Self.open((try? JSONSerialization.jsonObject(with: data)) as? [String: Any], notifyKey) {
-        // Two bold lines, each truncated on its own: a long project name no longer hides the session.
-        content.title = event["projectName"] as? String ?? event["title"] as? String ?? content.title
-        content.subtitle = event["sessionTitle"] as? String ?? ""
-        content.body = event["body"] as? String ?? content.body
-        content.threadIdentifier = event["rootSessionId"] as? String ?? ""
-        // The app opens the session from these on tap.
-        content.userInfo = event.compactMapValues { $0 as? String }.merging(["id": id]) { $1 }
+        Self.show(event.merging(["id": id]) { $1 }, in: content)
       }
       self?.finish()
     }
     task?.resume()
+  }
+
+  private static func show(_ event: [String: Any], in content: UNMutableNotificationContent) {
+    // Two bold lines, each truncated on its own: a long project name no longer hides the session.
+    content.title = event["projectName"] as? String ?? event["title"] as? String ?? content.title
+    content.subtitle = event["sessionTitle"] as? String ?? ""
+    content.body = event["body"] as? String ?? content.body
+    content.threadIdentifier = event["rootSessionId"] as? String ?? ""
+    // The app opens the session from these on tap.
+    content.userInfo = event.compactMapValues { $0 as? String }
   }
 
   override func serviceExtensionTimeWillExpire() {
