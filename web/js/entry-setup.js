@@ -67,8 +67,10 @@ setNativeTabTitle('Settings');
   // of a self-hosted, API-key account).
   var paired = state.KEY.indexOf('bt_') === 0;
   var listing = null;
+  var installBase = '';  // the hosted service's short install address (agentbaton.app), if it has one
   if (paired) devices().then(function (body) {
     listing = body;
+    installBase = body.install || '';
     document.querySelectorAll('.hosted-only').forEach(function (row) { row.hidden = !body.hosted; });
     // A paired App of a self-hosted stack has no install command it could show (the public one is hosted only).
     if (!body.hosted) { document.querySelector('[data-tab="install"]').hidden = true; window.selectConnectTab('url'); }
@@ -211,6 +213,7 @@ setNativeTabTitle('Settings');
   // A paired account installs with the public command; an API-key one with its start token.
   function connectText(panel, startUrl) {
     if (panel === 'url') return startUrl;
+    if (installBase) return platform === 'windows' ? 'irm ' + installBase + '/install.ps1 | iex' : 'curl -fsSL ' + installBase + '/install | bash';
     var url = paired ? state.SERVER + '/install' : startUrl.replace('/?t=', '/auth/install?t=');
     return platform === 'windows' ? "irm '" + url + (paired ? '?' : '&') + "platform=windows' | iex" : 'curl -sL "' + url + '" | bash';
   }
