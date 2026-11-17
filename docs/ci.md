@@ -7,7 +7,8 @@ path-based skipping of native builds.
 Independent JavaScript test suites run concurrently inside the
 existing test job. Every suite's exit status is collected, so any failure fails
 the job. The frontend is built first so packaging tests inspect a complete
-`dist` directory. No existing tests or assertions are removed.
+`dist` directory. The server's behaviour is checked against a deployment by URL
+(`npm run test:contract`, not part of CI); CI runs its unit tests (`test/server`).
 
 ## Toolchains
 

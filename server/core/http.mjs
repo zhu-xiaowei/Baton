@@ -137,8 +137,9 @@ async function compress(bytes) {
 // web(context): the web app's files, mounted at "/" after the routes (else Starlette's own 404/405).
 export function createHttp({ routes, authenticate, web, onError, keyUnavailable }) {
   async function dispatch(context, bytes) {
+    // Starlette's `^...$` route patterns (Python `re`) also match before one trailing newline.
     const path = context.path;
-    const matches = routes.filter((route) => route.path === path);
+    const matches = routes.filter((route) => route.path === path || `${route.path}\n` === path);
     const route = matches.find((candidate) => candidate.method === context.method);
     try {
       if (!route) {
@@ -163,6 +164,8 @@ export function createHttp({ routes, authenticate, web, onError, keyUnavailable 
   return async function handle(request, extra = {}) {
     const url = new URL(request.url);
     const context = { request, url, method: request.method, headers: request.headers, path: url.pathname, ...extra };
+    // request.url.path, which the middleware checks: the path re-quoted and split as a URL (tab and newlines removed).
+    context.urlPath = context.path.replace(/[?#\\]/g, (c) => ({ '?': '%3F', '#': '%23', '\\': '%5C' })[c]).replace(/[\t\r\n]/g, '');
     try {
       const origin = request.headers.get('origin');
       if (origin !== null && request.method === 'OPTIONS' && request.headers.has('access-control-request-method')) {

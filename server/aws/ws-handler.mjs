@@ -63,7 +63,7 @@ async function connect(event, context, connectionId, connectedEndpoint, sockets,
   if (bridgeId) item.bridgeId = bridgeId;
   await sockets.table.putItem({ Item: item });
   if (item.bridgeOwner) {
-    if (!await sockets.claimBridgeConnection(item, context, connectedEndpoint)) return { statusCode: 409 };
+    if (!await sockets.claimBridgeConnection(item, connectedEndpoint)) return { statusCode: 409 };
     try { // display only: the connection does not depend on it
       await sockets.devices.put(accountId, device, qs.name ?? '', qs.os ?? '');
     } catch (error) {

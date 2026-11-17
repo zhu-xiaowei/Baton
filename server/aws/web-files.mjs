@@ -22,7 +22,6 @@ function guessType(file) {
 // Vite's hashed chunks never change; HTML must revalidate, or a stale cached index.html
 // requests chunks the next deploy deleted. Other files keep the browser's default.
 const HASHED = /^assets\/[^/]+-[\p{L}\p{N}_-]{8}\.(js|css)\n?$/u;
-const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 function normpath(value) {
   const parts = [];
@@ -50,16 +49,46 @@ async function lookup(directory, relative) {
   }
 }
 
-// email.utils.parsedate for HTTP dates (RFC 1123, RFC 850, asctime); the zone is ignored, as there.
+// email.utils.parsedate (_parsedate_tz without the zone, which parsedate drops).
+const DAYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
+const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec', 'january', 'february', 'march',
+  'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december'];
+const lastChar = (text) => { if (!text) throw new TypeError('string index out of range'); return text.at(-1); };
 function parsedate(value) {
-  let match = /^\s*(?:[A-Za-z]+,?\s*)?(\d{1,2})[\s-]+([A-Za-z]{3})[a-z]*[\s-]+(\d{2,4})\s+(\d{1,2}):(\d{2})(?::(\d{2}))?/.exec(value);
-  const asctime = !match && /^\s*[A-Za-z]{3},?\s+([A-Za-z]{3})[a-z]*\s+(\d{1,2})\s+(\d{1,2}):(\d{2})(?::(\d{2}))?\s+(\d{2,4})/.exec(value);
-  if (asctime) match = [, asctime[2], asctime[1], asctime[6], asctime[3], asctime[4], asctime[5]];
-  const month = match && MONTHS.findIndex((name) => name.toLowerCase() === match[2].toLowerCase());
-  if (!match || month < 0) return null;
-  let year = Number(match[3]);
-  if (match[3].length <= 2) year += year > 68 ? 1900 : 2000;
-  return [year, month + 1, Number(match[1]), Number(match[4]), Number(match[5]), Number(match[6] ?? 0)];
+  let data = value.split(/[\s\x1c-\x1f\x85]+/u).filter(Boolean);
+  if (!data.length) return null;
+  if (data[0].endsWith(',') || DAYS.includes(data[0].toLowerCase())) data.shift();
+  else if (data[0].includes(',')) data[0] = data[0].slice(data[0].lastIndexOf(',') + 1);
+  if (data.length === 3 && data[0].split('-').length === 3) data = [...data[0].split('-'), ...data.slice(1)];
+  if (data.length === 4) {
+    let i = data[3].indexOf('+');
+    if (i === -1) i = data[3].indexOf('-');
+    if (i > 0) data.splice(3, 1, data[3].slice(0, i), data[3].slice(i));
+    else data.push('');
+  }
+  if (data.length < 5) return null;
+  let [dd, mm, yy, tm, tz] = data;
+  if (!(dd && mm && yy)) return null;
+  mm = mm.toLowerCase();
+  if (!MONTHS.includes(mm)) {
+    [dd, mm] = [mm, dd.toLowerCase()];
+    if (!MONTHS.includes(mm)) return null;
+  }
+  const month = (MONTHS.indexOf(mm) % 12) + 1;
+  if (lastChar(dd) === ',') dd = dd.slice(0, -1);
+  if (yy.indexOf(':') > 0) [yy, tm] = [tm, yy];
+  if (lastChar(yy) === ',') {
+    yy = yy.slice(0, -1);
+    if (!yy) return null;
+  }
+  if (!/^\p{Nd}/u.test(yy)) [yy, tz] = [tz, yy];
+  if (lastChar(tm) === ',') tm = tm.slice(0, -1);
+  let parts = tm.split(':');
+  if (parts.length === 1 && tm.includes('.')) parts = tm.split('.');
+  if (parts.length < 2 || parts.length > 3) return null;
+  const [year, day, hour, minute, second] = [yy, dd, parts[0], parts[1], parts[2] ?? '0'].map(pyInt);
+  if ([year, day, hour, minute, second].some(Number.isNaN)) return null;
+  return [year < 100 ? year + (year > 68 ? 1900 : 2000) : year, month, day, hour, minute, second];
 }
 const later = (a, b) => { for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return a[i] > b[i]; return true; };
 

@@ -119,15 +119,14 @@ export function createSockets({ table, devices, log = console.log }) {
     await handleDisconnect(connectionId, endpoint);
   }
 
-  async function claimBridgeConnection(item, context, endpoint) {
-    const connectedAt = Math.trunc(context.connectedAt || context.requestTimeEpoch || Date.now());
+  async function claimBridgeConnection(item, endpoint) {
     let previous;
     try {
       previous = (await table.updateItem({ Key: { connectionId: item.bridgeOwner },
         UpdateExpression: 'SET activeConnectionId = :connection, connectionOrder = :order, #ttl = :ttl',
         ConditionExpression: 'attribute_not_exists(connectionOrder) OR connectionOrder <= :order', ExpressionAttributeNames: { '#ttl': 'ttl' },
-        ExpressionAttributeValues: { ':connection': item.connectionId, ':order': item.connectionOrder ?? `${pad16(connectedAt)}:${item.connectionId}`,
-          ':ttl': item.ttl }, ReturnValues: 'ALL_OLD' })).Attributes ?? {};
+        ExpressionAttributeValues: { ':connection': item.connectionId, ':order': item.connectionOrder, ':ttl': item.ttl },
+        ReturnValues: 'ALL_OLD' })).Attributes ?? {};
     } catch (error) {
       if (error.code !== 'ConditionalCheckFailedException') throw error;
       await table.deleteItem({ Key: { connectionId: item.connectionId } });

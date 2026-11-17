@@ -1,5 +1,5 @@
 // AWS API calls with SigV4 (bridge/transfer-store.mjs), the Lambda role's credentials and botocore's
-// legacy retry policy: DynamoDB 10 attempts from 50 ms, others 5 from 0-1 s, doubling.
+// client behaviour (retries, timeouts, DynamoDB's CRC32 check).
 import https from 'node:https';
 import zlib from 'node:zlib';
 import { signHeaders } from '../../bridge/transfer-store.mjs';
@@ -33,32 +33,53 @@ export class AwsError extends Error {
   }
 }
 
-// botocore's _retry.json (legacy mode): these statuses, these error codes with their status, socket errors.
-const RETRIED_STATUS = [429, 500, 502, 503, 504, 509];
-const RETRIED_CODES = { Throttling: 400, ThrottlingException: 400, ThrottledException: 400, RequestThrottledException: 400,
-  ProvisionedThroughputExceededException: 400 };
-const SERVICE_CODES = { dynamodb: { ReplicatedWriteConflictException: 409, TransactionInProgressException: 400 },
-  sts: { IDPCommunicationError: 400 } };
+// botocore's default "standard" retry mode: DynamoDB 4 attempts, others 3; full-jitter backoff from 1 s for
+// throttling, else 25 ms (DynamoDB) or 50 ms, doubling up to 20 s; x-amz-retry-after; a retry quota per service.
+const TRANSIENT_CODES = ['RequestTimeout', 'RequestTimeoutException', 'PriorRequestNotComplete'];
+const THROTTLING_CODES = ['Throttling', 'ThrottlingException', 'ThrottledException', 'RequestThrottledException',
+  'TooManyRequestsException', 'ProvisionedThroughputExceededException', 'TransactionInProgressException', 'RequestLimitExceeded',
+  'BandwidthLimitExceeded', 'LimitExceededException', 'RequestThrottled', 'SlowDown', 'PriorRequestNotComplete', 'EC2ThrottledException'];
+const RETRIED_CODES = { dynamodb: ['ReplicatedWriteConflictException'], sts: ['IDPCommunicationError'] };
+const quotas = new Map();
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // One signed request; resolves the response text, throws AwsError with the service's error code.
 export async function call(service, { method = 'POST', url, headers = {}, body = '', signRegion = region() }) {
-  const attempts = service === 'dynamodb' ? 10 : 5;
+  const attempts = service === 'dynamodb' ? 4 : 3;
+  let acquired = 0;
   for (let attempt = 1; ; attempt++) {
     let error;
+    let response;
+    let badChecksum = false;
     try {
       const signed = await signHeaders({ method, url, region: signRegion, service, credentials: credentials(), headers, body });
-      const response = await request(url, { method, headers: { ...headers, ...signed }, body, timeoutMs: 60_000 });
+      response = await request(url, { method, headers: { ...headers, ...signed }, body, timeoutMs: 60_000 });
       const crc = response.headers['x-amz-crc32'];
-      if (response.status < 300 && !(service === 'dynamodb' && crc && Number(crc) !== zlib.crc32(response.text))) return response.text;
-      error = response.status < 300 ? new Error('CRC32 mismatch') : parseError(response);
+      badChecksum = service === 'dynamodb' && crc !== undefined && Number(crc) !== zlib.crc32(response.text);
+      if (response.status < 300) {
+        quotas.set(service, Math.min(500, (quotas.get(service) ?? 500) + (acquired || 1)));
+        if (!badChecksum) return response.text;
+      } else {
+        error = parseError(response);
+      }
     } catch (thrown) {
-      error = thrown; // the network, as botocore's socket errors
+      error = thrown; // the network, as botocore's connection errors
     }
-    const codes = { ...RETRIED_CODES, ...SERVICE_CODES[service] };
-    const retry = !(error instanceof AwsError) || RETRIED_STATUS.includes(error.status) || codes[error.code] === error.status;
-    if (!retry || attempt >= attempts) throw error;
-    await sleep(service === 'dynamodb' ? 50 * 2 ** (attempt - 1) : Math.random() * 1000 * 2 ** (attempt - 1));
+    const throttling = error instanceof AwsError && (THROTTLING_CODES.includes(error.code) || error.status === 429);
+    const retryable = badChecksum || !(error instanceof AwsError) || throttling || TRANSIENT_CODES.includes(error.code)
+      || [500, 502, 503, 504].includes(error.status) || !!RETRIED_CODES[service]?.includes(error.code);
+    const cost = throttling ? 5 : 14;
+    const available = quotas.get(service) ?? 500;
+    if (!retryable || attempt >= attempts || cost > available) {
+      if (badChecksum) return response.text;
+      throw error;
+    }
+    quotas.set(service, available - cost);
+    acquired = cost;
+    let delay = Math.random() * Math.min((throttling ? 1 : service === 'dynamodb' ? 0.025 : 0.05) * 2 ** (attempt - 1), 20);
+    const after = /^\s*\+?\d+\s*$/.test(response?.headers['x-amz-retry-after'] ?? '') ? Number(response.headers['x-amz-retry-after']) / 1000 : null;
+    if (after !== null) delay = Math.max(delay, Math.min(after, delay + 5));
+    await sleep(delay * 1000);
   }
 }
 

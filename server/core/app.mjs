@@ -37,7 +37,7 @@ export function createServer(ports) {
   const notifications = createNotifications(ports);
 
   async function authenticate(context) {
-    const path = context.path;
+    const path = context.urlPath;
     if (context.method === 'OPTIONS' || !path.startsWith('/api/') || PUBLIC.has(path)) return null;
     let resolved;
     try {
