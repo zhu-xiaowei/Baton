@@ -168,7 +168,7 @@ async function send(reply, context) {
       throw thrown;
     }
   }
-  const bytes = head ? new Uint8Array() : new Uint8Array(await fs.readFile(file));
+  const bytes = head && ranges.length < 2 ? new Uint8Array() : new Uint8Array(await fs.readFile(file));
   if (ranges.length === 1) {
     const [[start, end]] = ranges;
     return { status: 206, headers: { ...rest.headers, 'content-range': `bytes ${start}-${end - 1}/${size}`, 'content-length': String(end - start) },
@@ -177,16 +177,10 @@ async function send(reply, context) {
   if (ranges.length > 1) {
     const boundary = randomHex(13);
     const type = rest.headers['content-type'];
-    const parts = [];
-    for (const [start, end] of ranges) {
-      parts.push(new TextEncoder().encode(`--${boundary}\r\nContent-Type: ${type}\r\nContent-Range: bytes ${start}-${end - 1}/${size}\r\n\r\n`),
-        bytes.subarray(start, end), new TextEncoder().encode('\r\n'));
-    }
-    parts.push(new TextEncoder().encode(`--${boundary}--`));
-    const length = ranges.reduce((sum, [start, end]) => sum + String(start).length + String(end - 1).length
-      + 49 + boundary.length + type.length + String(size).length + end - start, 0) + 4 + boundary.length;
-    return { status: 206, headers: { ...rest.headers, 'content-type': `multipart/byteranges; boundary=${boundary}`, 'content-length': String(length) },
-      body: head ? new Uint8Array() : new Uint8Array(await new Blob(parts).arrayBuffer()) };
+    const parts = ranges.flatMap(([start, end]) => [`--${boundary}\r\nContent-Type: ${type}\r\nContent-Range: bytes ${start}-${end - 1}/${size}\r\n\r\n`,
+      bytes.subarray(start, end), '\r\n']);
+    const body = new Uint8Array(await new Blob([...parts, `--${boundary}--`]).arrayBuffer());
+    return { status: 206, headers: { ...rest.headers, 'content-type': `multipart/byteranges; boundary=${boundary}`, 'content-length': String(body.length) }, body };
   }
   return { ...rest, body: bytes };
 }
@@ -208,7 +202,10 @@ async function staticFile(context, directory, relative) {
       if (!context.path.endsWith('/')) {
         const proto = context.scheme;
         const query = context.url.search;
-        return response(307, '', null, { location: `${proto}://${context.headers.get('host') ?? ''}${context.path}/${query}` });
+        // RedirectResponse quotes the URL, which URL(scope) built with ?, # and \ escaped.
+        const path = context.path.replace(/[?#\\]/g, (c) => ({ '?': '%3F', '#': '%23', '\\': '%5C' })[c]);
+        const location = `${proto}://${context.headers.get('host') ?? ''}${path}/${query}`;
+        return response(307, '', null, { location: location.replace(/[^\w.~\-:/%#?=@[\]!$&'()*+,;]/gu, (c) => encodeURIComponent(c)) });
       }
       return fileResponse(...index, context);
     }
