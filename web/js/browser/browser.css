@@ -84,6 +84,10 @@
 .browser-message { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; padding: 24px; margin: 0; background: var(--canvas); text-align: center; overflow-wrap: anywhere; }
 @media (hover: hover) and (pointer: fine) {
   .browser-button:not(:disabled):hover::before { opacity: 1; }
+  /* Like the top-bar buttons: tint the button itself. A fading ::before layer
+     makes WebKit re-raster the icon at zoomed (fractional) pixel offsets. */
+  :is(.browser-navigation, .browser-window-actions) .browser-button::before { display: none; }
+  .browser-page :is(.browser-navigation, .browser-window-actions) .browser-button:not(:disabled):hover { background: var(--surface-raised); }
 }
 html.native-mobile .browser-toolbar { --browser-feedback-size: 40px; padding-left: 2px; padding-right: 2px; gap: 4px; }
 html.native-mobile .browser-navigation,

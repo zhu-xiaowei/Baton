@@ -958,7 +958,7 @@ if (backSlot) mountBackButton(backSlot, function () { closeFileViewer(); });
 
 document.addEventListener('keydown', function (e) {
   var o = overlay();
-  if (!o || o.style.display !== 'flex' || e.key !== 'Escape') return;
+  if (!o || o.style.display !== 'flex' || e.key !== 'Escape' || window.sideDockOutside?.(e)) return;
   closeFileViewer();
   e.preventDefault();
   e.stopImmediatePropagation();

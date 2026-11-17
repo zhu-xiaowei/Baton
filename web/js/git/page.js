@@ -82,7 +82,8 @@ function ensurePage() {
   document.addEventListener('keydown', function (event) {
     if (!page.hidden
       && event.key === 'Escape'
-      && document.getElementById('fileOverlay')?.style.display !== 'flex') {
+      && document.getElementById('fileOverlay')?.style.display !== 'flex'
+      && !window.sideDockOutside?.(event)) {
       onBack?.();
     }
   });
