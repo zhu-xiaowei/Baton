@@ -45,7 +45,7 @@ export const NODE_SHA256 = {
   'win-arm64.zip': 'b3cc74a295b39d4f273271e96f58c06dd2b35757ca12abec64c7d0598b434f14',
   'win-x64.zip': 'e612af99f626ab415ea225af6bce5c971feb448cb5cae250bb1c3fa50c5f7d9f',
 };
-const NODE_SOURCES = ['https://nodejs.org/dist', 'https://npmmirror.com/mirrors/node'];
+const NODE_SOURCES = ['https://nodejs.org/dist', 'https://cdn.npmmirror.com/binaries/node'];
 const unixNodeSums = Object.entries(NODE_SHA256).filter(([file]) => !file.startsWith('win'))
   .map(([file, sum]) => `    ${file}) want=${sum} ;;`).join('\n');
 
