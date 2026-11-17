@@ -13,9 +13,7 @@ Baton provides non-intrusive, real-time streaming and rendering for Claude Code,
 
 ## Quick Start
 
-### 1. Install Bridge
-
-On the computer where your agents run:
+### 1. Install Bridge on your computer
 
 ```bash
 curl -fsSL https://agentbaton.app/install | bash
@@ -39,7 +37,7 @@ irm https://agentbaton.app/install.ps1 | iex
 | <img src="docs/assets/baton_ios.avif" width="88" alt="iOS"> | <img src="docs/assets/baton_android.avif" width="88" alt="Android"> | <img src="docs/assets/harmonyos.avif" width="88" alt="HarmonyOS"> | <img src="docs/assets/macOS.avif" width="88" alt="macOS"> | <img src="docs/assets/windows.avif" width="88" alt="Windows"> | <img src="docs/assets/linux.avif" width="88" alt="Linux"> |
 | [TestFlight](https://testflight.apple.com/join/UekStGCA) | [Baton.apk](https://github.com/zhu-xiaowei/baton/releases) | [Build & install](harmony/README.md) | [Baton.dmg](https://github.com/zhu-xiaowei/baton/releases) | [Baton.exe](https://github.com/zhu-xiaowei/baton/releases) | [Baton.deb](https://github.com/zhu-xiaowei/baton/releases) |
 
-Scan the QR code the installer printed, or open [web.agentbaton.app](https://web.agentbaton.app) in a browser. The first scan creates your account; to add another computer, install Bridge there and scan its QR code.
+Scan the QR code in your terminal with the App, or open the link printed below it in a browser.
 
 ---
 
