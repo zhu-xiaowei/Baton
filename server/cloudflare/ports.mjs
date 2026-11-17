@@ -11,7 +11,7 @@ const envs = new WeakMap();
 
 export function coreEnv(env) {
   if (!envs.has(env)) {
-    envs.set(env, { OPEN_REGISTRATION: env.OPEN_REGISTRATION, WEB_URL: env.WEB_URL, API_URL: env.API_URL, APP_VERSION: env.APP_VERSION,
+    envs.set(env, { OPEN_REGISTRATION: env.OPEN_REGISTRATION, WEB_URL: env.WEB_URL, API_URL: env.API_URL, INSTALL_URL: env.INSTALL_URL, APP_VERSION: env.APP_VERSION,
       BRIDGE_VERSION: env.BRIDGE_VERSION, ACCOUNT_ID: env.ACCOUNT_ID, API_KEY_NAME: env.API_KEY_NAME, ORIGIN_SECRET: env.ORIGIN_SECRET,
       WS_API_ENDPOINT: `${env.API_URL}/ws`, CONNECTIONS_TABLE: 'relay', PUSH_RELAY_URL: env.PUSH ? 'https://push/' : '',
       NOTIFICATION_FEED: 'off', TOKENS_BY_ACCOUNT: '1' });
