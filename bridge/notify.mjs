@@ -11,6 +11,7 @@ const RETRY_MS = 30_000;
 
 let deps = {
   post: async () => null,                 // (endpoint, body) → Response | null
+  sendAlert: () => null,                  // ({ action: 'alert', ...alert }) → sent over the relay socket: true/false; null → post
   history: async () => ({ messages: [] }), // ({ sessionId, limit }) → newest rows, oldest first
   viewed: async () => false,              // (rootSessionId, eventId) → a page shows it now (waits up to 3 s)
   sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
@@ -42,6 +43,15 @@ export function configureNotifier(next) {
 
 // By characters, not UTF-16 units: half an emoji is rejected by the server and the alert is lost.
 const clip = (text, length) => Array.from(text).slice(0, length).join('');
+// By JSON-escaped UTF-8 bytes too, so the sealed alert fits a 4 KB APNs payload.
+function capBytes(text, bytes) {
+  let out = '';
+  for (const char of text) {
+    if ((bytes -= Buffer.byteLength(JSON.stringify(char)) - 2) < 0) break;
+    out += char;
+  }
+  return out;
+}
 
 const storageId = (s) => storageSessionId(s.runtime, s.nativeSessionId || s.id);
 
@@ -163,20 +173,18 @@ export async function alertFor(old, row) {
     return null;
   }
   const folder = String(row.projectName || '').replace(/\\/g, '/').replace(/\/+$/, '').split('/').pop();
-  const project = clip(folder || row.project, 80);
-  const title = clip(String(row.preview || row.agentName || '').split(/\s+/).filter(Boolean).join(' '), 120)
-    || `Session ${parseStorageSessionId(row.sessionId).nativeSessionId.slice(0, 8)}`;
+  const project = capBytes(clip(folder || row.project, 80), 240);
+  const title = capBytes(clip(String(row.preview || row.agentName || '').split(/\s+/).filter(Boolean).join(' '), 120)
+    || `Session ${parseStorageSessionId(row.sessionId).nativeSessionId.slice(0, 8)}`, 360);
   return {
     eventId: createHash('sha256').update(randomUUID()).digest('hex'),
     device: row.deviceName,
-    projectHash: row.project,
+    projectHash: capBytes(String(row.project ?? ''), 400),
     projectName: project,
     sessionId: row.sessionId,
     sessionTitle: title,
     rootSessionId: row.threadRootId || row.sessionId,
-    // Apps lay out projectName / sessionTitle themselves; title is for builds that predate it.
-    title: `${project} · ${title}`,
-    body: (after === 'completed' ? '✅ ' : '🟡 ') + action + (detail ? ` · ${detail}` : ''),
+    body: capBytes((after === 'completed' ? '✅ ' : '🟡 ') + action + (detail ? ` · ${detail}` : ''), 900),
   };
 }
 
@@ -186,7 +194,7 @@ async function deliver(alert) {
 }
 
 // With K, the text and the project travel sealed (`e`, bound to eventId); the phone opens them.
-const SEALED = ['projectHash', 'projectName', 'sessionTitle', 'title', 'body'];
+const SEALED = ['projectHash', 'projectName', 'sessionTitle', 'body'];
 function sealAlert(alert, key) {
   const out = { ...alert, ...Object.fromEntries(SEALED.map((name) => [name, ''])) };
   const plain = Buffer.from(JSON.stringify(Object.fromEntries(SEALED.map((name) => [name, alert[name]]))));
@@ -196,7 +204,10 @@ function sealAlert(alert, key) {
 
 async function send(alert) {
   const key = deps.notifyKey?.();
-  const response = await deps.post('/api/notifications/events', key ? sealAlert(alert, key) : alert);
+  const body = key ? sealAlert(alert, key) : alert;
+  const sent = await deps.sendAlert({ action: 'alert', ...body });
+  if (sent != null) return sent;
+  const response = await deps.post('/api/notifications/events', body);
   return !!response && response.status < 500; // a 4xx would only fail again
 }
 
