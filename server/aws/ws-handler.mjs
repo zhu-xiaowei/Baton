@@ -20,13 +20,13 @@ export async function handler(event) {
   const context = event.requestContext ?? {};
   const connectionId = context.connectionId ?? '';
   const endpoint = `https://${context.domainName ?? ''}/${context.stage ?? ''}`;
-  if (context.routeKey === '$connect') return connect(event, connectionId, sockets, auth);
+  if (context.routeKey === '$connect') return connect(event, context, connectionId, endpoint, sockets, auth);
   if (context.routeKey === '$disconnect') return sockets.handleDisconnect(connectionId, endpoint);
   if (context.routeKey === '$default') return message(event, connectionId, endpoint, sockets);
   return { statusCode: 400 };
 }
 
-async function connect(event, connectionId, sockets, auth) {
+async function connect(event, context, connectionId, connectedEndpoint, sockets, auth) {
   const qs = event.queryStringParameters || {};
   const role = qs.role ?? 'app'; // "app" or "bridge", or their _data twins on the data API
   const device = qs.device ?? '';
@@ -46,8 +46,6 @@ async function connect(event, connectionId, sockets, auth) {
   const bridgeId = role === 'bridge' ? qs.bridgeId : undefined;
   if (bridgeId !== undefined && !/^[a-f0-9]{32}$/.test(bridgeId)) return { statusCode: 400 };
 
-  const context = event.requestContext ?? {};
-  const connectedEndpoint = `https://${context.domainName ?? ''}/${context.stage ?? ''}`;
   const dataEndpoint = process.env.TERMINAL_DIRECT_ENDPOINT;
   if (DATA_ROLES.includes(role) !== (!!dataEndpoint && connectedEndpoint === dataEndpoint)) return { statusCode: 403 };
 

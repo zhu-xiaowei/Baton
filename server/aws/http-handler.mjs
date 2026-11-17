@@ -1,8 +1,9 @@
 // The REST API Lambda (API Gateway proxy events), as the Python server ran behind the Lambda Web Adapter.
+import { createHmac } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { signHeaders, signUrl } from '../../bridge/transfer-store.mjs';
+import { signHeaders } from '../../bridge/transfer-store.mjs';
 import { createServer } from '../core/app.mjs';
 import { createDevices } from '../core/devices.mjs';
 import { pyStrip, unquote } from '../core/py.mjs';
@@ -31,11 +32,20 @@ export async function relayPost(url, body, timeoutSec) {
   }
 }
 
+const rfc3986 = (value) => encodeURIComponent(value).replace(/[!'()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
+
+// boto3's generate_presigned_url('get_object'): S3 signature version 2 on the global endpoint.
 async function presign() {
   const bucket = process.env.BRIDGE_IMAGES_BUCKET ?? '';
   if (!bucket) return null;
-  return signUrl({ method: 'GET', host: `${bucket}.s3.${region()}.amazonaws.com`, path: '/install/bridge.tar.gz', region: region(),
-    credentials: credentials(), expires: 3600 });
+  const { accessKeyId, secretAccessKey, sessionToken } = credentials();
+  const key = 'install/bridge.tar.gz';
+  const expires = String(Math.floor(Date.now() / 1000 + 3600));
+  const token = sessionToken ? [['x-amz-security-token', sessionToken]] : [];
+  const signature = createHmac('sha1', secretAccessKey)
+    .update(`GET\n\n\n${expires}\n${token.map(([name, value]) => `${name}:${value}\n`).join('')}/${bucket}/${key}`).digest('base64');
+  const query = [['AWSAccessKeyId', accessKeyId], ['Signature', signature], ...token, ['Expires', expires]];
+  return `https://${bucket}.s3.amazonaws.com/${key}?${query.map(([name, value]) => `${name}=${rfc3986(value)}`).join('&')}`;
 }
 
 // ---- Lambda entry ----

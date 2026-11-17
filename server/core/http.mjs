@@ -21,24 +21,49 @@ export function response(status, body, contentType, headers = {}) {
 export const json = (content, status = 200, headers = {}) => response(status, dumps(content), 'application/json', headers);
 export const text = (content, status = 200, headers = {}) => response(status, content, 'text/plain', headers);
 
-// json.loads(bytes): the encoding comes from a BOM or the zero bytes of the first characters.
+// json.loads(bytes): the encoding comes from a BOM or the zero bytes of the first characters, and is
+// decoded with 'surrogatepass' (lone surrogates are kept).
 function decodeBody(b) {
   let encoding = 'utf-8';
   let offset = 0;
   if ((!b[0] && !b[1] && b[2] === 0xfe && b[3] === 0xff) || (b[0] === 0xff && b[1] === 0xfe && !b[2] && !b[3] && b.length >= 4)) {
     encoding = b[0] ? 'utf-32le' : 'utf-32be';
     offset = 4;
-  } else if ((b[0] === 0xfe && b[1] === 0xff) || (b[0] === 0xff && b[1] === 0xfe)) encoding = b[0] === 0xff ? 'utf-16le' : 'utf-16be';
+  } else if ((b[0] === 0xfe && b[1] === 0xff) || (b[0] === 0xff && b[1] === 0xfe)) [encoding, offset] = [b[0] === 0xff ? 'utf-16le' : 'utf-16be', 2];
   else if (b[0] === 0xef && b[1] === 0xbb && b[2] === 0xbf) offset = 3;
   else if (b.length >= 4 && !b[0]) encoding = b[1] ? 'utf-16be' : 'utf-32be';
   else if (b.length >= 4 && !b[1]) encoding = b[2] || b[3] ? 'utf-16le' : 'utf-32le';
   else if (b.length === 2 && (!b[0] || !b[1])) encoding = b[0] ? 'utf-16le' : 'utf-16be';
-  if (!encoding.startsWith('utf-32')) return new TextDecoder(encoding, { fatal: true, ignoreBOM: !!offset || encoding === 'utf-8' }).decode(b.subarray(offset));
-  const view = new DataView(b.buffer, b.byteOffset + offset, b.length - offset);
-  if (view.byteLength % 4) throw new Error('truncated data');
+  const bytes = b.subarray(offset);
+  if (encoding === 'utf-8') return utf8(bytes);
+  const size = encoding.startsWith('utf-32') ? 4 : 2;
+  if (bytes.length % size) throw new Error('truncated data');
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.length);
   let out = '';
-  for (let i = 0; i < view.byteLength; i += 4) out += String.fromCodePoint(view.getUint32(i, encoding === 'utf-32le'));
+  for (let i = 0; i < bytes.length; i += size) {
+    const little = encoding.endsWith('le');
+    out += size === 4 ? String.fromCodePoint(view.getUint32(i, little)) : String.fromCharCode(view.getUint16(i, little));
+  }
   return out;
+}
+
+function utf8(bytes) {
+  try {
+    return new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes);
+  } catch {
+    // Encoded surrogates (ED A0-BF xx) are the only bytes 'surrogatepass' adds to strict UTF-8.
+    const pieces = [];
+    let start = 0;
+    for (let i = 0; i < bytes.length; i++) {
+      if (bytes[i] === 0xed && bytes[i + 1] >= 0xa0 && bytes[i + 1] <= 0xbf && bytes[i + 2] >= 0x80 && bytes[i + 2] <= 0xbf) {
+        pieces.push(new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes.subarray(start, i)),
+          String.fromCharCode(0xd000 | ((bytes[i + 1] & 0x3f) << 6) | (bytes[i + 2] & 0x3f)));
+        start = i + 3;
+        i += 2;
+      }
+    }
+    return pieces.join('') + new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes.subarray(start));
+  }
 }
 
 // FastAPI's request body: JSON only with a JSON content type (strict), else the raw bytes.

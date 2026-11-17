@@ -1,6 +1,7 @@
 // AWS API calls with SigV4 (bridge/transfer-store.mjs), the Lambda role's credentials and botocore's
 // legacy retry policy: DynamoDB 10 attempts from 50 ms, others 5 from 0-1 s, doubling.
 import https from 'node:https';
+import zlib from 'node:zlib';
 import { signHeaders } from '../../bridge/transfer-store.mjs';
 
 // Connections stay open while the instance is warm, as botocore's do (fetch closes them after 4 s idle).
@@ -32,8 +33,12 @@ export class AwsError extends Error {
   }
 }
 
-const RETRIED = /Throttl|TooManyRequests|ProvisionedThroughputExceeded|TransactionInProgress|RequestLimitExceeded|LimitExceeded|SlowDown/;
+// botocore's _retry.json (legacy mode): these statuses, these error codes with their status, socket errors.
 const RETRIED_STATUS = [429, 500, 502, 503, 504, 509];
+const RETRIED_CODES = { Throttling: 400, ThrottlingException: 400, ThrottledException: 400, RequestThrottledException: 400,
+  ProvisionedThroughputExceededException: 400 };
+const SERVICE_CODES = { dynamodb: { ReplicatedWriteConflictException: 409, TransactionInProgressException: 400 },
+  sts: { IDPCommunicationError: 400 } };
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // One signed request; resolves the response text, throws AwsError with the service's error code.
@@ -43,13 +48,15 @@ export async function call(service, { method = 'POST', url, headers = {}, body =
     let error;
     try {
       const signed = await signHeaders({ method, url, region: signRegion, service, credentials: credentials(), headers, body });
-      const response = await request(url, { method, headers: { ...headers, ...signed }, body });
-      if (response.status < 300) return response.text;
-      error = parseError(response);
+      const response = await request(url, { method, headers: { ...headers, ...signed }, body, timeoutMs: 60_000 });
+      const crc = response.headers['x-amz-crc32'];
+      if (response.status < 300 && !(service === 'dynamodb' && crc && Number(crc) !== zlib.crc32(response.text))) return response.text;
+      error = response.status < 300 ? new Error('CRC32 mismatch') : parseError(response);
     } catch (thrown) {
       error = thrown; // the network, as botocore's socket errors
     }
-    const retry = !(error instanceof AwsError) || RETRIED_STATUS.includes(error.status) || RETRIED.test(error.code);
+    const codes = { ...RETRIED_CODES, ...SERVICE_CODES[service] };
+    const retry = !(error instanceof AwsError) || RETRIED_STATUS.includes(error.status) || codes[error.code] === error.status;
     if (!retry || attempt >= attempts) throw error;
     await sleep(service === 'dynamodb' ? 50 * 2 ** (attempt - 1) : Math.random() * 1000 * 2 ** (attempt - 1));
   }

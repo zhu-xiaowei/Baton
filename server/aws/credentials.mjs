@@ -1,5 +1,6 @@
 // Temporary credentials for the v2 direct channel: Apps and Bridges of one account may post to the data
 // API's @connections and read/write that account's transfer prefix t/<accountId>/ (transfer-store.mjs).
+import { dumps } from '../core/py.mjs';
 import { call } from './aws.mjs';
 
 const CREDENTIAL_SECONDS = 3600;
@@ -53,7 +54,7 @@ export async function issueCredentials(accountId) {
   const roleArn = process.env.TERMINAL_DIRECT_ROLE_ARN;
   const body = new URLSearchParams({ Action: 'AssumeRole', Version: '2011-06-15', RoleArn: roleArn,
     RoleSessionName: `rpc-${crypto.randomUUID().replace(/-/g, '').slice(0, 20)}`, DurationSeconds: String(CREDENTIAL_SECONDS),
-    Policy: JSON.stringify(sessionPolicy(accountId, roleArn, region)) }).toString();
+    Policy: dumps(sessionPolicy(accountId, roleArn, region), true) }).toString();
   const xml = await call('sts', { url: `https://sts.${region}.amazonaws.com/`, body,
     headers: { 'content-type': 'application/x-www-form-urlencoded; charset=utf-8' } });
   const value = { accessKeyId: tag(xml, 'AccessKeyId'), secretAccessKey: tag(xml, 'SecretAccessKey'),

@@ -13,7 +13,7 @@ export async function currentKey() {
     const query = new URLSearchParams({ name, includeValues: 'true', limit: '500' });
     const reply = JSON.parse(await call('apigateway', { method: 'GET', url: `https://apigateway.${region()}.amazonaws.com/apikeys?${query}`,
       headers: { accept: 'application/json' } }));
-    items = reply.item ?? reply.items ?? [];
+    items = reply.item ?? [];
   } catch (error) {
     console.log(`API key lookup failed: ${error.message}`);
     if (cached[1]) return cached[1];

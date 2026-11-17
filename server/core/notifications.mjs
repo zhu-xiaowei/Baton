@@ -3,7 +3,7 @@
 // The Bridge decides and words each alert (bridge/notify.mjs) and posts it here. Android polls
 // the feed; an iOS push carries only an event ID, which the notification extension resolves
 // here. Alerts carry no transcript or credential.
-import { DIGIT, HTTPError, pattern } from './py.mjs';
+import { DIGIT, HTTPError, dumps, pattern } from './py.mjs';
 
 // API Gateway answers at 29 s; past this the feed row (already written) is enough for Android.
 const RELAY_BUDGET_SEC = 20;
@@ -39,7 +39,7 @@ export function createNotifications({ env, table, relayPost, log, random = Math.
 
   // POST one alert to the shared APNs relay (push-relay/); it returns APNs' status and reason.
   async function relay(request, deadline = null, attempts = 4) {
-    const body = JSON.stringify(request);
+    const body = dumps(request, true);
     deadline = deadline || Date.now() / 1000 + RELAY_BUDGET_SEC;
     for (let attempt = 0; attempt < attempts; attempt++) {
       if (attempt) {
@@ -63,6 +63,7 @@ export function createNotifications({ env, table, relayPost, log, random = Math.
 
   async function sendApns(eventId, device, deadline = null) {
     const split = device.sk.indexOf(':');
+    if (split < 0) throw new Error(`not a push device key: ${device.sk}`);
     const result = await relay({ token: device.sk.slice(split + 1), environment: device.sk.slice(0, split), id: eventId }, deadline);
     if (result.status === 200) return;
     if (['BadDeviceToken', 'Unregistered', 'DeviceTokenNotForTopic', 'TopicDisallowed'].includes(result.reason)) {

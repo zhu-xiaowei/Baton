@@ -49,7 +49,8 @@ export function createTable(TableName) {
     updateItem: operation('UpdateItem'),
     deleteItem: operation('DeleteItem'),
     query: async (params) => ({ Items: [], ...await operation('Query')(params) }),
-    transactWriteItems: ({ TransactItems }) => send('TransactWriteItems', {
+    // botocore fills the idempotency token, so a retried transaction that had committed succeeds.
+    transactWriteItems: ({ TransactItems }) => send('TransactWriteItems', { ClientRequestToken: crypto.randomUUID(),
       TransactItems: TransactItems.map((item) => Object.fromEntries(Object.entries(item).map(([kind, params]) => [kind, request(TableName, params)]))),
     }),
   };

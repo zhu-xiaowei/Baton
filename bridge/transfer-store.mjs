@@ -138,7 +138,7 @@ export async function signHeaders({ method, url, region, service, credentials, h
   const scope = `${date}/${region}/${service}/aws4_request`;
   const added = { 'x-amz-date': stamp, ...(credentials.sessionToken ? { 'x-amz-security-token': credentials.sessionToken } : {}) };
   const signed = { host: target.host, ...added };
-  for (const [name, value] of Object.entries(headers)) signed[name.toLowerCase()] = String(value).trim();
+  for (const [name, value] of Object.entries(headers)) signed[name.toLowerCase()] = String(value).trim().replace(/\s+/g, ' ');
   const names = Object.keys(signed).sort();
   const query = [...target.searchParams].map(([name, value]) => [rfc3986(name), rfc3986(value)])
     .sort(([a, x], [b, y]) => (a < b ? -1 : a > b ? 1 : x < y ? -1 : x > y ? 1 : 0)).map((pair) => pair.join('=')).join('&');

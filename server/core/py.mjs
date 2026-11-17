@@ -14,7 +14,8 @@ export const pySlice = (text, start, end) => Array.from(text).slice(start, end).
 const SPACE = '[\\t\\n\\v\\f\\r \\x1c-\\x1f\\x85\\xa0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000]';
 const STRIP = new RegExp(`^${SPACE}+|${SPACE}+$`, 'gu');
 export const pyStrip = (text) => text.replace(STRIP, '');
-export const casefold = (text) => text.toUpperCase().toLowerCase().replace(/ς/g, 'σ')
+// str.casefold for the scripts names use: Unicode case folding where it differs from lower(upper(x)).
+export const casefold = (text) => text.replace(/[^ı]+/gu, (part) => part.toUpperCase().toLowerCase()).replace(/ς/g, 'σ').replace(/ß/g, 'ss')
   .replace(/[ꭰ-ꮿ]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xab70 + 0x13a0))
   .replace(/[ᏸ-ᏽ]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 8));
 const UNPRINTABLE = /[\p{Cc}\p{Cf}\p{Cs}\p{Co}\p{Cn}\p{Zl}\p{Zp}\p{Zs}]/u;
@@ -149,20 +150,24 @@ export function floatRepr(value) {
   return /[.e]/.test(text) ? text : `${text}.0`;
 }
 
-// json.dumps(ensure_ascii=False, allow_nan=False, separators=(",", ":")), as JSONResponse renders.
-export function dumps(value) {
+// json.dumps(ensure_ascii=False, allow_nan=False, separators=(",", ":")), as JSONResponse renders, or with
+// `plain` json.dumps' defaults (", ", ": ", ASCII only), as the Python server sent JSON to AWS.
+export function dumps(value, plain = false) {
+  const item = (inner) => dumps(inner, plain);
   if (value === null || value === undefined) return 'null';
   if (value instanceof PyFloat) return floatRepr(value.value);
   if (typeof value === 'bigint') return String(value);
   if (typeof value === 'number') return Number.isInteger(value) ? String(value) : floatRepr(value);
   if (typeof value === 'string') {
+    if (plain) return JSON.stringify(value).replace(/[\u007f-\uffff]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`);
     if (/\p{Cs}/u.test(value)) throw new Error('surrogates not allowed');
     return JSON.stringify(value);
   }
   if (typeof value === 'boolean') return String(value);
-  if (Array.isArray(value)) return `[${value.map(dumps).join(',')}]`;
-  const entries = value instanceof Map ? [...value] : Object.entries(value).filter(([, item]) => item !== undefined);
-  return `{${entries.map(([key, item]) => `${dumps(key)}:${dumps(item)}`).join(',')}}`;
+  const [comma, colon] = plain ? [', ', ': '] : [',', ':'];
+  if (Array.isArray(value)) return `[${value.map(item).join(comma)}]`;
+  const entries = value instanceof Map ? [...value] : Object.entries(value).filter(([, inner]) => inner !== undefined);
+  return `{${entries.map(([key, inner]) => `${item(key)}${colon}${item(inner)}`).join(comma)}}`;
 }
 
 // ---- pydantic models: fields are [name, { required, default, pattern, maxLength, model, nullable }] ----
@@ -190,6 +195,8 @@ export function validate(fields, input, loc) {
       else value[name] = nested.value;
     } else if (typeof item !== 'string') {
       errors.push(errorOf('string_type', at, 'Input should be a valid string', item));
+    } else if ((spec.maxLength !== undefined || spec.pattern) && /\p{Cs}/u.test(item)) {
+      errors.push(errorOf('string_unicode', at, 'Input should be a valid string, unable to parse raw data as a unicode string', item));
     } else if (spec.maxLength !== undefined && pyLen(item) > spec.maxLength) {
       errors.push(errorOf('string_too_long', at, `String should have at most ${spec.maxLength} characters`, item,
         { max_length: spec.maxLength }));
