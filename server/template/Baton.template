@@ -605,8 +605,8 @@
       "Properties": {
         "FunctionName": { "Fn::Sub": "${AWS::StackName}-ws-handler" },
         "Architectures": ["arm64"],
-        "Runtime": "python3.12",
-        "Handler": "bridge_ws.handler",
+        "Runtime": "nodejs22.x",
+        "Handler": "server/aws/ws-handler.handler",
         "Code": {
           "S3Bucket": { "Ref": "ImagesBucketName" },
           "S3Key": { "Ref": "WsCodeS3Key" }

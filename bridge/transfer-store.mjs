@@ -128,6 +128,38 @@ export async function signUrl({ method, host, path, region, credentials, expires
   return `https://${host}${path}?${canonicalQuery}&X-Amz-Signature=${signature}`;
 }
 
+// SigV4 header authentication for one AWS API request (the server's DynamoDB, STS, API Gateway and
+// push relay calls): the headers to send besides `headers`. The day's signing key is derived once.
+const signingKeys = new Map();
+export async function signHeaders({ method, url, region, service, credentials, headers = {}, body = '', now = new Date() }) {
+  const target = new URL(url);
+  const stamp = now.toISOString().replace(/[:-]|\.\d{3}/g, '');
+  const date = stamp.slice(0, 8);
+  const scope = `${date}/${region}/${service}/aws4_request`;
+  const added = { 'x-amz-date': stamp, ...(credentials.sessionToken ? { 'x-amz-security-token': credentials.sessionToken } : {}) };
+  const signed = { host: target.host, ...added };
+  for (const [name, value] of Object.entries(headers)) signed[name.toLowerCase()] = String(value).trim().replace(/\s+/g, ' ');
+  const names = Object.keys(signed).sort();
+  const query = [...target.searchParams].map(([name, value]) => [rfc3986(name), rfc3986(value)])
+    .sort(([a, x], [b, y]) => (a < b ? -1 : a > b ? 1 : x < y ? -1 : x > y ? 1 : 0)).map((pair) => pair.join('=')).join('&');
+  // Non-S3 services sign the path as sent, encoded once more.
+  const path = target.pathname.split('/').map(rfc3986).join('/');
+  const canonical = [method, path, query, names.map((name) => `${name}:${signed[name]}\n`).join(''),
+    names.join(';'), await sha256Hex(body)].join('\n');
+  const id = `${credentials.accessKeyId}/${scope}`;
+  if (!signingKeys.has(id)) {
+    if (signingKeys.size > 16) signingKeys.clear();
+    signingKeys.set(id, (async () => {
+      let key = await hmac(`AWS4${credentials.secretAccessKey}`, date);
+      for (const part of [region, service, 'aws4_request']) key = await hmac(key, part);
+      return crypto.subtle.importKey('raw', key, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+    })());
+  }
+  const toSign = `AWS4-HMAC-SHA256\n${stamp}\n${scope}\n${await sha256Hex(canonical)}`;
+  const signature = hex(await crypto.subtle.sign('HMAC', await signingKeys.get(id), encoder.encode(toSign)));
+  return { ...added, authorization: `AWS4-HMAC-SHA256 Credential=${credentials.accessKeyId}/${scope}, SignedHeaders=${names.join(';')}, Signature=${signature}` };
+}
+
 // A URL for `t/<accountId>/<key>`. `access` is { bucket, region, accountId, accelerate,
 // credentials: { accessKeyId, secretAccessKey, sessionToken, expiresAt } }.
 export async function presign(access, method, key, { headers = {}, query = {}, accelerate = false, now = new Date() } = {}) {

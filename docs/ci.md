@@ -4,10 +4,11 @@ PR CI keeps five jobs: Tests and frontend, Android APK, iOS archive, macOS DMG,
 and Windows NSIS. The separate PR title check is unchanged. There is no
 path-based skipping of native builds.
 
-Independent JavaScript and Python test suites run concurrently inside the
+Independent JavaScript test suites run concurrently inside the
 existing test job. Every suite's exit status is collected, so any failure fails
 the job. The frontend is built first so packaging tests inspect a complete
-`dist` directory. No existing tests or assertions are removed.
+`dist` directory. The server's behaviour is checked against a deployment by URL
+(`npm run test:contract`, not part of CI); CI runs its unit tests (`test/server`).
 
 ## Toolchains
 

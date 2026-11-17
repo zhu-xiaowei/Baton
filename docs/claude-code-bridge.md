@@ -106,8 +106,8 @@ The system DNS resolver is unchanged.
   acknowledgements, not Pongs, establish message delivery. Deploy the server
   before Bridge updates. OS/network/backend delays can extend recovery time.
 
-Regression tests: `node --test test/bridge/sleep-gap-monitor.test.mjs test/bridge/updater.test.mjs`
-and `python3 -m pytest test/server/test_bridge_connection_ownership.py`.
+Regression tests: `node --test test/bridge/sleep-gap-monitor.test.mjs test/bridge/updater.test.mjs`;
+Bridge socket ownership on the server is checked by `npm run test:contract` against a deployment.
 
 ### Data extraction
 
@@ -352,11 +352,8 @@ baton/
 │   ├── watcher.mjs         # fs.watch → read → push to subscribers
 │   └── ws.mjs              # Control socket, rpc handlers, send/permission/interrupt
 ├── server/
-│   ├── src/
-│   │   ├── main.py         # FastAPI entry
-│   │   ├── bridge_read.py  # devices, delete-device, device-name/validate, install
-│   │   ├── devices.py      # Device rows in SystemTable
-│   │   └── bridge_ws.py    # WS control socket ($connect/$disconnect/$default)
+│   ├── core/               # Platform-free routes and rules (app, accounts, auth, devices, install, notifications)
+│   ├── aws/                # Lambda adapter: http-handler, ws-handler ($connect/$disconnect/$default), DynamoDB, STS
 │   ├── template/Baton.template
 │   └── install.sh          # One-command deploy (ECR → S3 → CodeBuild → CloudFormation)
 ├── web/

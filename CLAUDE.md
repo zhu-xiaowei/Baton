@@ -19,7 +19,7 @@ your phone or desktop. Claude Code supports viewing and interaction; Codex suppo
 real-time monitoring, and interaction with existing Sessions. Three components:
 
 1. **bridge/** — Node.js script running on macOS/Linux/Windows (always-on, auto-start), normalizes Claude Code and Codex JSONL
-2. **server/** — AWS Lambda (FastAPI) + WebSocket API GW, relays between bridge and app (DynamoDB holds only connection, device, token and notification rows)
+2. **server/** — AWS Lambda (plain JavaScript, Node 22: `server/core` platform-free rules + `server/aws` adapter) + WebSocket API GW, relays between bridge and app (DynamoDB holds only connection, device, token and notification rows)
 3. **web/ + src-tauri/** — Static HTML/CSS/JS frontend, packaged as native app via Tauri v2 (Android/iOS/Desktop)
 
 Brand name "Baton" is only in user-facing places. Internal code uses generic names so renaming is easy.
@@ -435,9 +435,12 @@ template. S3 bucket / ECR repo / AWS account id are derived automatically by
   (remembered per process for a day) → store key in message
 
 ### Server
-- FastAPI in Docker Lambda, API Key auth. API Gateway checks `x-api-key` on `/api/*`; WS
+- JavaScript server (no dependencies: `node:https` + SigV4 for DynamoDB/STS/API Gateway) in a Node 22 Docker Lambda, API Key auth.
+  `server/core` holds the routes and rules on a `ports` object (store, sockets, credentials, push);
+  `server/aws` is the Lambda adapter. It ports the earlier Python/FastAPI server: same routes, rules, DynamoDB
+  rows and the responses clients see; `npm run test:contract` checks any deployment by URL. API Gateway checks `x-api-key` on `/api/*`; WS
   `$connect` compares `?apiKey=` with the deployment key, which both Lambdas read from API Gateway
-  by name (`server/src/api_key.py`, cached 5 min; a failed lookup keeps the last value, and with no
+  by name (`server/aws/api-key.mjs`, cached 5 min; a failed lookup keeps the last value, and with no
   value REST/WS answer 503 rather than guess an account) — the key is
   never stored in a table. Their IAM `apigateway:GET /apikeys` can read every key in the region:
   the API key depends on the stage and so on the API Lambda, so the Lambdas cannot `Ref` its ID.
@@ -672,7 +675,7 @@ Replaced the old tmux send-keys approach (deleted in Phase 2E). Full design: `do
 
 ## Web Deployment
 
-### Web Pages (served from FastAPI Lambda)
+### Web Pages (served from the API Lambda)
 - `web/landing.html` — API key input, URL `?key=` auto-login, localStorage (`_ak` btoa obfuscated)
 - `web/index.html` — Session viewer (auth guard redirects to landing if no key)
 - `web/setup.html` — Bridge install command + QR code + connected devices list
@@ -683,10 +686,10 @@ Replaced the old tmux send-keys approach (deleted in Phase 2E). Full design: `do
 - Key stored in localStorage (`_ak` = btoa, `_as` = server URL)
 - No cookies, no server middleware — static files publicly accessible
 - API calls use `x-api-key` header from localStorage
-- API Gateway `ApiKeyRequired: false` — auth handled by FastAPI layer
+- API Gateway `ApiKeyRequired: false` — auth handled by the server's middleware
 
 ### Deployment
-- Dockerfile: `COPY web/ web/` → FastAPI `StaticFiles` mount
+- `server/aws/Dockerfile`: Vite build → `web/`, served by `server/aws/web-files.mjs` (ETag revalidation, #191 cache headers)
 - `install.sh`: copies `web/` to Docker build context, deploys via CodeBuild
 - Deploy output: single setup URL with embedded token (12h TTL, reusable until then)
 

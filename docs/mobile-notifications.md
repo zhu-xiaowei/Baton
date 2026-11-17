@@ -119,7 +119,7 @@ Deploy once, in the relay account:
 ## Verification
 
 ```sh
-python3 -m pytest test/server/test_notifications.py
+node --test test/server/aws.test.mjs
 node --test test/push-relay/apns-relay.test.mjs
 ```
 

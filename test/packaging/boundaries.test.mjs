@@ -74,7 +74,7 @@ test('Bridge and Server packaging use explicit production-only inputs', () => {
   assert.ok(bridgeUpload > -1);
   assert.ok(bridgeUpload < install.indexOf('aws cloudformation create-stack'));
   assert.ok(bridgeUpload < install.indexOf('aws cloudformation update-stack'));
-  assert.match(install, /direct_rpc_ws\.py/);
+  assert.match(install, /zip -qr "\$WS_ZIP" server\/core\/\*\.mjs server\/aws\/\*\.mjs bridge\/transfer-store\.mjs/);
   assert.match(install, /"\$ROOT_DIR\/bridge\/preview-protocol\.mjs"/);
   assert.match(install, /"\$ROOT_DIR\/bridge\/direct-rpc-protocol\.mjs"/);
   const resources = JSON.parse(read('server/template/Baton.template')).Resources;
@@ -85,11 +85,11 @@ test('Bridge and Server packaging use explicit production-only inputs', () => {
     assert.deepEqual(resources[name].Properties.Target, { 'Fn::Sub': 'integrations/${TerminalDirectIntegration}' });
   }
 
-  const dockerfile = read('server/src/Dockerfile');
+  const dockerfile = read('server/aws/Dockerfile');
   assert.doesNotMatch(dockerfile, /^\s*COPY\s+\.\s/m);
   assert.match(dockerfile, /^COPY web\/ web\/$/m);
   assert.doesNotMatch(dockerfile, /^COPY project\//m); // the WebSocket relays for files, Git and rename are gone
-  assert.match(dockerfile, /^COPY direct_rpc_ws\.py \.\/$/m);
+  assert.match(dockerfile, /^COPY server\/core\/ server\/core\/$/m);
   assert.match(dockerfile, /^COPY --from=web-builder \/build\/dist web\/$/m);
 });
 
@@ -108,7 +108,7 @@ test('current production source sets contain no test files', () => {
     .filter((name) => name.endsWith('.mjs') || ['package.json', 'package-lock.json'].includes(name));
   assert.equal(bridgePackage.some((name) => isTestFile(path.join(ROOT, 'bridge', name))), false);
 
-  for (const sourceRoot of ['server/src', 'web', 'dist']) {
+  for (const sourceRoot of ['server/core', 'server/aws', 'web', 'dist']) {
     const absolute = path.join(ROOT, sourceRoot);
     if (!fs.existsSync(absolute)) continue;
     const packagedTests = repositoryFiles(absolute)
