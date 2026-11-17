@@ -186,8 +186,8 @@ These override the sections above where they differ.
    `getWebSockets()` as OPEN for ~8–9 min and its `webSocketClose` arrives ~9 min late: the sweep marks
    `closing` in the attachment before `close(4000)`, routing skips `closing` sockets, every send is in try/catch,
    `peer_left` is de-duplicated. Because a room of ping-only sockets never wakes the object, an alarm runs **only
-   while App sockets are attached** (every 120 s, cancelled when the last App leaves) — a few alarms per active
-   hour instead of one per minute per account.
+   while App sockets are attached** (every 60 s, cancelled when the last App leaves): a dead App is found within
+   75–135 s (AWS: lease 150 s), at ≈ 1,800 alarms per month for an App open an hour a day (≈ $0.0003).
 4. **Auth (§3)**: browsers and Node cannot read an upgrade's 401/403, so a revoked token would look like a network
    error and retry forever. The object accepts the upgrade and closes with **4401** (bad/revoked token) or **4403**
    (wrong role/device); clients stop retrying on those codes. Malformed tokens are still rejected by the Worker.
@@ -203,12 +203,17 @@ These override the sections above where they differ.
    characters) > 4,096. Drop the duplicate `title` from the sealed part and cap fields by JSON-escaped UTF-8 bytes
    (`projectHash` ≤ 400, `projectName` ≤ 240, `sessionTitle` ≤ 360, `body` ≤ 900) → worst case 3,801 B. Both relays
    reject requests > 4 KB of payload; the Lambda relay's 1,024 B request limit rises to 8 KB.
-8. **CPU (Free plan)**: warm handlers p50 0.3–0.7 ms, p99 ≤ 2.2 ms; keep p99 < 5 ms, page REST lists, no heavy
-   libraries.
+8. **CPU (Free plan: 10 ms CPU per request; Paid: 30 s, 30M CPU-ms/month included)**: warm handlers p50
+   0.3–0.7 ms, p99 ≤ 2.2 ms; keep p99 < 5 ms and avoid heavy libraries.
 9. **R2 credentials (§5, §12-2 closed)**: issuance p50 424 ms / p95 738 ms, 50 parallel fine, limit 1,200 calls per
    5 min per token (shared with other API calls), usable immediately, no expiry in the response. Policy: 1 h per
    account, prefix **with trailing slash** `t/<accountId>/`, expiry computed by us (−30 s), refreshed early, one
    refresh in flight per account, keep the old one on 429/5xx, clients retry once with fresh credentials on 403.
    Presigned URLs die with their credentials; revocation is only possible for all credentials at once.
-10. **APNs from a Worker (§6)**: real pushes to the user's iPhone returned 200 (Worker fetch ~75 ms from IAD).
-    Module-level JWT caching may not hit across requests; assume signing per request (cheap ES256).
+10. **APNs from a Worker (§6)**: real pushes to the user's iPhone returned 200 and arrived (Worker fetch ~75 ms
+    from IAD). APNs rejects provider tokens refreshed more often than every 20 minutes (`TooManyProviderTokenUpdates`),
+    so the relay must not sign per request: one `ApnsToken` Durable Object holds the current JWT (re-signed every
+    ~40 min) and each isolate caches it in memory. The APNs key is a Worker secret of the relay only (encrypted by
+    Cloudflare, readable by that Worker's code, never shown again), as the Lambda reads it from an SSM SecureString.
+11. **CPU**: server-side lists are already small and bounded (devices, push devices, feed `Limit=100`); Session,
+    project and history lists come from the Bridge over the socket, not from the server.
