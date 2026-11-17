@@ -21,6 +21,7 @@ const MAX_REPLIES = 256;
 const PING_MS = 5 * 60_000;
 const RELAY_PING_MS = 25_000;
 const PONG_TIMEOUT_MS = 10_000;
+const RELAY_SILENT_MS = 75_000; // the account object's sweep (server/cloudflare/account.mjs)
 const LEASE_MS = 150_000;
 const RENEW_MS = 5 * 60_000;
 const MAX_BUFFERED = 1024 * 1024;
@@ -156,7 +157,7 @@ export class DirectRpcBridge {
   // Control-socket replies for this channel; returns true when consumed.
   handleControl(message) {
     if (message?.action === 'peer_left') { this.dropPeer(message.id); return true; }
-    if (message?.action === 'realtime_pong' && this.relay) { clearTimeout(this.pongTimer); return true; }
+    if (message?.action === 'realtime_pong' && this.relay) { clearTimeout(this.pongTimer); this.lastPong = Date.now(); return true; }
     if (message?.action !== 'direct_rpc') return false;
     if (message.type === 'credentials') {
       if (message.transport === 'relay' && !this.relay) this.useRelay(message.maxFrameBytes);
@@ -174,6 +175,7 @@ export class DirectRpcBridge {
     if (this.relay) {
       if (message.type !== 'joined') return this.retry(), true;
       this.joined = true;
+      this.lastPong = Date.now();
       this.pending = false;
       // peer_left may have been missed while away; live Apps subscribe again on the new keys.
       this.subscribers.sessions.clear();
@@ -313,11 +315,12 @@ export class DirectRpcBridge {
     if (socket.readyState !== WebSocket.OPEN) return;
     socket.send(JSON.stringify({ action: 'realtime_ping' }));
     clearTimeout(this.pongTimer);
-    // Relay: the pong may queue behind this socket's own output; one still writing to the network is alive.
+    // Relay: the pong may queue behind this socket's own output; one still writing is given until the server's
+    // own silence limit (75 s), when it would have been closed there anyway.
     const written = () => socket._socket?.bytesWritten ?? 0;
     let last = written();
     const check = () => {
-      if (!this.relay || written() === last) return socket.terminate();
+      if (!this.relay || written() === last || Date.now() - this.lastPong > RELAY_SILENT_MS) return socket.terminate();
       last = written();
       (this.pongTimer = setTimeout(check, PONG_TIMEOUT_MS)).unref?.();
     };
