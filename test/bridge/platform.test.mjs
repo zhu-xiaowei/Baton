@@ -37,6 +37,12 @@ test('child process PATH does not duplicate the current Node directory', () => {
   assert.equal(options.env.PATH, `${nodeDirectory}:/usr/bin:/bin`);
 });
 
+test('the private Node runtime stays off child process PATH', () => {
+  const options = executableOptions('/tmp/codex', { env: { PATH: '/usr/bin' } },
+    { platform: 'linux', nodeExecutable: '/home/u/.baton-bridge/node/v24.22.3/bin/node' });
+  assert.equal(options.env.PATH, '/usr/bin');
+});
+
 function dependencyFixture(failing = false) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'baton-dependencies-'));
   const dependency = path.join(root, 'fixture-dependency');

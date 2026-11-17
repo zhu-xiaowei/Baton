@@ -1,6 +1,9 @@
 // Bridge install scripts (/api/install, /auth/install, /install) and the device-name check they call.
 import { isPrintable, length } from './util.mjs';
 
+// Node.js release the installers download into ~/.baton-bridge/node/<version>/ and pin the service to.
+export const NODE_VERSION = 'v24.22.3';
+
 const powershellLiteral = (value) => `'${String(value || '').replace(/'/g, "''")}'`;
 const shellLiteral = (value) => `'${String(value || '').replace(/'/g, `'"'"'`)}'`;
 
@@ -30,6 +33,32 @@ export function checkDeviceName(items, name, mode, current = '') {
   }
   return [name, ''];
 }
+
+// Official build, checked against the release's SHASUMS256.txt; on any failure the user's Node.js is used.
+// The installer's PATH gets it (node/npm below); the service PATH keeps the user's Node for harnesses.
+const unixPrivateNode = `install_private_node() {
+  local os arch ext name base tmp sum
+  case "$(uname -s)" in Darwin) os=darwin ;; Linux) os=linux ;; *) return 1 ;; esac
+  case "$(uname -m)" in x86_64|amd64) arch=x64 ;; arm64|aarch64) arch=arm64 ;; *) return 1 ;; esac
+  [ -x "$DIR/node/${NODE_VERSION}/bin/node" ] && return 0
+  { [ $os = darwin ] || command -v xz >/dev/null; } && ext=tar.xz || ext=tar.gz
+  name="node-${NODE_VERSION}-$os-$arch.$ext"
+  base="\${BATON_NODE_MIRROR:-https://nodejs.org/dist}"
+  base="\${base%/}/${NODE_VERSION}"
+  echo "Installing Node.js ${NODE_VERSION} for Baton Bridge..."
+  mkdir -p "$DIR/node" && tmp=$(mktemp -d "$DIR/node/.tmp.XXXXXX") || return 1
+  curl -fsSL --retry 3 --connect-timeout 20 -o "$tmp/$name" "$base/$name" &&
+    curl -fsSL --retry 3 --connect-timeout 20 -o "$tmp/SHASUMS256.txt" "$base/SHASUMS256.txt" &&
+    sum=$( (sha256sum "$tmp/$name" 2>/dev/null || shasum -a 256 "$tmp/$name") | cut -d' ' -f1) &&
+    grep -qxF "$sum  $name" "$tmp/SHASUMS256.txt" &&
+    tar -xf "$tmp/$name" -C "$tmp" && "$tmp/\${name%.tar.*}/bin/node" --version >/dev/null &&
+    mv "$tmp/\${name%.tar.*}" "$DIR/node/${NODE_VERSION}"
+  local status=$?
+  rm -rf "$tmp"
+  [ $status -eq 0 ] || { echo "Warning: could not download and verify Node.js ${NODE_VERSION} from $base/$name; using the system Node.js." >&2; return 1; }
+  find "$DIR/node" -mindepth 1 -maxdepth 1 ! -name ${NODE_VERSION} -exec rm -rf {} + 2>/dev/null || true
+}
+install_private_node && export PATH="$DIR/node/${NODE_VERSION}/bin:$PATH"`;
 
 function unixDeviceNameBlock(server, apiKey, name) {
   return `# Preserve the original deviceName as the stable identity; only the display name changes.
@@ -125,9 +154,41 @@ function windowsInstallScript(url, server, apiKey, name) {
     "  }",
     "  if ($targetProfile) { $targetHome = $targetProfile.LocalPath }",
     "}",
+    // Same private runtime as on Unix: the first candidate below, with the user's Node.js as the fallback.
+    "function Install-BatonNode {",
+    "  $version = '" + NODE_VERSION + "'",
+    "  $arch = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64' -or $env:PROCESSOR_ARCHITEW6432 -eq 'ARM64') { 'arm64' } else { 'x64' }",
+    "  $name = \"node-$version-win-$arch\"",
+    "  $root = Join-Path $targetHome '.baton-bridge\\node'",
+    "  $exe = Join-Path $root \"$version\\node.exe\"",
+    "  if (Test-Path $exe) { return $exe }",
+    "  $base = $(if ($env:BATON_NODE_MIRROR) { $env:BATON_NODE_MIRROR.TrimEnd('/') } else { 'https://nodejs.org/dist' }) + \"/$version\"",
+    "  $tmp = Join-Path $root ('.tmp.' + [guid]::NewGuid().ToString('N'))",
+    "  try {",
+    "    Write-Host \"Installing Node.js $version for Baton Bridge...\"",
+    "    New-Item -ItemType Directory -Force -Path $tmp | Out-Null",
+    "    $ProgressPreference = 'SilentlyContinue'",
+    "    [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12",
+    "    foreach ($file in \"$name.zip\", 'SHASUMS256.txt') {",
+    "      foreach ($attempt in 1..3) {",
+    "        try { Invoke-WebRequest -UseBasicParsing -Uri \"$base/$file\" -OutFile (Join-Path $tmp $file); break } catch { if ($attempt -eq 3) { throw } Start-Sleep -Seconds 2 }",
+    "      }",
+    "    }",
+    "    $expected = ((Select-String -Path (Join-Path $tmp 'SHASUMS256.txt') -SimpleMatch \"  $name.zip\" | Select-Object -First 1).Line -split ' ')[0]",
+    "    if (-not $expected -or (Get-FileHash (Join-Path $tmp \"$name.zip\") -Algorithm SHA256).Hash -ne $expected) { throw 'SHA-256 checksum mismatch' }",
+    "    tar.exe -xf (Join-Path $tmp \"$name.zip\") -C $tmp",
+    "    if ($LASTEXITCODE -eq 0) { & (Join-Path $tmp \"$name\\node.exe\") --version | Out-Null }",
+    "    if ($LASTEXITCODE -ne 0) { throw 'the extracted node.exe did not run' }",
+    "    Move-Item (Join-Path $tmp $name) (Split-Path $exe)",
+    "    Get-ChildItem $root -Directory | Where-Object { $_.Name -ne $version } | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue",
+    "    return $exe",
+    "  } catch {",
+    "    Write-Host \"Warning: could not download and verify Node.js $version from $base ($($_.Exception.Message)); using the system Node.js.\" -ForegroundColor Yellow",
+    "  } finally { Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue }",
+    "}",
     "$node = Get-Command node.exe -ErrorAction SilentlyContinue",
     "if (-not $node) { $node = Get-Command node -ErrorAction SilentlyContinue }",
-    "$nodeCandidates = @($node.Source)",
+    "$nodeCandidates = @((Install-BatonNode), $node.Source)",
     "if ($task) {",
     "  $nodeCandidates += $task.Actions | ForEach-Object { $_.Execute } | Where-Object { $_ -and ([IO.Path]::GetFileName($_) -ieq 'node.exe') }",
     "}",
@@ -263,7 +324,8 @@ function windowsInstallScript(url, server, apiKey, name) {
     "  '@echo off',",
     "  ('set \"USERPROFILE=' + $targetHome + '\"'),",
     "  ('set \"HOME=' + $targetHome + '\"'),",
-    "  ('set \"PATH=' + (Split-Path $nodePath) + ';%PATH%\"'),",
+    // The user's Node.js, not the private one, for the harnesses the Bridge starts.
+    "  $(if ($node) { 'set \"PATH=' + (Split-Path $node.Source) + ';%PATH%\"' }),",
     "  ('\"' + $nodePath + '\" \"' + $bridge + '\" >> \"' + $logPath + '\" 2>&1')",
     ")",
     "[System.IO.File]::WriteAllLines($wrapper, $wrapperLines, [System.Text.Encoding]::ASCII)",
@@ -348,6 +410,10 @@ export async function installScript({ headers }, apiKey, name, platform, presign
     '#!/bin/bash\n' +
     'set -e\n' +
     '\n' +
+    'DIR="$HOME/.baton-bridge"\n' +
+    'USER_NODE=$(command -v node || true)\n' +
+    'USER_NODE_DIR=${USER_NODE:+$(dirname "$USER_NODE")}\n' +
+    unixPrivateNode + '\n' +
     '# Require Node.js >= 22.15\n' +
     'if ! command -v node &>/dev/null; then\n' +
     '  echo "\\033[0;31mError: Node.js is not installed.\\033[0m" >&2\n' +
@@ -361,9 +427,8 @@ export async function installScript({ headers }, apiKey, name, platform, presign
     '  exit 1\n' +
     'fi\n' +
     '\n' +
-    'DIR="$HOME/.baton-bridge"\n' +
     nameBlock + '\n' +
-    'NODE=$(which node)\n' +
+    'NODE=$(command -v node)\n' +
     'NODE_DIR=$(dirname "$NODE")\n' +
     'mkdir -p "$DIR" && cd "$DIR"\n' +
     'curl -sL "' + url + '" | tar xz 2>/dev/null\n' +
@@ -415,7 +480,7 @@ export async function installScript({ headers }, apiKey, name, platform, presign
     '  </array>\n' +
     '  <key>EnvironmentVariables</key>\n' +
     '  <dict>\n' +
-    '    <key>PATH</key><string>$NODE_DIR:/opt/homebrew/bin:/usr/local/bin:/opt/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>\n' +
+    '    <key>PATH</key><string>${USER_NODE_DIR:+$USER_NODE_DIR:}/opt/homebrew/bin:/usr/local/bin:/opt/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>\n' +
     '  </dict>\n' +
     '  <key>RunAtLoad</key><true/>\n' +
     '  <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>\n' +
@@ -445,6 +510,7 @@ export async function installScript({ headers }, apiKey, name, platform, presign
     'After=network.target\n' +
     '[Service]\n' +
     'ExecStart=$NODE $DIR/bridge.mjs\n' +
+    '${USER_NODE_DIR:+Environment=PATH=$USER_NODE_DIR:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin}\n' +
     'Restart=on-failure\n' +
     'RestartSec=5\n' +
     'KillMode=process\n' +

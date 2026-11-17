@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { NODE_VERSION } from '../../server/core/install.mjs';
 import { KEY, WEB, api, devices, headers, skip } from './client.mjs';
 
 const keyed = skip || (!KEY && 'BATON_KEY is unset');
@@ -19,7 +20,10 @@ test('web files: HTML revalidates, hashed chunks are immutable (#191)', { skip }
 test('install scripts embed the caller\'s credential; the public one has none', { skip: keyed }, async () => {
   const unix = await api('/api/install', undefined, { token: KEY });
   assert.ok(unix.startsWith('#!/bin/bash') && unix.includes(`BATON_API_KEY='${KEY}'`) && unix.includes(`VALIDATION_KEY='${KEY}'`));
-  assert.ok((await api('/api/install?platform=windows', undefined, { token: KEY })).includes(`apiKey = '${KEY}'`));
+  const windows = await api('/api/install?platform=windows', undefined, { token: KEY });
+  assert.ok(windows.includes(`apiKey = '${KEY}'`));
+  // Both download the pinned Node.js and check it against the release's checksums.
+  for (const script of [unix, windows]) assert.ok(script.includes(NODE_VERSION) && script.includes('SHASUMS256.txt'));
   // OPEN_REGISTRATION=true: the computer joins by QR code instead.
   const open = await api('/install');
   assert.ok(open.includes('bridge.mjs" pair') && open.includes("BATON_API_KEY=''") && !open.includes(KEY));
