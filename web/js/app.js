@@ -29,7 +29,7 @@ import { setNativeTabTitle } from './macos-tabs.js';
 import { openProjectTerminal } from './terminal.js';
 import { openSessionRename } from './components/session-rename.js';
 import { showCenteredModal, hideCenteredModal } from './components/modal-viewport.js';
-import { saveHomeTerminalView, savedHomeTerminal, saveTerminalView, shouldRestoreTerminal } from './terminal-view-state.js';
+import { savedTerminalFolder, saveTerminalView } from './terminal-view-state.js';
 import { homeProject } from './project/home.js';
 import { showToast } from './components/toast.js';
 import { removeDevice } from './v2/pairing.js';
@@ -641,7 +641,7 @@ function openHomeFilesPage(button) {
 function openHomeTerminal(device, projectHash) {
   const opening = openProjectTerminal({ device, projectHash, projectName: '~' });
   saveNav();
-  saveHomeTerminalView(device, projectHash);
+  saveTerminalView(state.appState, undefined, { hash: projectHash, name: '~' });
   return opening;
 }
 
@@ -1506,9 +1506,7 @@ function renderProjects(device, data) {
 }
 
 async function loadProjects(device) {
-  window.deactivateProjectTerminal?.();
-  window.deactivateProjectFiles?.();
-  window.deactivateGitStatus?.();
+  var keptTools = closeProjectTools(device, null);
   resetSessionThreads();
   rememberActiveListScroll();
   document.body.classList.add('browse-view');
@@ -1524,6 +1522,7 @@ async function loadProjects(device) {
   showInputBar(false);
   updateBreadcrumb();
   saveNav();
+  if (keptTools) saveKeptToolViews();
   return loadPagedList(options, myNav);
 }
 
@@ -1624,9 +1623,13 @@ function renderSessions(device, projectHash, data) {
   showStats(data.sessions.length + ' session(s)');
 }
 
-// A docked tool stays open on another page of its device + project; the rest close.
+// A docked tool stays open on another page of its device until closed by hand;
+// Git shows the page's project, so it closes when the project changes.
 function closeProjectTools(device, projectHash) {
-  if (window.sideDockKeeps?.(device, projectHash)) return true;
+  if (window.sideDockKeeps?.(device)) {
+    if ((projectHash || null) !== (state.appState.project?.hash || null)) window.deactivateGitStatus?.();
+    return true;
+  }
   window.deactivateProjectTerminal?.();
   window.deactivateProjectFiles?.();
   window.deactivateGitStatus?.();
@@ -1642,7 +1645,9 @@ function saveKeptToolViews() {
       if (diff) saveGitDiffView(state.appState, diff);
     } catch (error) {}
   }
-  if (document.getElementById('projectTerminalPage')) saveTerminalView(state.appState);
+  window.keepProjectFiles?.();
+  var terminal = window.projectTerminalFolder?.();
+  if (terminal) saveTerminalView(state.appState, undefined, terminal);
 }
 
 async function loadSessions(device, projectHash, projectName) {
@@ -2417,9 +2422,8 @@ attachLongPress(document.getElementById('content'), 'device', openDeviceDeleteMo
   if (!state.appState.session && shouldRestoreGitStatus(state.appState)) {
     openGitStatusPage({ restoring: true });
   }
-  var homeTerminalHash = savedHomeTerminal(state.appState);
-  if (homeTerminalHash) openHomeTerminal(state.appState.device, homeTerminalHash);
-  else if (shouldRestoreTerminal(state.appState)) openProjectTerminalPage();
+  var terminalFolder = savedTerminalFolder(state.appState);
+  if (terminalFolder) openProjectTerminal({ device: state.appState.device, projectHash: terminalFolder.hash, projectName: terminalFolder.name });
 })();
 
 // In a native shell (WKWebView/WebView2/ArkWeb) target=_blank can't open a tab,

@@ -75,14 +75,27 @@ export function createBreadcrumb(container, options) {
       container.innerHTML = backButtonHtml({ className: 'path-breadcrumb-back' })
         + '<div class="path-breadcrumb-scroll">'
         + (items || []).map(function (item, index) {
-          return (index ? '<span class="path-breadcrumb-separator">/</span>' : '')
+          return (index && !items[index - 1].root ? '<span class="path-breadcrumb-separator">/</span>' : '')
             + '<button class="path-breadcrumb-item" type="button" data-value="'
             + escapeHtml(item.value || '') + '">' + escapeHtml(item.label) + '</button>';
         }).join('')
         + '</div>';
       var scroll = container.querySelector('.path-breadcrumb-scroll');
+      var anchor = (items || []).findIndex(function (item) { return item.anchor; });
       requestAnimationFrame(function () {
-        if (scroll) scroll.scrollLeft = scroll.scrollWidth;
+        if (!scroll) return;
+        // Ancestors of the anchor stay reachable by scrolling left; a spacer lets the anchor start the row.
+        var item = anchor > 0 && scroll.querySelectorAll('.path-breadcrumb-item')[anchor];
+        if (item) {
+          var gap = item.getBoundingClientRect().left - scroll.getBoundingClientRect().left
+            - (scroll.scrollWidth - scroll.clientWidth);
+          if (gap > 0) {
+            var spacer = document.createElement('span');
+            spacer.style.cssText = 'display:inline-block;width:' + gap + 'px';
+            scroll.appendChild(spacer);
+          }
+        }
+        scroll.scrollLeft = scroll.scrollWidth;
       });
     },
     setLoading: function (loading) {

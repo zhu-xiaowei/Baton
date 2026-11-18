@@ -463,14 +463,13 @@ function bindDocumentLinks(container, dir, rootPromise) {
 
 // A document link to a folder opens the project file browser there, like GitHub's tree view.
 function openProjectDirectory(path, projectHash) {
-  var project = window.projectFilesProject?.();
-  if (!project || !window.openProjectFilesPath || projectHash !== project.hash) return false;
+  if (!window.openProjectFolder) return false;
   var relative = /^(?:\/|[a-z]:[\\/])/i.test(path)
-    ? relativeProjectImagePath(path.replace(/\/?$/, '/'), project.hash)
+    ? relativeProjectImagePath(path.replace(/\/?$/, '/'), projectHash)
     : path;
   if (relative == null) return false;
-  closeFileViewer();
-  window.openProjectFilesPath(relative);
+  if (!window.openProjectFolder(projectHash, relative)) return false;
+  closeFileViewer({ refresh: false });
   return true;
 }
 

@@ -1,55 +1,33 @@
 export const TERMINAL_VIEW_KEY = 'baton-terminal-view';
 
+const pageOf = appState => [appState.device, appState.project?.hash || null, appState.session || null];
+
 export function clearTerminalView(storage) {
   try {
     (storage || globalThis.sessionStorage).removeItem(TERMINAL_VIEW_KEY);
   } catch {}
 }
 
-export function saveTerminalView(appState, storage) {
-  if (!appState?.device || !appState.project?.hash || appState.session === '__new__') {
+// `folder` is where the terminal opened; `page` is the page it is shown over.
+export function saveTerminalView(appState, storage, folder = appState?.project) {
+  if (!appState?.device || !folder?.hash || appState.session === '__new__') {
     clearTerminalView(storage);
     return;
   }
   try {
     (storage || globalThis.sessionStorage).setItem(TERMINAL_VIEW_KEY, JSON.stringify({
-      device: appState.device,
-      projectHash: appState.project.hash,
-      session: appState.session || null,
+      page: pageOf(appState), projectHash: folder.hash, projectName: folder.name || '',
     }));
   } catch {}
 }
 
-export function saveHomeTerminalView(device, projectHash, storage) {
-  try {
-    (storage || globalThis.sessionStorage).setItem(TERMINAL_VIEW_KEY, JSON.stringify({
-      device, projectHash, session: null, home: true,
-    }));
-  } catch {}
-}
-
-export function savedHomeTerminal(appState, storage) {
+// The terminal folder to reopen over this page after a refresh, or null.
+export function savedTerminalFolder(appState, storage) {
   let saved = null;
   try {
     saved = JSON.parse((storage || globalThis.sessionStorage).getItem(TERMINAL_VIEW_KEY) || 'null');
   } catch {}
-  return saved?.home && appState?.device && !appState.project && saved.device === appState.device
-    ? saved.projectHash : null;
-}
-
-export function shouldRestoreTerminal(appState, storage) {
-  let saved;
-  try {
-    saved = JSON.parse((storage || globalThis.sessionStorage).getItem(TERMINAL_VIEW_KEY) || 'null');
-  } catch {
-    clearTerminalView(storage);
-    return false;
-  }
-  const matches = !!saved && !saved.home && !!appState?.device && !!appState.project?.hash
-    && saved.device === appState.device
-    && saved.projectHash === appState.project.hash
-    && saved.session === (appState.session || null)
-    && appState.session !== '__new__';
+  const matches = !!saved?.projectHash && JSON.stringify(saved.page) === JSON.stringify(pageOf(appState || {}));
   if (saved && !matches) clearTerminalView(storage);
-  return matches;
+  return matches ? { hash: saved.projectHash, name: saved.projectName } : null;
 }

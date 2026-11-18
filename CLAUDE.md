@@ -709,9 +709,14 @@ Replaced the old tmux send-keys approach (deleted in Phase 2E). Full design: `do
 
 - On `(min-width: 768px) and (hover: hover) and (pointer: fine)` inside a device (project list, Session list,
   Session; not New Session), Terminal / Files / Git / internal browser / file viewer dock to the right instead of
-  covering the page; a docked tool stays open across pages of the same device + project (`web/js/side-panel.js`, CSS only
+  covering the page; a docked Terminal / Files stays open across every page of the same device until closed by hand
+  and keeps the folder it opened in (also across a refresh), while Git closes when the project changes because it
+  shows the page's project (`web/js/side-panel.js`, CSS only
   re-positions the existing full-screen pages; narrow and touch layouts are unchanged). Default width 40% clamped
   400–720px (panel ≥ 320, chat ≥ 380), drag handle persists a ratio, header toggle maximizes to full screen.
+- Files can leave the project: Bridge `list` resolves relative paths against the project folder and absolute paths
+  as-is and returns `root`; inside the root the browser keeps relative paths, outside it absolute ones. The
+  breadcrumb shows the full path from `/`, scrolled so the project item starts the row.
 - One tool at a time: a newly shown tool closes the others; the file viewer stacks over the tool that opened it,
   except the browser (its native view would cover it). The matching top-bar button is highlighted via
   `body[data-side-panel]`, and clicking it again closes the tool.

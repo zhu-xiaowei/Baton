@@ -81,25 +81,6 @@ function inside(root, target) {
   return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
 }
 
-function normalizedRelativePath(value) {
-  return String(value || '')
-    .replaceAll('\\', '/')
-    .replace(/^\/+|\/+$/g, '');
-}
-
-function resolveDirectory(root, relativePath) {
-  if (path.isAbsolute(relativePath || '')) {
-    throw new Error('absolute paths are not allowed');
-  }
-  const resolvedRoot = fs.realpathSync(root);
-  const target = path.resolve(resolvedRoot, relativePath || '.');
-  if (!inside(resolvedRoot, target)) throw new Error('path is outside the project');
-  const realTarget = fs.realpathSync(target);
-  if (!inside(resolvedRoot, realTarget)) throw new Error('path is outside the project');
-  if (!fs.statSync(realTarget).isDirectory()) throw new Error('not a directory');
-  return realTarget;
-}
-
 function resolveReadablePath(root, requestedPath) {
   if (!requestedPath) throw new Error('path is required');
   if (path.isAbsolute(requestedPath)) return path.resolve(requestedPath);
@@ -147,8 +128,9 @@ function pageEntries(entries, cursor, envelope) {
   };
 }
 
-export async function listProjectDirectory(root, relativePath = '', cursor = '', envelope = {}, directoriesOnly = false) {
-  const directory = resolveDirectory(root, relativePath);
+export async function listProjectDirectory(directory, cursor = '', envelope = {}, directoriesOnly = false) {
+  directory = await fs.promises.realpath(directory);
+  if (!(await fs.promises.stat(directory)).isDirectory()) throw new Error('not a directory');
   const entries = (await fs.promises.readdir(directory, { withFileTypes: true }))
     .map((entry) => ({
       name: entry.name,
@@ -177,7 +159,7 @@ async function browseDirectories(message, options) {
     parentPath: path.dirname(targetPath),
     exists,
   });
-  const result = await listProjectDirectory(directory, '', message.cursor, envelope, true);
+  const result = await listProjectDirectory(directory, message.cursor, envelope, true);
   options.send({
     ...envelope,
     entries: result.entries,
@@ -335,14 +317,11 @@ export async function handleProjectFilesMessage(message, options = {}) {
       await prepareFileDownload(message, { ...options, send, projectRoot });
       return;
     }
+    // Relative paths start at the project folder; absolute paths may leave it.
     if (operation === 'list') {
-      const envelope = responseBase(message, { ok: true });
-      const result = await listProjectDirectory(
-        projectRoot,
-        normalizedRelativePath(message.path),
-        message.cursor,
-        envelope,
-      );
+      const root = await fs.promises.realpath(projectRoot);
+      const envelope = responseBase(message, { ok: true, root, path: path.resolve(root, message.path || '.') });
+      const result = await listProjectDirectory(envelope.path, message.cursor, envelope);
       send({
         ...envelope,
         entries: result.entries,

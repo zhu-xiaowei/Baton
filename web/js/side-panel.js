@@ -26,7 +26,7 @@ const RESTORE_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 14
 let visible = new Set();
 let maximized = false;
 let active = false;
-// Device + project of the page the docked tool was opened on.
+// Device of the page the docked tool was opened on.
 let owner = null;
 const handle = document.createElement('div');
 handle.className = 'side-dock-handle';
@@ -84,7 +84,7 @@ function sync() {
     // but not on the browser, whose native view would cover it.
     const opened = [...now].filter(el => !visible.has(el) && (el.id !== 'fileOverlay' || now.has(browser)));
     if (opened.length || !active) {
-      owner = { device: state.appState.device, project: state.appState.project?.hash || null };
+      owner = { device: state.appState.device };
     }
     if (opened.length) {
       for (const el of now) {
@@ -181,9 +181,8 @@ function keyInPanel(event) {
   if (event.target === document.body) return visible.has(lastPanel);
   return [...visible].some(el => el.contains(event.target));
 }
-// Navigation within the page's device + project keeps the docked tool open.
-window.sideDockKeeps = (device, projectHash) => active
-  && owner.device === device && owner.project === (projectHash || null);
+// Navigation within the device keeps the docked tool open.
+window.sideDockKeeps = device => active && owner.device === device;
 window.sideDockOutside = event => active && !keyInPanel(event);
 window.sideDockInside = event => active && keyInPanel(event);
 window.syncSidePanel = sync;

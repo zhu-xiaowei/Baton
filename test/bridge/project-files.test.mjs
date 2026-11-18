@@ -273,15 +273,17 @@ test('project file listing returns folders before files', async () => {
   }
 });
 
-test('project file listing rejects paths outside the project', async () => {
+test('project file listing can leave the project folder', async () => {
   const { root } = fixture();
   try {
     const [response] = await request(root, {
       operation: 'list',
       path: '..',
     });
-    assert.equal(response.ok, false);
-    assert.match(response.error, /outside the project/);
+    assert.equal(response.ok, true);
+    assert.equal(response.root, fs.realpathSync(root));
+    assert.equal(response.path, path.dirname(fs.realpathSync(root)));
+    assert.ok(response.entries.some(entry => entry.name === path.basename(root)));
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
