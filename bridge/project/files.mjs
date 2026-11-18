@@ -81,12 +81,6 @@ function inside(root, target) {
   return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
 }
 
-function normalizedRelativePath(value) {
-  return String(value || '')
-    .replaceAll('\\', '/')
-    .replace(/^\/+|\/+$/g, '');
-}
-
 function resolveDirectory(root, relativePath) {
   if (path.isAbsolute(relativePath || '')) {
     throw new Error('absolute paths are not allowed');
@@ -335,14 +329,11 @@ export async function handleProjectFilesMessage(message, options = {}) {
       await prepareFileDownload(message, { ...options, send, projectRoot });
       return;
     }
+    // Relative paths start at the project folder; absolute paths may leave it.
     if (operation === 'list') {
-      const envelope = responseBase(message, { ok: true });
-      const result = await listProjectDirectory(
-        projectRoot,
-        normalizedRelativePath(message.path),
-        message.cursor,
-        envelope,
-      );
+      const root = await fs.promises.realpath(projectRoot);
+      const envelope = responseBase(message, { ok: true, root, path: path.resolve(root, message.path || '.') });
+      const result = await listProjectDirectory(envelope.path, '', message.cursor, envelope);
       send({
         ...envelope,
         entries: result.entries,

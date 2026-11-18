@@ -187,7 +187,7 @@ export function openProjectTerminal({ device, projectHash, projectName }) {
   const selectionKey = `terminal-selection:${JSON.stringify([localStorage.getItem('_as'), device, projectHash])}`;
   let selection;
   try { selection = sessionStorage.getItem(selectionKey); } catch {}
-  const current = view = { page, device, projectHash, selectionKey, returnFocus, credentials: credentials(), listeners: [],
+  const current = view = { page, device, projectHash, projectName, selectionKey, returnFocus, credentials: credentials(), listeners: [],
     ready: false, exited: false, generation: 0, queuedBytes: 0, ackBytes: 0, lastAck: 0,
     sessions: [], limit: 5, sessionId: selection, busy: null,
     projectLabel, status: page.querySelector('.project-terminal-status'),
@@ -841,4 +841,5 @@ function initializeProjectTerminal(current, { Terminal, FitAddon, RemoteTerminal
 }
 
 Object.assign(window, { closeProjectTerminal: options => closeProjectTerminal({ keepAlive: true, ...options }),
-  deactivateProjectTerminal: closeProjectTerminal });
+  deactivateProjectTerminal: closeProjectTerminal,
+  projectTerminalFolder: () => view && { hash: view.projectHash, name: view.projectName } });

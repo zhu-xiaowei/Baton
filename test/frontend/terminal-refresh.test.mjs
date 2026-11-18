@@ -3,7 +3,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { JSDOM } from 'jsdom';
 import { createTestServer } from './helpers/vite.mjs';
-import { TERMINAL_VIEW_KEY, saveTerminalView, shouldRestoreTerminal } from '../../web/js/terminal-view-state.js';
+import { TERMINAL_VIEW_KEY, saveTerminalView, savedTerminalFolder } from '../../web/js/terminal-view-state.js';
 
 const ROOT = path.resolve(import.meta.dirname, '../..');
 
@@ -81,12 +81,12 @@ for (const session of [null, 'codex:root']) {
       await browser.window.openProjectTerminalPage();
       assert.ok(browser.window.document.getElementById('projectTerminalPage'));
       assert.equal(browser.window.document.querySelector('.project-terminal-status').dataset.state, 'error');
-      assert.equal(shouldRestoreTerminal(route, browser.window.sessionStorage), true);
+      assert.deepEqual(savedTerminalFolder(route, browser.window.sessionStorage), { hash: 'project', name: 'Project' });
       assert.deepEqual(JSON.parse(browser.window.sessionStorage.getItem('baton-nav')), route);
 
       browser.window.dispatchEvent(new browser.window.Event('pagehide'));
       assert.equal(browser.window.document.getElementById('projectTerminalPage'), null);
-      assert.equal(shouldRestoreTerminal(route, browser.window.sessionStorage), true);
+      assert.deepEqual(savedTerminalFolder(route, browser.window.sessionStorage), { hash: 'project', name: 'Project' });
       const beforeRefresh = browser.snapshot();
       await browser.close();
       browser = await boot(beforeRefresh);
@@ -144,12 +144,12 @@ test('terminal restoration ignores stale routes and malformed or unavailable sto
     { device: null, project: null, session: null },
   ]) {
     saveTerminalView(route, storage);
-    assert.equal(shouldRestoreTerminal(changed, storage), false);
+    assert.equal(savedTerminalFolder(changed, storage), null);
     assert.equal(storage.getItem(TERMINAL_VIEW_KEY), null);
   }
   storage.setItem(TERMINAL_VIEW_KEY, '{broken');
-  assert.equal(shouldRestoreTerminal(route, storage), false);
+  assert.equal(savedTerminalFolder(route, storage), null);
   const blocked = { getItem() { throw new Error('blocked'); }, setItem() { throw new Error('blocked'); }, removeItem() { throw new Error('blocked'); } };
   assert.doesNotThrow(() => saveTerminalView(route, blocked));
-  assert.equal(shouldRestoreTerminal(route, blocked), false);
+  assert.equal(savedTerminalFolder(route, blocked), null);
 });

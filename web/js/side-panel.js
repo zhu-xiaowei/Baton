@@ -181,9 +181,9 @@ function keyInPanel(event) {
   if (event.target === document.body) return visible.has(lastPanel);
   return [...visible].some(el => el.contains(event.target));
 }
-// Navigation within the page's device + project keeps the docked tool open.
-window.sideDockKeeps = (device, projectHash) => active
-  && owner.device === device && owner.project === (projectHash || null);
+// Navigation within the device keeps the docked tool open; with a project, only within that project.
+window.sideDockKeeps = (device, projectHash) => active && owner.device === device
+  && (projectHash === undefined || owner.project === (projectHash || null));
 window.sideDockOutside = event => active && !keyInPanel(event);
 window.sideDockInside = event => active && keyInPanel(event);
 window.syncSidePanel = sync;
