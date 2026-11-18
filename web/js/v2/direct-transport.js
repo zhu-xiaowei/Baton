@@ -358,6 +358,8 @@ export function connect() {
     socket = null;
     connectionId = '';
     clearInterval(pingTimer);
+    // bridges_changed pushes are missed while closed, so the next request fetches /devices again.
+    routesKnown = false;
     // The relay refused the key (4401: revoked or wrong) or its role (4403): retrying cannot help.
     if (event?.code === 4401 || event?.code === 4403) {
       refused = true;
@@ -370,8 +372,6 @@ export function connect() {
       showLimit(limited, reconnect);
       return;
     }
-    // bridges_changed pushes are missed while closed, so the next request fetches /devices again.
-    routesKnown = false;
     // A hidden page reconnects only for a request in flight; showing it reconnects. Past the
     // quick retries, keep trying only while a visible page still needs the socket.
     const visible = document.visibilityState === 'visible';

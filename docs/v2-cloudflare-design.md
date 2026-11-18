@@ -65,7 +65,7 @@ request) and requests; idle hibernated sockets and auto-answered pings cost noth
   again. A 6th distinct Bridge is closed with 4429 `too_many_bridges` and retries every 10 minutes; the same device
   still replaces its old socket. `monthly_limit` uses the same code (no App reconnect until restart).
 - **Rate limit**: `deploy.mjs --rate-limit` adds the zone's one rate-limiting rule (Free plan) for the API host:
-  over 200 requests per 10 s from one IP → 429 `{"error":"rate_limited"}` for 10 s. Only WebSocket upgrades count.
+  over 200 requests per 10 s from one IP → 429 `{"error":"rate_limited"}` for 10 s. A WebSocket counts once (its upgrade), not per frame.
 - **Code updates**: hibernated connections survive deploys; requests may reach the old version for ~20 s after a
   deploy (measured), so the protocol stays backward compatible within a release.
 
