@@ -20,6 +20,7 @@ import {
 } from './codex-plan.mjs';
 import { storageSessionId } from './session-identity.mjs';
 import { StreamFramer } from './stream-framer.mjs';
+import { readCodexModel } from './session-model.mjs';
 import { compactToolFields } from './tool-preview.mjs';
 
 const CODEX_GOAL_RESUME_APPROVAL_TYPE = 'codex-goal-resume';
@@ -959,6 +960,16 @@ export class CodexInteraction {
     return session.skills;
   }
 
+  modelStatus(nativeSessionId) {
+    const session = this.sessions.get(nativeSessionId);
+    if (session?.client && session.model) {
+      return { model: session.model, reasoningEffort: session.effort, source: 'live' };
+    }
+    return readCodexModel(nativeSessionId) || (session?.model
+      ? { model: session.model, reasoningEffort: session.effort, source: 'last-known' }
+      : null);
+  }
+
   async listSkills(options = {}) {
     const context = await this.listCommandContext(options);
     return context.skills;
@@ -1856,6 +1867,14 @@ export class CodexInteraction {
     if (method === 'thread/tokenUsage/updated') {
       if (!params?.threadId || params.threadId === session.nativeSessionId) {
         session.tokenUsage = cloneJson(params?.tokenUsage);
+      }
+      return;
+    }
+    if (method === 'thread/settings/updated') {
+      if (params?.threadId === session.nativeSessionId && params.threadSettings) {
+        session.model = params.threadSettings.model || session.model;
+        session.effort = params.threadSettings.effort
+          ?? params.threadSettings.collaborationMode?.settings?.reasoning_effort ?? null;
       }
       return;
     }
