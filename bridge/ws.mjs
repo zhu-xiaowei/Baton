@@ -98,6 +98,7 @@ const PING_INTERVAL = 20_000;
 const PING_TIMEOUT = 5_000;
 const RECONNECT_DELAY = 5_000;
 const RELAY_RETRY_JITTER = 5_000;
+const LIMIT_RETRY = 10 * 60_000; // after a 4429 (an account limit)
 const RELAY_RETRY_MAX = 60_000;
 const CONNECT_TIMEOUT = 5_000;
 
@@ -904,6 +905,11 @@ function connect() {
       resetConnection();
       return;
     }
+    if (code === 4429) {
+      console.log(`[ws] ${reason?.toString() === 'monthly_limit' ? "this account's monthly usage limit has been reached (it resets on the 1st)"
+        : 'at most 5 computers can be online at once for this account'}; retrying in 10 minutes`);
+      return scheduleReconnect(LIMIT_RETRY);
+    }
     console.log(`[ws] disconnected (code=${code}, reason=${reason?.toString() || ''}), reconnecting...`);
     scheduleReconnect();
   });
@@ -952,15 +958,15 @@ function resetConnection() {
   _directRpc = null;
 }
 
-function scheduleReconnect() {
+function scheduleReconnect(wait) {
   if (!_config) return;
   _relay ||= !!_directRpc?.relay;
   resetConnection();
   if (_reconnectTimer) return;
   _consecutiveFailures += 1;
   // Relay: many Bridges reconnect at once after a deploy, so every retry is jittered and backs off.
-  const delay = _relay ? Math.round(Math.random() * RELAY_RETRY_JITTER) + Math.min(RELAY_RETRY_MAX, _consecutiveFailures === 1 ? 0 : 1000 * 2 ** (_consecutiveFailures - 2))
-    : _consecutiveFailures === 1 ? 0 : RECONNECT_DELAY;
+  const delay = wait ?? (_relay ? Math.round(Math.random() * RELAY_RETRY_JITTER) + Math.min(RELAY_RETRY_MAX, _consecutiveFailures === 1 ? 0 : 1000 * 2 ** (_consecutiveFailures - 2))
+    : _consecutiveFailures === 1 ? 0 : RECONNECT_DELAY);
   console.log(`[ws] retry ${_consecutiveFailures} in ${delay}ms`);
   _reconnectTimer = setTimeout(() => {
     _reconnectTimer = null;

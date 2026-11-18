@@ -3,12 +3,13 @@
 import { DurableObject } from 'cloudflare:workers';
 import { validateAlert } from '../core/notifications.mjs';
 import { nowInt, randomHex } from '../core/util.mjs';
-import { MAX_FRAME_BYTES, refuse, server, toResponse } from './ports.mjs';
+import { MAX_FRAME_BYTES, bridgesFull, leastActive, limits, refuse, server, toResponse } from './ports.mjs';
 import { createCredentials, storageInfo } from './r2.mjs';
 import { createItems, createTable, serve } from './store.mjs';
 
 const SILENT_MS = 75_000; // three missed 25 s text pings
 const SWEEP_MS = 60_000;
+const ACTIVE_MS = 60_000; // an App's last activity is written at most this often
 const encoder = new TextEncoder();
 const send = (ws, data) => { try { ws.send(typeof data === 'string' ? data : JSON.stringify(data)); return true; } catch { return false; } };
 const PUB = /^[A-Za-z0-9+/]{86}[A-Za-z0-9+/=]{2}$/;
@@ -59,6 +60,8 @@ export class AccountObject extends DurableObject {
     if (!resolved || resolved.accountId !== account) return refuse(4401, 'unauthorized');
     if (!['app', 'bridge'].includes(role) || (resolved.kind !== 'key' && (resolved.kind === 'bridge') !== (role === 'bridge'))
       || (resolved.kind === 'bridge' && device && device !== resolved.deviceName) || device.length > 200) return refuse(4403, 'forbidden');
+    const max = limits(this.env);
+    if (role === 'bridge' && bridgesFull(this.live('bridge'), device, max.bridges)) return refuse(4429, 'too_many_bridges');
     const [client, socket] = Object.values(new WebSocketPair());
     const id = randomHex(12);
     this.ctx.acceptWebSocket(socket, [role, `id:${id}`, ...(role === 'bridge' && device ? [`dev:${device}`] : [])]);
@@ -75,6 +78,9 @@ export class AccountObject extends DurableObject {
         console.log(`device row not written: ${error.message}`);
       }
     }
+    if (role === 'app') {
+      for (const [old] of leastActive(this.live('app').filter(([ws]) => ws !== socket), max.apps - 1)) await this.retire(old, 4429, 'too_many_apps');
+    }
     if (role === 'app' && await this.ctx.storage.getAlarm() === null) await this.ctx.storage.setAlarm(Date.now() + SWEEP_MS);
     return new Response(null, { status: 101, webSocket: client });
   }
@@ -85,6 +91,8 @@ export class AccountObject extends DurableObject {
     if (!me || me.closing) return;
     const size = typeof message === 'string' ? (message.length * 3 <= MAX_FRAME_BYTES ? 0 : encoder.encode(message).length) : message.byteLength;
     if (size > MAX_FRAME_BYTES) return this.retire(ws, 1009, 'frame too large');
+    // Any frame but the auto-answered ping is activity: the least recently active App goes first at the limit.
+    if (me.role === 'app' && Date.now() - (me.activeAt ?? me.connectedAt) > ACTIVE_MS) ws.serializeAttachment({ ...me, activeAt: Date.now() });
     if (typeof message !== 'string') return;
     // {"to":"<id>",…}: forwarded unchanged to that socket of this account, between an App and a Bridge.
     if (message.startsWith('{"to":"')) {

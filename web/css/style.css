@@ -1292,6 +1292,8 @@ html.native-mobile .slash-description {
 .file-download-action.is-failed { color: var(--danger); }
 .toast { position: fixed; left: 50%; z-index: 3000; width: max-content; max-width: calc(100% - 32px); padding: 8px 14px; border: 1px solid var(--border); border-radius: 8px; background: rgba(var(--surface-rgb), 0.96); color: var(--text-primary); font-size: 13px; overflow-wrap: anywhere; transform: translateX(-50%); opacity: 0; pointer-events: none; transition: opacity 0.2s; }
 .toast.visible { opacity: 1; }
+.limit-banner { position: fixed; top: calc(8px + var(--sat, env(safe-area-inset-top, 0px))); left: 50%; z-index: 3000; display: flex; align-items: center; gap: 12px; width: max-content; max-width: calc(100% - 32px); padding: 8px 8px 8px 14px; border: 1px solid var(--border); border-radius: 8px; background: rgba(var(--surface-rgb), 0.96); color: var(--text-primary); font-size: 13px; transform: translateX(-50%); }
+.limit-banner button { flex: none; padding: 4px 10px; border: 0; border-radius: 6px; background: var(--accent-solid); color: #fff; font: inherit; cursor: pointer; }
 #img-preview-row .img-thumb { width: 64px; }
 .staged-image-preview img { width: 100%; height: 100%; object-fit: cover; border-radius: inherit; }
 #img-preview-row .img-remove { position: absolute; top: 0; right: 0; width: 36px; height: 36px; padding: 0; display: flex; align-items: center; justify-content: center; background: none; color: var(--text-normal); border: 0; cursor: pointer; z-index: 2; touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
