@@ -27,8 +27,7 @@ export function savedTerminalFolder(appState, storage) {
   try {
     saved = JSON.parse((storage || globalThis.sessionStorage).getItem(TERMINAL_VIEW_KEY) || 'null');
   } catch {}
-  const matches = !!saved?.projectHash && !!appState?.device && appState.session !== '__new__'
-    && JSON.stringify(saved.page) === JSON.stringify(pageOf(appState));
+  const matches = !!saved?.projectHash && JSON.stringify(saved.page) === JSON.stringify(pageOf(appState || {}));
   if (saved && !matches) clearTerminalView(storage);
   return matches ? { hash: saved.projectHash, name: saved.projectName } : null;
 }

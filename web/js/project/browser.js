@@ -31,10 +31,9 @@ var directoryCache = new Map();
 var pendingDirectories = new Map();
 var preloads = { queue: new Map(), active: 0 };
 var visibilityObserver = null;
-// Set while browsing the device's home folder from the project list.
-var homeContext = null;
-// The project the browser opened in; it stays when the page moves to another project.
-var projectContext = null;
+// The project (or the device's home folder, `home: true`) the browser opened in;
+// it stays when the page moves to another project.
+var filesContext = null;
 // Absolute project folders, from the Bridge's file listings.
 var filesRoots = new Map();
 // A directory fetched this recently (usually by a visible-row preload) opens without another request.
@@ -59,7 +58,7 @@ function escapeHtml(value) {
 }
 
 function filesProject() {
-  return homeContext || projectContext || state.appState.project;
+  return filesContext || state.appState.project;
 }
 
 function rootKey(projectHash) {
@@ -136,7 +135,7 @@ function saveProjectFilesView(scrollTop = projectFilesContent().scrollTop) {
     projectHash: filesProject()?.hash || '',
     name: filesProject()?.name || '',
     root: filesRoot(),
-    home: !!homeContext,
+    home: !!filesContext?.home,
     page: pageKey(),
     path: currentPath,
     scrollTop: Math.max(0, scrollTop || 0),
@@ -171,9 +170,7 @@ function readProjectFilesView(anyProject) {
 function restoreProjectFilesView() {
   var saved = readProjectFilesView(true);
   if (!saved?.open || saved.page !== pageKey() || state.appState.session === '__new__') return false;
-  var context = { hash: saved.projectHash, name: saved.home ? '~' : saved.name || saved.projectHash };
-  homeContext = saved.home ? context : null;
-  projectContext = saved.home ? null : context;
+  filesContext = { hash: saved.projectHash, name: saved.home ? '~' : saved.name || saved.projectHash, home: !!saved.home };
   returnToGit = !!saved.returnToGit;
   openProjectFilesPath(saved.path || '');
   return true;
@@ -313,7 +310,7 @@ async function loadDirectory(version, options) {
 
 // Git belongs to the page's project, so it is offered only while the browser shows that project.
 function renderHeader() {
-  var onPageProject = !homeContext && filesProject().hash === state.appState.project?.hash;
+  var onPageProject = !filesContext?.home && filesProject().hash === state.appState.project?.hash;
   if (!onPageProject) returnToGit = false;
   openProjectFilesPage({
     onBack: closeProjectFiles,
@@ -445,8 +442,7 @@ export async function refreshProjectFiles() {
 }
 
 function usePageProject() {
-  homeContext = null;
-  projectContext = state.appState.project;
+  filesContext = state.appState.project;
 }
 
 export function openProjectFiles() {
@@ -456,8 +452,7 @@ export function openProjectFiles() {
 }
 
 export function openHomeFiles(project) {
-  homeContext = project;
-  projectContext = null;
+  filesContext = { ...project, home: true };
   returnToGit = false;
   return openProjectFilesPath(readProjectFilesView()?.path || '');
 }
@@ -488,14 +483,24 @@ export function deactivateProjectFiles(keepWs) {
   rememberDirectoryScroll();
   state.projectFilesOpen = false;
   saveProjectFilesView();
-  homeContext = null;
-  projectContext = null;
+  filesContext = null;
   stopVisiblePreloads();
   navigationVersion++;
   edgeBack.deactivate();
   closeProjectFilesPage();
   if (!keepWs) returnToGit = false;
   if (!keepWs && !state.wsSessionId) window.disconnectWs?.();
+  return true;
+}
+
+// A document's folder link opens in the browser of that project, switching a kept browser back to the page's project.
+export function openProjectFolder(projectHash, path) {
+  if (projectHash !== filesContext?.hash) {
+    if (projectHash !== state.appState.project?.hash) return false;
+    usePageProject();
+    returnToGit = false;
+  }
+  openProjectFilesPath(path);
   return true;
 }
 
@@ -506,8 +511,8 @@ export function projectFilesBack() {
 Object.assign(window, {
   openProjectFiles: openProjectFiles,
   openHomeFiles: openHomeFiles,
-  projectFilesProject: filesProject,
   openProjectFilesPath: openProjectFilesPath,
+  openProjectFolder: openProjectFolder,
   openProjectFilesFromGit: openProjectFilesFromGit,
   resumeProjectFilesFromGit: resumeProjectFilesFromGit,
   refreshProjectFiles: refreshProjectFiles,

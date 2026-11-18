@@ -1627,7 +1627,7 @@ function renderSessions(device, projectHash, data) {
 // Git shows the page's project, so it closes when the project changes.
 function closeProjectTools(device, projectHash) {
   if (window.sideDockKeeps?.(device)) {
-    if (!window.sideDockKeeps(device, projectHash)) window.deactivateGitStatus?.();
+    if ((projectHash || null) !== (state.appState.project?.hash || null)) window.deactivateGitStatus?.();
     return true;
   }
   window.deactivateProjectTerminal?.();
