@@ -122,9 +122,11 @@ export function startWatcher(config) {
 
       enqueue(filename, sessionId);
     });
-    // Linux recursive watch emits 'error' when a directory vanishes mid-scan (or inotify runs out).
+    // Linux recursive watch emits 'error' when a directory vanishes mid-scan and keeps watching the rest;
+    // any other error (e.g. inotify running out) may leave folders unwatched, so poll instead.
     let polling = false;
     return watcher.on('error', (error) => {
+      if (error.code === 'ENOENT') return console.warn(`[watcher] Claude watch: ${error.message}`);
       if (polling) return;
       polling = true;
       watcher.close();

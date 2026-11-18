@@ -313,18 +313,18 @@ const watcher = defineRuntimeWatcher({
     config = bridgeConfig;
     catalog.onRows = (rows, added) => void onRows(rows, added).catch((error) => console.error(`[hermes] watcher: ${error.message}`));
     let again = null;
-    let watch;
-    // Node closes a watcher that reports an error: open it again.
-    const open = () => (watch = fs.watch(HERMES_HOME, (_event, name) => {
+    // Node closes a watcher that reports an error: open it again, retrying while the folder is missing.
+    const reopen = () => setTimeout(() => { try { watch = open(); sessionIndex.touch(STATE_DB); } catch { reopen(); } }, 1000).unref();
+    const open = () => fs.watch(HERMES_HOME, (_event, name) => {
       if (name !== 'state.db' && name !== 'state.db-wal') return;
       sessionIndex.touch(STATE_DB);
       // A WAL write is seen just before its commit becomes visible: read once more after it.
       again ||= setTimeout(() => { again = null; sessionIndex.touch(STATE_DB); }, 50);
     }).on('error', (error) => {
       console.error(`[hermes] watch: ${error.message}`);
-      setTimeout(() => { try { open(); sessionIndex.touch(STATE_DB); } catch {} }, 1000).unref();
-    }));
-    open();
+      reopen();
+    });
+    let watch = open();
     return { close: () => watch.close() };
   },
 });

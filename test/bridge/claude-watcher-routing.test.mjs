@@ -129,8 +129,10 @@ test('a Claude watch error falls back to polling instead of crashing', (t) => {
   t.mock.method(fs, 'watch', () => watcher);
   const poll = t.mock.method(globalThis, 'setInterval', () => 0);
   assert.equal(startWatcher({}), watcher);
-  watcher.emit('error', new Error('ENOENT: scandir'));
-  watcher.emit('error', new Error('ENOENT: scandir'));
+  watcher.emit('error', Object.assign(new Error('ENOENT: scandir'), { code: 'ENOENT' }));
+  assert.equal(poll.mock.callCount(), 0);
+  watcher.emit('error', Object.assign(new Error('ENOSPC'), { code: 'ENOSPC' }));
+  watcher.emit('error', Object.assign(new Error('ENOSPC'), { code: 'ENOSPC' }));
   assert.equal(watcher.close.mock.callCount(), 1);
   assert.equal(poll.mock.callCount(), 1);
 });

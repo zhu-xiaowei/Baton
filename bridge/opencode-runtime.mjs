@@ -126,7 +126,8 @@ const watcher = defineRuntimeWatcher({
     interaction.settled = kick;
     const names = new Set(catalog.watchPaths().map((p) => path.basename(p)));
     let late = null;
-    // Node closes a watcher that reports an error: open it again.
+    // Node closes a watcher that reports an error: open it again, retrying while the folder is missing.
+    const reopen = () => setTimeout(() => { try { open(); kick(); } catch { reopen(); } }, 1000).unref();
     const open = () => fs.watch(path.dirname(DB_FILE), (_type, name) => {
       if (!names.has(name)) return;
       kick();
@@ -134,7 +135,7 @@ const watcher = defineRuntimeWatcher({
       late ||= setTimeout(() => { late = null; kick(); }, 50);
     }).on('error', (error) => {
       console.error(`[watcher] OpenCode watch: ${error.message}`);
-      setTimeout(() => { try { open(); kick(); } catch {} }, 1000).unref();
+      reopen();
     });
     return open();
   },
