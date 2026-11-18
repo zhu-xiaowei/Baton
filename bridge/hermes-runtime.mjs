@@ -313,12 +313,18 @@ const watcher = defineRuntimeWatcher({
     config = bridgeConfig;
     catalog.onRows = (rows, added) => void onRows(rows, added).catch((error) => console.error(`[hermes] watcher: ${error.message}`));
     let again = null;
-    const watch = fs.watch(HERMES_HOME, (_event, name) => {
+    let watch;
+    // Node closes a watcher that reports an error: open it again.
+    const open = () => (watch = fs.watch(HERMES_HOME, (_event, name) => {
       if (name !== 'state.db' && name !== 'state.db-wal') return;
       sessionIndex.touch(STATE_DB);
       // A WAL write is seen just before its commit becomes visible: read once more after it.
       again ||= setTimeout(() => { again = null; sessionIndex.touch(STATE_DB); }, 50);
-    });
+    }).on('error', (error) => {
+      console.error(`[hermes] watch: ${error.message}`);
+      setTimeout(() => { try { open(); sessionIndex.touch(STATE_DB); } catch {} }, 1000).unref();
+    }));
+    open();
     return { close: () => watch.close() };
   },
 });
