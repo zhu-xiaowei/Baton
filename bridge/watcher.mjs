@@ -106,7 +106,7 @@ export function startWatcher(config) {
     console.log('[watcher] WSL detected, using polling (2s interval)');
     return setInterval(() => pollProjects(enqueue, mtimes), 2000);
   } else {
-    return fs.watch(CLAUDE_PROJECTS, { recursive: true }, (_event, filename) => {
+    const watcher = fs.watch(CLAUDE_PROJECTS, { recursive: true }, (_event, filename) => {
       if (filename?.endsWith('.meta.json') && String(filename).split(path.sep).includes('subagents')) {
         filename = filename.replace(/\.meta\.json$/, '.jsonl');
       }
@@ -121,6 +121,19 @@ export function startWatcher(config) {
         : path.basename(filename, '.jsonl');
 
       enqueue(filename, sessionId);
+    });
+    // Linux recursive watch emits 'error' when a directory vanishes mid-scan and keeps watching the rest;
+    // any other error (e.g. inotify running out) may leave folders unwatched, so poll instead.
+    let polling = false;
+    return watcher.on('error', (error) => {
+      if (error.code === 'ENOENT') return console.warn(`[watcher] Claude watch: ${error.message}`);
+      if (polling) return;
+      polling = true;
+      watcher.close();
+      console.warn(`[watcher] Claude watch failed (${error.message}), using polling (2s interval)`);
+      const mtimes = new Map();
+      pollProjects(enqueue, mtimes);
+      setInterval(() => pollProjects(enqueue, mtimes), 2000);
     });
   }
 }

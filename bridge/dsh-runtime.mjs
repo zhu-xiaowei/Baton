@@ -87,9 +87,10 @@ const watcher = defineRuntimeWatcher({
   runtime: 'dsh',
   start(next) {
     config = next;
+    // Node's recursive watch keeps running after an 'error' (a directory vanished mid-scan); it only must not throw.
     const watch = () => fs.watch(SESSIONS, { recursive: true }, (_event, name) => {
       if (String(name).endsWith(LOG)) void queue(path.join(SESSIONS, name));
-    });
+    }).on('error', (error) => console.error(`[dsh] watch: ${error.message}`));
     let handle;
     if (fs.existsSync(SESSIONS)) handle = watch();
     else handle = fs.watch(DSH_HOME, (_event, name) => { if (name === 'sessions' && fs.existsSync(SESSIONS)) { handle.close(); handle = watch(); } });

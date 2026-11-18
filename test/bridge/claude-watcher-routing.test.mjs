@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { EventEmitter } from 'node:events';
+import fs from 'node:fs';
 
 import {
   clearLiveMessageRegistry,
@@ -10,6 +12,7 @@ import {
   createClaudeFileQueue,
   claudeRowPushedLive,
   shouldSkipClaudeSession,
+  startWatcher,
 } from '../../bridge/watcher.mjs';
 
 test.afterEach(clearLiveMessageRegistry);
@@ -118,4 +121,18 @@ test('external Claude interrupts retain their native JSONL identity', () => {
     correlateClaudeInterruptMessage('session-1', message, 1_000),
     message,
   );
+});
+
+test('a Claude watch error falls back to polling instead of crashing', (t) => {
+  const watcher = Object.assign(new EventEmitter(), { close: t.mock.fn() });
+  t.mock.method(fs, 'existsSync', () => true);
+  t.mock.method(fs, 'watch', () => watcher);
+  const poll = t.mock.method(globalThis, 'setInterval', () => 0);
+  assert.equal(startWatcher({}), watcher);
+  watcher.emit('error', Object.assign(new Error('ENOENT: scandir'), { code: 'ENOENT' }));
+  assert.equal(poll.mock.callCount(), 0);
+  watcher.emit('error', Object.assign(new Error('ENOSPC'), { code: 'ENOSPC' }));
+  watcher.emit('error', Object.assign(new Error('ENOSPC'), { code: 'ENOSPC' }));
+  assert.equal(watcher.close.mock.callCount(), 1);
+  assert.equal(poll.mock.callCount(), 1);
 });
