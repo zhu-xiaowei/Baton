@@ -25,10 +25,14 @@ const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'baton-dl-'));
 execFileSync('gh', ['release', 'download', tag, '-R', 'zhu-xiaowei/Baton', '-D', dir, ...Object.keys(TYPES).flatMap((e) => ['-p', `Baton.${e}`])], { stdio: 'inherit' });
 // All four are read before anything is written, so a missing asset never leaves a half-updated "latest".
 const files = Object.entries(TYPES).map(([ext, type]) => [`Baton.${ext}`, type, fs.readFileSync(path.join(dir, `Baton.${ext}`))]);
-for (const [name, type, bytes] of files) {
-  await cf('PUT', `/accounts/${ACCOUNT}/r2/buckets/baton-downloads/objects/${name}`, bytes,
-    { 'content-type': type, 'cache-control': 'public, max-age=300', 'content-disposition': `attachment; filename="${name}"` });
+// The whole host is purged, also after a failed upload, so no URL (with any query string) keeps an old package.
+try {
+  for (const [name, type, bytes] of files) {
+    await cf('PUT', `/accounts/${ACCOUNT}/r2/buckets/baton-downloads/objects/${name}`, bytes,
+      { 'content-type': type, 'cache-control': 'public, max-age=300', 'content-disposition': `attachment; filename="${name}"` });
+  }
+} finally {
+  await cf('POST', '/zones/387d3d961b05753a9bb536e6545f817b/purge_cache', { hosts: ['dl.agentbaton.app'] });
 }
-await cf('POST', '/zones/387d3d961b05753a9bb536e6545f817b/purge_cache', { files: files.map(([name]) => `https://dl.agentbaton.app/${name}`) });
 for (const [name, , bytes] of files) console.log(`https://dl.agentbaton.app/${name}  ${bytes.length} B`);
 fs.rmSync(dir, { recursive: true, force: true });
