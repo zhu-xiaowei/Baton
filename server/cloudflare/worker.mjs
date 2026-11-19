@@ -71,7 +71,7 @@ export default {
       account = accountOf(headers.get('x-api-key') ?? '', env);
     }
     if (account) headers.set('x-baton-account', account);
-    const forwarded = new Request(url, { method: request.method, headers, body: request.body });
+    const forwarded = new Request(url, { method: request.method, headers, body: request.body, cf: request.cf }); // cf: usage points
     if (account) return env.ACCOUNT.get(env.ACCOUNT.idFromName(account)).fetch(forwarded);
     publicServer ||= server(env, { table: createTable(env), sockets: remote(env), rpcInfo: async () => null });
     return toResponse(await publicServer.handle(forwarded, { path, clientIp: ip, scheme: 'https' }), request.method);

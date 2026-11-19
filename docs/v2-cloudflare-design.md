@@ -241,3 +241,53 @@ These override the sections above where they differ.
     Cloudflare, readable by that Worker's code, never shown again), as the Lambda reads it from an SSM SecureString.
 11. **CPU**: server-side lists are already small and bounded (devices, push devices, feed `Limit=100`); Session,
     project and history lists come from the Bridge over the socket, not from the server.
+
+## 14. Monitoring and the monthly cost cap (hosted service)
+
+- **Monitor Worker** (`server/cloudflare/monitor.mjs` + `monitor.html`, `deploy.mjs --monitor <host> --admin-email <address>`):
+  its own custom domain behind Cloudflare Access (email one-time PIN, only `--admin-email`). The Worker also checks the
+  `Cf-Access-Jwt-Assertion` (audience + issuer + signature), so the page and `/api/data` are never served without Access.
+  The workers.dev route stays off. State lives in one SQLite object, `MonitorStore`: 35 days of 5-minute snapshots, alert
+  state, blocked accounts.
+- **Every 5 minutes**:
+  - Probes: `/api/version`, REST through the probe account's object, and a WebSocket `realtime_ping` → `realtime_pong`.
+    The probe account is registered by the deploy, and its token is a secret.
+  - One GraphQL query covers the account objects and the service totals.
+  - The cap is enforced, a snapshot is written, and alerts are evaluated.
+- **Plan** (`--plan free|paid`, default free): quotas are the Free plan's limits (mostly per day) or Workers Paid's
+  monthly included usage. The headline cost is list-price usage on Free and the bill on Paid ($5 + usage beyond the
+  included amounts, account-wide). Prices and quotas are in `cost.mjs`, with the source pages.
+- **Alerts**: one email per run (Email Routing `send_email`) to the verified `--admin-email`. Each alert is keyed so it
+  fires once. Triggers: two failed probes in a row (and recovery), error rate > 5 % over 15 min, any Free quota > 80 %,
+  an account blocked, monthly usage over `--cost-alert`. `support@<zone>` forwards to the same address.
+- **Measured (2026-11-19)**:
+  - Messages on hibernatable sockets appear as `hibernation` invocations of `durableObjectsInvocationsAdaptiveGroups`;
+    `inboundWebsocketMsgCount` stays 0 for them. Auto-answered pings appear in neither.
+  - The `alarm` invocation type gives "accounts with an App open" (alarm every 60 s while Apps are attached). Accounts
+    with any invocation in 5 min approximate Bridges online (heartbeat every 4 min).
+  - ASN / carrier is not available from the Free zone's `httpRequestsAdaptiveGroups`, so it comes from the
+    usage points' `request.cf.asOrganization`.
+  - An unknown script name empties a `scriptName_in` filter, and a null variable drops a filter entirely. The deploy
+    lists only existing Workers, and the monitor refuses to run without its namespace ids.
+- **Usage points** (Workers Analytics Engine, `USAGE`, dataset `<name>_usage`; `usage.mjs`). Server side only: no content,
+  and accounts appear only as `sha256(accountId)[:16]`. Points:
+  - `active`: once per account and UTC day, at the first App. Carries platform from the User-Agent, country, network,
+    and whether the account is new.
+  - `bridge`: once per device and day. Carries version and OS.
+  - `summary`: when the last App leaves, at most hourly, or at the next day's first connect. Carries today's App seconds
+    and the App count.
+  - `conn` / `reject`: 1 in 10, with weight 10.
+  Usage state costs one SQLite write per App socket close. Use time is App connection seconds, summed over that day's connections.
+- **Cost cap**:
+  - Per account object, month to date at list price: Worker request per HTTP invocation + DO requests (non-hibernation
+    invocations + WebSocket messages / 20) + GB-s + SQLite rows. This is the union of the top 100 by duration, by
+    messages and by calls.
+  - The cap leaves out calls (`capCost`): refused upgrades with a guessed account id are cheap to send and priced as
+    requests. The duration and rows such a refusal adds are about a thousand times below its request price, and the per-IP
+    rate limit bounds them.
+  - The block covers the relay; REST stays open. The dashboard can lift a block, and two failed usage runs in a row
+    alert, because the cap is off while they fail.
+  - An object over `--cost-cap` (default $1) gets `AccountObject.monthlyLimit(until 1st of next month UTC)` through the
+    monitor's binding to the service's namespace (`script_name`; no public route reaches it). That closes every socket
+    with **4429 `monthly_limit`**, refuses new upgrades with the same close, and persists the block in the object's
+    storage. The block lapses by itself when the month changes.
