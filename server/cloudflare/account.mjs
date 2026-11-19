@@ -60,9 +60,9 @@ export class AccountObject extends DurableObject {
     const core = this.core(account);
     const resolved = await core.auth.resolve(query.get('apiKey') ?? '');
     if (!resolved || resolved.accountId !== account) return this.usage.refuse(account, 4401, 'unauthorized');
-    if (await this.usage.blocked()) return refuse(4429, 'monthly_limit');
     if (!['app', 'bridge'].includes(role) || (resolved.kind !== 'key' && (resolved.kind === 'bridge') !== (role === 'bridge'))
       || (resolved.kind === 'bridge' && device && device !== resolved.deviceName) || device.length > 200) return this.usage.refuse(account, 4403, 'forbidden');
+    if (await this.usage.blocked()) return refuse(4429, 'monthly_limit');
     const max = limits(this.env);
     if (role === 'bridge' && bridgesFull(this.live('bridge'), device, max.bridges)) return refuse(4429, 'too_many_bridges');
     const [client, socket] = Object.values(new WebSocketPair());
@@ -71,7 +71,7 @@ export class AccountObject extends DurableObject {
     const me = { role, id, account, device, tokenHash: resolved.tokenHash ?? '', connectedAt: Date.now() };
     socket.serializeAttachment(me);
     await this.usage.joined(request, me, () => this.store('getItem', { Key: { pk: `ACCOUNT#${account}`, sk: 'META' } })
-      .result?.Item?.createdAt >= Date.parse(new Date().toISOString().slice(0, 10)) / 1000);
+      .result?.Item?.createdAt >= Date.parse(new Date().toISOString().slice(0, 10)) / 1000).catch((error) => console.log(`usage: ${error.message}`));
     if (role === 'bridge' && device) {
       for (const [old] of this.live(`dev:${device}`)) {
         if (old === socket) continue;
@@ -162,7 +162,7 @@ export class AccountObject extends DurableObject {
   // The monitor Worker's cost cap, through its binding to this namespace (no route of the public Worker calls it); 0 lifts it.
   async monthlyLimit(until) {
     await this.usage.block(until);
-    if (until > Date.now()) for (const [ws] of this.live()) await this.retire(ws, 4429, 'monthly_limit');
+    if (until > Date.now()) for (const role of ['app', 'bridge']) for (const [ws] of this.live(role)) await this.retire(ws, 4429, 'monthly_limit');
   }
 
   async alarm() {

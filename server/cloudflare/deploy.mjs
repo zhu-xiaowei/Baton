@@ -231,9 +231,9 @@ async function deployMonitor() {
     await cf('POST', `${zone}/email/routing/rules`, { name: 'support', enabled: true, matchers: [{ type: 'literal', field: 'to', value: support }],
       actions: [{ type: 'forward', value: [email] }] });
   }
-  // SCRIPTS names only existing Workers: an unknown name empties a scriptName_in query.
+  // SCRIPTS: the service Worker (the relay's CPU is added separately; an unknown name would empty a scriptName_in query).
   const vars = { CF_ACCOUNT_ID: ACCOUNT, ZONE_ID: flags.zone, TARGET_API: `https://${API_HOST}`, SERVICE_SCRIPT: flags.name, PUSH_SCRIPT: RELAY,
-    SCRIPTS: [flags.name, ...((await exists(RELAY)) ? [RELAY] : []), name].join(','), ACCOUNT_NS: accountNs, NAMESPACES: namespaces.map((n) => n.id).join(','), BUCKET: flags.bucket,
+    SCRIPTS: flags.name, ACCOUNT_NS: accountNs, NAMESPACES: namespaces.map((n) => n.id).join(','), BUCKET: flags.bucket,
     HOSTS: domains.join(','), DATASET, PROBE_ACCOUNT: probe, PROBE_HASH: createHash('sha256').update(probe).digest('hex').slice(0, 16),
     COST_CAP: flags['cost-cap'], COST_ALERT: flags['cost-alert'], PLAN: flags.plan === 'paid' ? 'paid' : 'free', ADMIN_EMAIL: email, FROM_EMAIL: `monitor@${zoneName}`,
     MONITOR_URL: `https://${flags.monitor}`, ACCESS_AUD: aud, ACCESS_TEAM: org.auth_domain };

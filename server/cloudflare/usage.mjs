@@ -36,7 +36,7 @@ export class Usage {
   async joined(request, me, isNew) {
     const s = await this.state();
     if (s.day !== today()) {
-      if (s.secs > (s.reported ?? 0)) await this.point(me.account, ['summary', s.day], [s.secs, s.apps.length]);
+      if (s.secs > (s.reported ?? 0)) await this.point(me.account, ['summary', s.day], [s.secs, s.apps?.length ?? 0]);
       Object.assign(s, { day: today(), secs: 0, reported: 0, at: 0, apps: [], devs: [] });
     }
     const app = me.role === 'app' ? me.tokenHash.slice(0, 8) : me.device;
@@ -44,7 +44,7 @@ export class Usage {
     if (seen.includes(app)) return;
     const query = new URL(request.url).searchParams;
     if (me.role === 'bridge') await this.point(me.account, ['bridge', s.day, query.get('os') ?? '', '', '', query.get('version') ?? '']);
-    else if (!s.apps.length) {
+    else if (!s.apps?.length) {
       await this.point(me.account, ['active', s.day, platformOf(request.headers.get('user-agent') ?? ''), request.cf?.country ?? '',
         String(request.cf?.asOrganization ?? '').slice(0, 64), isNew() ? 'new' : '']);
     }

@@ -68,7 +68,7 @@ const USAGE = `query($a:string!,$ns:string!,$nss:[string!],$scripts:[string!],$m
     doMonth:durableObjectsPeriodicGroups(limit:1,filter:{namespaceId_in:$nss,date_geq:$month}){sum{duration inboundWebsocketMsgCount rowsRead rowsWritten}}
     callsMonth:durableObjectsInvocationsAdaptiveGroups(limit:50,filter:{namespaceId_in:$nss,date_geq:$month}){sum{requests} dimensions{hibernation:type}}
     workersMonth:workersInvocationsAdaptive(limit:1,filter:{scriptName_in:$scripts,date_geq:$month}){sum{requests cpuTimeUs}}
-    pushMonth:workersInvocationsAdaptive(limit:1,filter:{date_geq:$month,scriptName:$push}){sum{requests cpuTimeUs}}
+    pushMonth:workersInvocationsAdaptive(limit:1,filter:{date_geq:$month,scriptName:$push}){sum{cpuTimeUs}}
     workersAll:workersInvocationsAdaptive(limit:1,filter:{date_geq:$month,scriptName_neq:$push}){sum{requests cpuTimeUs}}
     doAll:durableObjectsPeriodicGroups(limit:1,filter:{date_geq:$month}){sum{duration inboundWebsocketMsgCount rowsRead rowsWritten}}
     callsAll:durableObjectsInvocationsAdaptiveGroups(limit:50,filter:{date_geq:$month}){sum{requests} dimensions{hibernation:type}}
@@ -110,8 +110,8 @@ async function usage(env, now) {
   for (const r of v.byWs) { const a = at(r.dimensions); a.wsIn = (a.wsIn ?? 0) + r.sum.requests; }
   for (const r of v.byCalls) at(r.dimensions).calls = r.sum.requests;
   for (const r of v.byHttp) at(r.dimensions).http = r.sum.requests; // only these have a Worker request in front
-  // The cap counts what only an authenticated client drives (messages, duration, rows): calls alone can be junk
-  // upgrades with a guessed account id, which would otherwise get any account blocked.
+  // The cap leaves out calls: refused upgrades with a guessed account id are cheap to send and priced as requests. The
+  // duration and rows such a refusal adds are about a thousand times below its request price.
   const accounts = [...objects.values()].map((a) => ({ ...a, cost: accountCost(a), capCost: accountCost({ ...a, http: 0, calls: 0 }) }))
     .sort((x, y) => y.cost - x.cost);
 
@@ -127,13 +127,12 @@ async function usage(env, now) {
   // the push relay is reached only through a service binding: its CPU is billed, its requests are not).
   const month_ = (workers, periodic, calls) => ({ workerRequests: workers?.sum.requests ?? 0, workerCpuMs: (workers?.sum.cpuTimeUs ?? 0) / 1000,
     ...doTotals(calls, periodic) });
-  const push = v.pushMonth[0]?.sum ?? { requests: 0, cpuTimeUs: 0 };
+  const push = v.pushMonth[0]?.sum ?? { cpuTimeUs: 0 }; // `scriptName:$push` matches nothing when there is no relay
   const totals = { ...month_(v.workersMonth[0], v.doMonth[0]?.sum, v.callsMonth), sqlGbMonths: (sqlBytes / 1e9) * elapsed,
     r2GbMonths: (r2Bytes(mine(buckets)) / 1e9) * elapsed, ...ops(mine(v.r2ops)) };
-  totals.workerRequests -= push.requests;
   const account = { ...month_(v.workersAll[0], v.doAll[0]?.sum, v.callsAll), sqlGbMonths: (allSql / 1e9) * elapsed,
     r2GbMonths: (r2Bytes(buckets) / 1e9) * elapsed, ...ops(v.r2ops), aePoints: v.aeMonth[0]?.count ?? 0 };
-  account.workerCpuMs += push.cpuTimeUs / 1000;
+  for (const t of [totals, account]) t.workerCpuMs += push.cpuTimeUs / 1000;
   const scale = projected(1, new Date(now)); // project the usage, then price it: included amounts make the bill non-linear
   const ahead = (t) => serviceCost(Object.fromEntries(Object.entries(t).map(([k, x]) => [k, x * scale])));
   const cost = { ...serviceCost(totals), bill: serviceCost(account).bill, projectedUsage: ahead(totals).usage, projectedBill: ahead(account).bill };
@@ -214,11 +213,11 @@ export class MonitorStore extends DurableObject {
     this.sql.exec('CREATE TABLE IF NOT EXISTS snaps (t INTEGER PRIMARY KEY, ok INTEGER, online INTEGER, data TEXT)');
   }
 
-  // Each alert once (by key); one email per run lists them all.
+  // Each keyed alert once (until its email is sent); one email per run lists them all.
   alert(state, key, subject, text) {
-    if (state.sent[key]) return;
-    state.sent[key] = Date.now();
-    (this.pending ??= []).push([subject, text]);
+    if (key && state.sent[key]) return;
+    if (key) state.sent[key] = Date.now();
+    (this.pending ??= []).push([subject, text, key]);
   }
 
   async run() {
@@ -232,12 +231,12 @@ export class MonitorStore extends DurableObject {
     for (const [i, p] of probes.entries()) {
       const name = PROBES[i];
       const fails = p.ok ? 0 : (state.fails[name] ?? 0) + 1;
-      if (fails === 2) this.alert(state, `down:${name}:${now}`, `${name} probe failing`, `Two failed probes in a row: ${p.error}`);
-      if (p.ok && (state.fails[name] ?? 0) >= 2) this.alert(state, `up:${name}:${now}`, `${name} probe recovered`, `Answered in ${p.ms} ms.`);
+      if (fails === 2) this.alert(state, null, `${name} probe failing`, `Two failed probes in a row: ${p.error}`);
+      if (p.ok && (state.fails[name] ?? 0) >= 2) this.alert(state, null, `${name} probe recovered`, `Answered in ${p.ms} ms.`);
       state.fails[name] = fails;
     }
     state.usageFails = used.error ? (state.usageFails ?? 0) + 1 : 0;
-    if (state.usageFails === 2) this.alert(state, `usage:${now}`, 'usage collection failing', `The cost cap is not enforced while this lasts: ${used.error}`);
+    if (state.usageFails === 2) this.alert(state, null, 'usage collection failing', `The cost cap is not enforced while this lasts: ${used.error}`);
     if (!used.error) {
       // The cost cap: an account object over COST_CAP this month is blocked until the 1st of next month (UTC).
       const cap = Number(env.COST_CAP || 1);
@@ -272,6 +271,7 @@ export class MonitorStore extends DurableObject {
       const subject = alerts.length > 1 ? `${alerts[0][0]} (+${alerts.length - 1} more)` : alerts[0][0];
       const result = await mail(env, subject, alerts.map(([s, t]) => `${s}\n${t}`).join('\n\n'));
       state.log = [...alerts.map(([s]) => ({ t: now, subject: s, result })), ...(state.log ?? [])].slice(0, 30);
+      if (result !== 'sent') for (const [, , key] of alerts) delete state.sent[key]; // retried next run
     }
     // An unblock may have landed during the awaits above: keep it.
     state.lifted = (await this.ctx.storage.get('state'))?.lifted ?? state.lifted;

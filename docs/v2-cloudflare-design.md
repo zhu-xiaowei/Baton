@@ -282,8 +282,9 @@ These override the sections above where they differ.
   - Per account object, month to date at list price: Worker request per HTTP invocation + DO requests (non-hibernation
     invocations + WebSocket messages / 20) + GB-s + SQLite rows. This is the union of the top 100 by duration, by
     messages and by calls.
-  - The cap compares only the part that an authenticated client drives (messages, duration, rows). Calls alone can be
-    refused upgrades with a guessed account id, and the per-IP rate limit bounds those.
+  - The cap leaves out calls (`capCost`): refused upgrades with a guessed account id are cheap to send and priced as
+    requests. The duration and rows such a refusal adds are about a thousand times below its request price, and the per-IP
+    rate limit bounds them.
   - The block covers the relay; REST stays open. The dashboard can lift a block, and two failed usage runs in a row
     alert, because the cap is off while they fail.
   - An object over `--cost-cap` (default $1) gets `AccountObject.monthlyLimit(until 1st of next month UTC)` through the
