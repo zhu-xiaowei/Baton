@@ -943,12 +943,6 @@ function dispatchWsMessage(msg) {
         loadLatestMessages(msg.sessionId, { preserveLive: true }).catch(function () {});
         drainPreAdoptionTurnEvents(msg.sessionId, msg.turnId);
       }
-    } else if (msg.action === 'notify_check') {
-      // Someone looking at this session right now: no push to any device.
-      if (document.visibilityState === 'visible' && document.hasFocus()
-        && msg.rootSessionId === state.wsRootSessionId) {
-        bridge.request(_wsDevice, 'notify_seen', { eventId: msg.eventId }, { oneWay: true }).catch(function () {});
-      }
     } else if (msg.action === 'session_threads_changed') {
       if (msg.deviceName && msg.deviceName !== state.appState.device) return;
       var rootChange = (msg.roots || []).find(function (root) {

@@ -426,12 +426,14 @@ function receive(ws, text) {
     const part = pushes.add(frame);
     if (part?.payload) {
       pushQueue = pushQueue.then(() => decodeRpcPayload(part.payload, inflate, openAny))
-        .then((event) => {
-          for (const one of event.action === 'batch' ? event.events : [event]) {
-            for (const listener of pushListeners) { try { listener(one); } catch {} }
-          }
-        }).catch(() => {});
+        .then((event) => { for (const one of event.action === 'batch' ? event.events : [event]) emit(one); }).catch(() => {});
     }
+    return;
+  }
+  // A Bridge's alert to every App of the account (relay), sealed with K's alert key: only an opened one counts.
+  if (frame.kind === 'notify' && frame.e) {
+    pushQueue = pushQueue.then(() => openAlert(frame))
+      .then((alert) => { if (alert !== frame) emit({ ...alert, action: 'notify_check' }); }).catch(() => {});
     return;
   }
   if (frame.kind === 'rpc_ack' || frame.kind === 'rpc_progress') {
@@ -458,6 +460,10 @@ function receive(ws, text) {
   // A clear error is the Bridge's own before any session (`too_large`) or an `account_key` failure; others are dropped.
   if (part.error && part.error !== 'too_large' && pending.get(part.requestId).method !== 'account_key') return;
   finish(part.requestId, pending.get(part.requestId), part.error ? { error: part.error } : { payload: part.payload, failed: part.failed });
+}
+
+function emit(event) {
+  for (const listener of pushListeners) { try { listener(event); } catch {} }
 }
 
 // Pushes do not say which Bridge sealed them; each live session is tried (a wrong key fails at once).

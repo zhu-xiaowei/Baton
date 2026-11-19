@@ -42,11 +42,16 @@ Bridge status rows → bridge/notify.mjs → POST /api/notifications/events ─�
    alert is kept and stacked per session (iOS thread, Android group + summary).
    Android clears a session's stack when the app opens it: a tap cancels only the
    tapped alert, and the summary would otherwise stay on its own.
-2. **Skip what the user already knows.** Interrupted turns. Sessions someone is
-   looking at on any device: Bridge pushes `notify_check` to the pages subscribed under
-   the root, and a visible, focused one showing it answers with a `notify_seen` request
-   within 3 s. A suspended iOS socket never answers, so it still gets
-   the push; each app also hides alerts for the session open in the foreground.
+2. **Skip what the user already knows.** Interrupted turns. Alerts an open app already
+   showed: Bridge sends `notify_check` with the alert to every App of the account (relay:
+   `{to:'apps', kind:'notify', …sealed alert}`, which the account object fans out to its App
+   sockets and the App opens with K's alert key; AWS: the newest 32 App connections the Bridge
+   knows, sealed per connection). A visible, focused page answers `notify_seen` within 2 s and
+   shows the alert itself — nothing when it shows that Session, otherwise an in-app banner
+   (`web/js/components/inapp-notification.js`; tapping opens the Session, the Settings switch
+   turns it off). Any answer → no push to any device. A hidden page or a suspended iOS socket
+   never answers, so the phone still gets the push; each app also hides alerts for the session
+   open in the foreground.
    Turns started outside Baton (terminal TUI, VS Code, the Codex/Claude apps) while
    the user is at that computer: when such a turn leaves `running`, Bridge
    (`presence.mjs`) attaches `localIdleSec`, and Bridge skips the alert (event
@@ -73,7 +78,12 @@ Bridge status rows → bridge/notify.mjs → POST /api/notifications/events ─�
      still opens the session.
    - **Android**: a foreground service ("Baton is running in the background")
      polls `/api/notifications/events` natively, every 5 s in the foreground and
-     15 s in the background. Force-stop ends it; some vendor ROMs need Baton
+     15 s in the background. Hosted (relay) servers keep no feed: the service holds one
+     `wss://…/ws?role=notify` socket (`RelaySocket.kt`, no library) that receives each sealed
+     alert no App acknowledged. It pings after 60 s idle and reconnects when no answer comes
+     within 10 s; `after=<last eventId>` replays the newer of the account object's last 20
+     alerts of the past hour. Notify sockets are not Apps: no `notify_check`, no App limit,
+     no sweep or alarm. Force-stop ends it; some vendor ROMs need Baton
      exempted from battery optimisation.
 
 Devices are one `PUSH_DEVICE` row per `<environment>:<token>`; a permanent APNs

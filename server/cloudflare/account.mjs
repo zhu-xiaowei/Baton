@@ -14,6 +14,10 @@ const ACTIVE_MS = 60_000; // an App's last activity is written at most this ofte
 const encoder = new TextEncoder();
 const send = (ws, data) => { try { ws.send(typeof data === 'string' ? data : JSON.stringify(data)); return true; } catch { return false; } };
 const PUB = /^[A-Za-z0-9+/]{86}[A-Za-z0-9+/=]{2}$/;
+// Android's notification service socket (`role=notify`) gets the sealed alerts no App acknowledged; a reconnect
+// with `after=<eventId>` gets the newer of the last REPLAY_COUNT, kept REPLAY_MS.
+const REPLAY_COUNT = 20;
+const REPLAY_MS = 3600_000;
 
 export class AccountObject extends DurableObject {
   constructor(ctx, env) {
@@ -60,17 +64,18 @@ export class AccountObject extends DurableObject {
     const core = this.core(account);
     const resolved = await core.auth.resolve(query.get('apiKey') ?? '');
     if (!resolved || resolved.accountId !== account) return this.usage.refuse(account, 4401, 'unauthorized');
-    if (!['app', 'bridge'].includes(role) || (resolved.kind !== 'key' && (resolved.kind === 'bridge') !== (role === 'bridge'))
+    if (!['app', 'bridge', 'notify'].includes(role) || (resolved.kind !== 'key' && (resolved.kind === 'bridge') !== (role === 'bridge'))
       || (resolved.kind === 'bridge' && device && device !== resolved.deviceName) || device.length > 200) return this.usage.refuse(account, 4403, 'forbidden');
     if (await this.usage.blocked()) return refuse(4429, 'monthly_limit');
     const max = limits(this.env);
     if (role === 'bridge' && bridgesFull(this.live('bridge'), device, max.bridges)) return refuse(4429, 'too_many_bridges');
     const [client, socket] = Object.values(new WebSocketPair());
     const id = randomHex(12);
-    this.ctx.acceptWebSocket(socket, [role, `id:${id}`, ...(role === 'bridge' && device ? [`dev:${device}`] : [])]);
+    const tok = role === 'notify' && resolved.tokenHash ? [`tok:${resolved.tokenHash}`] : []; // one notify socket per App token
+    this.ctx.acceptWebSocket(socket, [role, `id:${id}`, ...(role === 'bridge' && device ? [`dev:${device}`] : []), ...tok]);
     const me = { role, id, account, device, tokenHash: resolved.tokenHash ?? '', connectedAt: Date.now() };
     socket.serializeAttachment(me);
-    await this.usage.joined(request, me, () => this.store('getItem', { Key: { pk: `ACCOUNT#${account}`, sk: 'META' } })
+    if (role !== 'notify') await this.usage.joined(request, me, () => this.store('getItem', { Key: { pk: `ACCOUNT#${account}`, sk: 'META' } })
       .result?.Item?.createdAt >= Date.parse(new Date().toISOString().slice(0, 10)) / 1000).catch((error) => console.log(`usage: ${error.message}`));
     if (role === 'bridge' && device) {
       for (const [old] of this.live(`dev:${device}`)) {
@@ -87,6 +92,12 @@ export class AccountObject extends DurableObject {
     if (role === 'app') {
       for (const [old] of leastActive(this.live('app').filter(([ws]) => ws !== socket), max.apps - 1)) await this.retire(old, 4429, 'too_many_apps');
     }
+    for (const [old] of tok.length ? this.live(tok[0]) : []) if (old !== socket) await this.retire(old, 4409, 'replaced');
+    if (role === 'notify' && query.get('after')) {
+      const list = this.replay(account);
+      const at = list.findIndex((entry) => entry.alert.eventId === query.get('after'));
+      for (const { alert } of list.slice(at + 1)) send(socket, { action: 'alert', ...alert, accountId: account });
+    }
     if (role === 'app' && await this.ctx.storage.getAlarm() === null) await this.ctx.storage.setAlarm(Date.now() + SWEEP_MS);
     return new Response(null, { status: 101, webSocket: client });
   }
@@ -99,12 +110,14 @@ export class AccountObject extends DurableObject {
     if (size > MAX_FRAME_BYTES) return this.retire(ws, 1009, 'frame too large');
     // Any frame but the auto-answered ping is activity: the least recently active App goes first at the limit.
     if (me.role === 'app' && Date.now() - (me.activeAt ?? me.connectedAt) > ACTIVE_MS) ws.serializeAttachment({ ...me, activeAt: Date.now() });
-    if (typeof message !== 'string') return;
+    if (typeof message !== 'string' || me.role === 'notify') return; // a notify socket only pings
     // {"to":"<id>",…}: forwarded unchanged to that socket of this account, between an App and a Bridge.
     if (message.startsWith('{"to":"')) {
       const end = message.indexOf('"', 7);
-      const [target] = message[end + 1] === ',' ? this.live(`id:${message.slice(7, end)}`) : [];
-      if (target && target[1].role !== me.role) send(target[0], message);
+      const id = message.slice(7, end);
+      if (id === 'apps' && me.role === 'bridge') { for (const [app] of this.live('app')) send(app, message); return; } // notify_check
+      const [target] = message[end + 1] === ',' ? this.live(`id:${id}`) : [];
+      if (target && target[1].role !== me.role && target[1].role !== 'notify') send(target[0], message);
       return;
     }
     let body;
@@ -134,7 +147,7 @@ export class AccountObject extends DurableObject {
     }
   }
 
-  // A Bridge's alert, checked like the REST body, pushed to the account's iOS devices; nothing is stored.
+  // A Bridge's alert, checked like the REST body, pushed to the account's iOS devices and notify sockets; only sealed ones are kept (replay).
   // Acknowledged (`alert_ok`) once taken; a resend of an alert already taken is only acknowledged again.
   async alert(ws, account, { action, ...body }) {
     const alert = validateAlert(body);
@@ -143,11 +156,19 @@ export class AccountObject extends DurableObject {
       ConditionExpression: 'attribute_not_exists(pk)' });
     send(ws, { action: 'alert_ok', eventId: alert.eventId });
     if (seen.error) return;
+    const list = [...this.replay(account), ...(alert.e ? [{ at: Date.now(), alert }] : [])].slice(-REPLAY_COUNT); // sealed ones only
+    this.store('putItem', { Item: { pk: `NOTIFYQ#${account}`, sk: '-', list, ttl: nowInt() + REPLAY_MS / 1000 } });
+    for (const [socket] of this.live('notify')) send(socket, { action: 'alert', ...alert, accountId: account }); // a tap checks the account
     try {
       await this.core(account).notifications.deliver(account, alert);
     } catch (error) {
       console.log(`alert not delivered: ${error.message}`);
     }
+  }
+
+  replay(account) {
+    const list = this.store('getItem', { Key: { pk: `NOTIFYQ#${account}`, sk: '-' } }).result?.Item?.list ?? [];
+    return list.filter((entry) => Date.now() - entry.at < REPLAY_MS);
   }
 
   async webSocketClose(ws, code) {
@@ -162,7 +183,7 @@ export class AccountObject extends DurableObject {
   // The monitor Worker's cost cap, through its binding to this namespace (no route of the public Worker calls it); 0 lifts it.
   async monthlyLimit(until) {
     await this.usage.block(until);
-    if (until > Date.now()) for (const role of ['app', 'bridge']) for (const [ws] of this.live(role)) await this.retire(ws, 4429, 'monthly_limit');
+    if (until > Date.now()) for (const role of ['app', 'bridge', 'notify']) for (const [ws] of this.live(role)) await this.retire(ws, 4429, 'monthly_limit');
   }
 
   async alarm() {
@@ -177,6 +198,7 @@ export class AccountObject extends DurableObject {
     if (now - this.swept < 10_000) return;
     this.swept = now;
     for (const [ws, a] of this.live()) {
+      if (a.role === 'notify') continue; // Android may ping late while dozing; these never hold the alarm
       const last = this.ctx.getWebSocketAutoResponseTimestamp(ws)?.getTime() ?? a.connectedAt;
       if (now - last > SILENT_MS) await this.retire(ws, 4000, 'silent');
     }
@@ -197,7 +219,7 @@ export class AccountObject extends DurableObject {
       for (const [bridge] of this.live('bridge')) send(bridge, { action: 'peer_left', id: a.id });
       if (!this.live('app').length) await this.ctx.storage.deleteAlarm();
     } else if (a.joined) await this.notifyApps(a.account);
-    await this.usage.left(a, code, this.live('app').length).catch((error) => console.log(`usage: ${error.message}`));
+    if (a.role !== 'notify') await this.usage.left(a, code, this.live('app').length).catch((error) => console.log(`usage: ${error.message}`));
   }
 
   record(a) {

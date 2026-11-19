@@ -114,9 +114,10 @@ iOS NotificationService: open `e` from the payload with the shared-keychain key;
   servers send both; rows stay for Android).
 - Bad device tokens (410 Unregistered) remove the push device, as today.
 - Queued alerts while the Bridge is offline keep the existing Bridge-side queue (`notify.mjs`).
-- Follow-up (phase 4, D5): Android's existing foreground service holds the App's relay socket instead of polling
-  the feed (idle sockets are free on Cloudflare and ≈ $0.012/device-month on API Gateway vs ≈ 170k feed requests);
-  the object pushes the sealed alert to it and Kotlin opens it as today. Then AWS needs no feed rows either.
+- Android (hosted): the foreground service holds its own `role=notify` relay socket instead of polling the feed;
+  the object pushes each sealed alert to it (and keeps the last 20 of the past hour for `after=` replays) and Kotlin
+  opens it as today. Self-hosted AWS keeps the feed. Before any push, `notify_check` goes to every App socket
+  (`{to:'apps'}`); a focused App shows it in-app and answers, and then nothing is pushed (docs/mobile-notifications.md).
 
 ## 7. Clients
 

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { alertFor, completionSummary, configureNotifier, flushQueue, observeSessions } from '../../bridge/notify.mjs';
+import { alertFor, completionSummary, configureNotifier, flushQueue, noteSeen, observeSessions } from '../../bridge/notify.mjs';
 import { payload } from '../../push-relay/apns_relay.mjs';
 import { payload as workerPayload } from '../../push-relay/worker.mjs';
 
@@ -73,11 +73,12 @@ test('reported rows alert once, not while viewed, and are queued while the serve
   let viewed = true;
   let online = false;
   configureNotifier({
-    viewed: async () => viewed,
+    // A focused App answers notify_seen; without an answer within viewWait the alert is pushed.
+    checkApps: (alert) => (viewed && setTimeout(() => noteSeen(alert.eventId), 5), true), viewWait: () => 40,
     post: async (endpoint, alert) => { posted.push(alert); return online ? { status: 200 } : null; },
   });
   const report = (sessions, extra = {}) => observeSessions({ deviceName: 'Mac', sessions, ...extra });
-  const settle = () => new Promise((resolve) => setTimeout(resolve, 10));
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 60));
   const row = { id: 'a', runtime: 'claude', project: 'p', projectName: 'p', status: 'running', preview: 'A' };
   report([row]);
   report([{ ...row, status: 'completed' }]);
@@ -101,7 +102,7 @@ test('reported rows alert once, not while viewed, and are queued while the serve
 
 test('the worst-case sealed alert fits one APNs payload', async () => {
   const sent = [];
-  configureNotifier({ viewed: async () => false, notifyKey: () => Buffer.alloc(32, 1), post: async () => null,
+  configureNotifier({ checkApps: () => false, notifyKey: () => Buffer.alloc(32, 1), post: async () => null,
     sendAlert: (frame) => sent.push(frame) > 0 });
   const odd = (n) => '\u0001😀"'.repeat(n);
   const row = { id: 'x'.repeat(200), runtime: 'claude', project: odd(400), projectName: odd(80), preview: odd(120),

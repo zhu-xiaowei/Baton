@@ -30,6 +30,7 @@ class StartArgs {
   lateinit var server: String
   lateinit var apiKey: String
   var notifyKey: String = ""
+  var relay: String = ""
   var prompt: Boolean = true
 }
 
@@ -95,7 +96,7 @@ class PushPlugin(private val activity: Activity) : Plugin(activity) {
       return
     }
     val args = invoke.parseArgs(StartArgs::class.java)
-    AlertService.start(activity, args.server.trimEnd('/'), args.apiKey, args.notifyKey)
+    AlertService.start(activity, args.server.trimEnd('/'), args.apiKey, args.notifyKey, args.relay)
     invoke.resolve(JSObject().put("granted", true))
   }
 

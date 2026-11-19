@@ -9,8 +9,8 @@ const off = skip || (!WS && 'BATON_WS is unset');
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // A socket that records frames and its close code; `ping` sends the 25 s text ping.
-function open(apiKey, role, { device, ping = true } = {}) {
-  const ws = new WebSocket(`${WS}?${new URLSearchParams({ apiKey, role, ...(device && { device }) })}`);
+function open(apiKey, role, { device, after, ping = true } = {}) {
+  const ws = new WebSocket(`${WS}?${new URLSearchParams({ apiKey, role, ...(device && { device }), ...(after && { after }) })}`);
   const s = { ws, frames: [], closed: new Promise((resolve) => ws.on('close', (code) => resolve(code))) };
   ws.on('message', (data) => s.frames.push(JSON.parse(data)));
   const timer = ping && setInterval(() => ws.readyState === 1 && ws.send('{"action":"realtime_ping"}'), 25_000);
@@ -101,6 +101,23 @@ test('alerts are pushed, never stored', { skip: off }, async () => {
   assert.equal((await devices(a.token)).notifications.feed, false);
   await api('/api/notifications/events', undefined, { token: a.token, status: 404 });
   closeAll(bridge);
+  await deleteAccount(a.token);
+});
+
+test('notify_check reaches every App; alerts reach notify sockets, a reconnect replays newer ones', { skip: off }, async () => {
+  const a = await account('notify');
+  const [bridge, app, notify] = [a.bridge(), open(a.token, 'app'), open(a.token, 'notify')];
+  await Promise.all([bridge.ready, app.ready, notify.ready]);
+  bridge.send('{"to":"apps","kind":"notify","n":1}');
+  assert.equal((await app.next((f) => f.kind === 'notify'))?.n, 1);
+  const alert = (n) => ({ action: 'alert', eventId: String(n).repeat(64), device: 'ct-notify-pc', sessionId: 's', rootSessionId: 's', e: 'x' });
+  for (const n of [1, 2, 3]) { bridge.send(alert(n)); await bridge.next((f) => f.action === 'alert_ok'); }
+  await sleep(500);
+  assert.deepEqual([notify.frames.map((f) => f.eventId[0]), app.frames.filter((f) => f.action === 'alert')], [['1', '2', '3'], []]);
+  const again = open(a.token, 'notify', { after: '1'.repeat(64) });
+  await sleep(1500);
+  assert.deepEqual(again.frames.map((f) => f.eventId[0]), ['2', '3']);
+  closeAll(bridge, app, notify, again);
   await deleteAccount(a.token);
 });
 

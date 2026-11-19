@@ -1,14 +1,16 @@
 import { state } from './state.js';
 import { showToast } from './components/toast.js';
-import { devices, notifyKey, openAlert } from './v2/direct-transport.js';
+import { dismissInAppNotifications, showInAppNotification } from './components/inapp-notification.js';
+import { devices, notifyKey, onPush, openAlert, request } from './v2/direct-transport.js';
 
-// iOS: APNs. Android: a foreground service polling the event feed. Both work while
+// iOS: APNs. Android: a foreground service polling the event feed (hosted: holding a socket). Both work while
 // Baton is in the background; the local push plugin owns notification taps.
 const ENABLED = 'baton-notifications-enabled';
 const PUSH_DEVICE = 'baton-push-device';
 const ASKED = 'baton-notifications-asked';
 const TARGET = 'baton-notification-target';
 let platform, config, initialization, pendingTarget, permission;
+let relay = ''; // hosted: Android holds a `role=notify` socket to this URL instead of polling
 let status = '';
 
 function mobilePlatform() {
@@ -55,14 +57,19 @@ async function openNotification(event) {
     event = event && await openAlert(event);
   }
   if (!validTarget(event)) return;
-  if (event.accountId !== config.accountId) {
+  // In-app alerts carry no accountId: they came over this account's own socket.
+  if (event.accountId && event.accountId !== config.accountId) {
     showToast('This notification belongs to another account.');
   } else if (typeof window.openNotificationSession === 'function') {
     await window.openNotificationSession(event);
   } else {
-    sessionStorage.setItem(TARGET, JSON.stringify(event));
-    location.href = 'index.html';
+    goToIndex(event);
   }
+}
+
+function goToIndex(event) {
+  sessionStorage.setItem(TARGET, JSON.stringify(event));
+  location.href = 'index.html';
 }
 
 async function enableIos(prompt) {
@@ -87,7 +94,7 @@ function showSwitch() {
 async function apply(prompt = true) {
   if (enabled()) {
     permission = await (platform === 'ios' ? enableIos(prompt)
-      : invoke('plugin:push|start', { server: state.SERVER, apiKey: state.KEY, notifyKey: await notifyKey(), prompt })) || permission;
+      : invoke('plugin:push|start', { server: state.SERVER, apiKey: state.KEY, notifyKey: await notifyKey(), relay, prompt })) || permission;
   } else {
     setStatus('');
   }
@@ -117,7 +124,14 @@ export async function unregisterMobileNotifications() {
 
 async function initialize() {
   platform = mobilePlatform();
-  if (!platform || !state.KEY) return;
+  if (!state.KEY) return;
+  if (!platform) { // a banner tapped on the Settings page
+    let target = null;
+    try { target = JSON.parse(sessionStorage.getItem(TARGET) || 'null'); } catch {}
+    sessionStorage.removeItem(TARGET);
+    if (target && window.openNotificationSession) await window.openNotificationSession(target);
+    return;
+  }
   const { Channel } = await import('@tauri-apps/api/core');
   const drain = async () => {
     const { events } = await invoke('plugin:push|take_pending');
@@ -129,7 +143,9 @@ async function initialize() {
   await drain();
   try { pendingTarget ||= JSON.parse(sessionStorage.getItem(TARGET) || 'null'); } catch {}
   sessionStorage.removeItem(TARGET);
-  config = (await devices()).notifications;
+  const body = await devices();
+  config = body.notifications;
+  relay = body.rpc?.transport === 'relay' ? body.rpc.url : '';
   if (!config) return setStatus('Update the Baton server to enable notifications.');
   if (pendingTarget) void openNotification(pendingTarget);
   // On each page load: refreshes the iOS token TTL, restarts the Android service. The first
@@ -181,8 +197,22 @@ export function mountNotificationSettings() {
   setStatus(status);
 }
 
+// Every App gets each alert first (bridge/notify.mjs). A visible, focused page showing that Session, or showing
+// the alert in-app (the Settings switch turns it off), answers: then no device is pushed.
+const checked = new Set(); // eventIds: a resent check shows nothing again
+onPush(event => {
+  if (event.action !== 'notify_check' || checked.has(event.eventId)
+    || document.visibilityState !== 'visible' || !document.hasFocus()) return;
+  checked.add(event.eventId);
+  if (checked.size > 100) checked.delete(checked.values().next().value);
+  if (event.rootSessionId !== state.wsRootSessionId
+    && !(enabled() && showInAppNotification(event, window.openNotificationSession || goToIndex))) return;
+  request(event.device, 'notify_seen', { eventId: event.eventId }, { oneWay: true }).catch(() => {});
+});
+
 // The device itself never shows an alert for the session it has open in the foreground.
 window.setOpenNotificationSession = sessionId => {
+  if (sessionId) dismissInAppNotifications(sessionId);
   if (mobilePlatform()) void invoke('plugin:push|set_open', { sessionId: sessionId || '' }).catch(() => {});
 };
 window.unregisterMobileNotifications = unregisterMobileNotifications;

@@ -290,8 +290,9 @@ Done:
   `POST /api/notifications/events`, which stores the feed row and calls the push relay; while the
   server is unreachable it keeps the newest alert per Session (at most 10, 10 minutes). Devices are
   one `PUSH_DEVICE` row per `<environment>:<token>`. Before alerting it skips interrupted turns
-  and sessions a visible, focused page is viewing (`notify_check` push → `notify_seen` request
-  within 3 s, to the pages subscribed under the root).
+  and alerts a visible, focused page has shown: `notify_check` goes to every App of the account,
+  which shows an in-app banner (or nothing, when it shows that Session) and answers `notify_seen`
+  within 2 s. Hosted Android gets unanswered alerts on its own `role=notify` relay socket.
   A turn started outside Baton also skips while the user is at that computer: Bridge attaches
   `localIdleSec` (`presence.mjs`: own pty atime, macOS `HIDIdleTime`, Windows Interactive helper
   task) and Bridge drops it under 120 s. Sessions Baton has driven (`batonSessions`), daemon

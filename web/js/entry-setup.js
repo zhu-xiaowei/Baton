@@ -13,7 +13,7 @@ import { initMobileNotifications, mountNotificationSettings } from './mobile-not
 import { mountTextSizeSettings } from './text-size-settings.js';
 import { initPageZoomShortcuts } from './page-zoom.js';
 import { removeDevice, viaComputer } from './v2/pairing.js';
-import { devices } from './v2/direct-transport.js';
+import { cachedOnlineDevices, connect, devices, relayFrameBytes, request } from './v2/direct-transport.js';
 import { toPhrase } from './v2/recovery.js';
 import { confirmDialog } from './components/confirm-dialog.js';
 import { fromBase64 } from '../../bridge/direct-rpc-protocol.mjs';
@@ -35,6 +35,14 @@ setNativeTabTitle('Settings');
   mountTextSizeSettings();
   mountNotificationSettings();
   void initMobileNotifications();
+  // The App socket, for in-app alerts (mobile-notifications.js), again when shown. On AWS a Bridge sends them only
+  // to Apps it has heard from: a one-way hello (no handler, ignored) makes this connection known.
+  var join = function () {
+    connect();
+    devices().then(function () { if (!relayFrameBytes()) cachedOnlineDevices().forEach(function (d) { request(d, 'hello', {}, { oneWay: true }).catch(function () {}); }); }).catch(function () {});
+  };
+  join();
+  document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'visible') join(); });
   mountThemeSettings();
 
   function fromIndex() {
