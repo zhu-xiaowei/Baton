@@ -12,7 +12,10 @@ const iso = (t) => new Date(t).toISOString();
 const list = (text) => (text ?? '').split(',').filter(Boolean);
 const sum = (rows, f) => (rows ?? []).reduce((n, r) => n + (f(r) ?? 0), 0);
 
+// Until the operator adds the read-only token, analytics, the cost cap and their alerts stay off (probes still run).
+const NO_TOKEN = 'ANALYTICS_TOKEN is not set';
 async function cfApi(env, path, body, type = 'application/json') {
+  if (!env.ANALYTICS_TOKEN) throw new Error(NO_TOKEN);
   const res = await fetch(`https://api.cloudflare.com/client/v4${path}`, { method: 'POST', body,
     headers: { authorization: `Bearer ${env.ANALYTICS_TOKEN}`, 'content-type': type }, signal: AbortSignal.timeout(20_000) });
   const json = await res.json().catch(() => null);
@@ -235,7 +238,7 @@ export class MonitorStore extends DurableObject {
       if (p.ok && (state.fails[name] ?? 0) >= 2) this.alert(state, null, `${name} probe recovered`, `Answered in ${p.ms} ms.`);
       state.fails[name] = fails;
     }
-    state.usageFails = used.error ? (state.usageFails ?? 0) + 1 : 0;
+    state.usageFails = used.error && used.error !== NO_TOKEN ? (state.usageFails ?? 0) + 1 : 0;
     if (state.usageFails === 2) this.alert(state, null, 'usage collection failing', `The cost cap is not enforced while this lasts: ${used.error}`);
     if (!used.error) {
       // The cost cap: an account object over COST_CAP this month is blocked until the 1st of next month (UTC).

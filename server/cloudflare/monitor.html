@@ -178,7 +178,9 @@ function render(d) {
   charts.length = 0;
   const L0 = d.latest ?? {}, live = d.live ?? {}, u = live.users ?? {}, series = d.series ?? [], now = d.now;
   const probes = L0.probes ?? [];
-  const problems = [...probes.flatMap((p, i) => (p.ok ? [] : [`${PROBE[i]} 不通`])), ...(L0.error ? ['用量读取失败'] : []), ...(live.error ? ['实时数据失败'] : [])];
+  const noToken = /ANALYTICS_TOKEN/.test(L0.error ?? '');
+  const problems = [...probes.flatMap((p, i) => (p.ok ? [] : [`${PROBE[i]} 不通`])), ...(L0.error && !noToken ? ['用量读取失败'] : []),
+    ...(live.error && !noToken ? ['实时数据失败'] : [])];
   const healthy = probes.length && !problems.length;
   const top = document.getElementById('top');
   const status = document.getElementById('status');
@@ -218,7 +220,7 @@ function render(d) {
 
   h.push('<h2>用户</h2><div class="grid">',
     card('活跃用户', `<div class="trio"><div><div class="big">${n(u.dau)}</div><div class="label">日活</div></div><div><div class="big">${n(u.wau)}</div><div class="label">周活</div></div>`
-      + `<div><div class="big">${n(u.mau)}</div><div class="label">月活</div></div></div>${u.error ? NA(esc(u.error)) : chart('bar', daily('dau'), { from: 0, to: 30 })}`, '近 30 天'),
+      + `<div><div class="big">${n(u.mau)}</div><div class="label">月活</div></div></div>${u.error ? NA(noToken ? '未设置分析令牌' : esc(u.error)) : chart('bar', daily('dau'), { from: 0, to: 30 })}`, '近 30 天'),
     card(`当前在线 ${info('App：1 分钟内打开过 App 的账户。Bridge：5 分钟内有活动的账户（Bridge 每 4 分钟心跳）。')}`,
       `<div class="trio"><div><div class="big">${n(online.apps)}</div><div class="label">App</div></div><div><div class="big">${n(online.awake)}</div><div class="label">Bridge</div></div>`
       + `<div><div class="big">${n(online.sockets)}</div><div class="label">连接数</div></div></div>${line(2, { color: '#3fb950' })}`, '近 24 小时'),
@@ -246,7 +248,7 @@ function render(d) {
     '</div>');
 
   h.push('<h2>费用与额度</h2>');
-  if (L0.error) h.push(`<div class="err">用量读取失败：${esc(L0.error)}</div>`);
+  if (L0.error) h.push(`<div class="err">${noToken ? '未设置分析令牌 ANALYTICS_TOKEN：用量、费用和封禁上限暂停，探测照常。请在 Cloudflare 控制台添加。' : `用量读取失败：${esc(L0.error)}`}</div>`);
   h.push('<div class="grid">',
     card(`费用构成 ${info('按 Workers 付费版公开单价计算，未扣除免费/包含用量。')}`, `<div class="trio" style="grid-template-columns:1fr 1fr"><div><div class="big">${usd(c.usage)}</div><div class="label">本月至今</div></div>`
       + `<div><div class="big">${usd(c.projectedUsage)}</div><div class="label">月底预计</div></div></div>`

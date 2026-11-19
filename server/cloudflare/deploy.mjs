@@ -11,7 +11,8 @@
 // --relay first deploys push-relay/worker.mjs as <name>-push with the APNs key read from stdin (the relay's SSM JSON).
 // --monitor <host> --admin-email <address> [--monitor-name] [--cost-cap 1] [--cost-alert 20] [--plan free|paid] deploys only the monitor of the
 // service <name> (server/cloudflare/monitor.mjs) behind Cloudflare Access; env MONITOR_API_TOKEN: a read-only token with
-// Account Analytics Read + zone Analytics Read (kept from the last deploy when unset).
+// Account Analytics Read + zone Analytics Read, stored as the secret ANALYTICS_TOKEN (optional: kept when unset, or added
+// later in the dashboard; without it the monitor only probes).
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
@@ -204,7 +205,7 @@ async function deployMonitor() {
   const old = (await exists(name)) ? Object.fromEntries((await cf('GET', `/workers/scripts/${name}/settings`)).bindings.map((b) => [b.name, b.text])) : {};
   const secrets = {};
   if (process.env.MONITOR_API_TOKEN) secrets.ANALYTICS_TOKEN = process.env.MONITOR_API_TOKEN;
-  else if (!('ANALYTICS_TOKEN' in old)) throw new Error('MONITOR_API_TOKEN is required for the first deploy');
+  else if (!('ANALYTICS_TOKEN' in old)) console.log(`${name}: no ANALYTICS_TOKEN yet; add it as a secret (read-only analytics token) to start usage, cost and the cap`);
   let probe = old.PROBE_ACCOUNT;
   if (!probe || !('PROBE_TOKEN' in old)) {
     const { accountOf } = await import('../../bridge/e2ee-node.mjs');
