@@ -257,7 +257,7 @@ export class DirectRpcBridge {
       openStreamMessage({ kind: 'stream', ch: frame.ch, id: frame.id }, frame.m, session.open)
         .then((opened) => {
           if (!opened) return null;
-          this.peers.set(frame.from, session.tag); // only an opened frame may point replies at a connection
+          this.notePeer(frame.from, session.tag); // only an opened frame may point replies at a connection
           return unpackStreamMessage(opened, inflateRawSync);
         })
         .then((opened) => opened && this.streams[frame.ch]?.({ ...frame, m: opened }), () => {});
@@ -280,8 +280,14 @@ export class DirectRpcBridge {
     if (!session) return;
     let params;
     try { params = await decodeRpcPayload(part.payload, inflateRawSync, (_, text) => session.open(frame, text)); } catch { return; }
-    this.peers.set(frame.replyTo, session.tag);
+    this.notePeer(frame.replyTo, session.tag);
     this.accept({ ...head, params, session });
+  }
+
+  // Most recently heard from last (bridge/ws.mjs checkApps takes the newest).
+  notePeer(id, tag) {
+    this.peers.delete(id);
+    this.peers.set(id, tag);
   }
 
   accept(frame) {

@@ -67,7 +67,7 @@ import {
 } from './live-turn-stream.mjs';
 import { CommandCatalogCache, commandCatalogPayload } from './command-catalog-cache.mjs';
 import { onAgentCountUpdates } from './agent-counts.mjs';
-import { configureNotifier, endTakeover, flushQueue, noteTakeover } from './notify.mjs';
+import { configureNotifier, endTakeover, flushQueue, noteSeen, noteTakeover } from './notify.mjs';
 import { ClientTurnOrder } from './client-turn-order.mjs';
 import { DirectRpcBridge, SessionSubscribers } from './direct-rpc.mjs';
 import { sessionIndex } from './session-index.mjs';
@@ -821,7 +821,7 @@ function connect() {
           return params.subscribe ? { ...reply, bridgeEpoch: BRIDGE_EPOCH } : reply;
         },
         subscribe: (params, caller) => subscribeCaller(params, caller),
-        notify_seen: params => { _notifyChecks.get(params.eventId)?.(true); return {}; },
+        notify_seen: params => { noteSeen(params.eventId); return {}; },
         unsubscribe: (params, caller) => { _subscribers.remove(params.sessionId, caller.replyTo); if (!_subscribers.targets(params.sessionId, { root: true }).length) _catalogTitles.delete(params.sessionId); return {}; },
         send_message: (params, caller) => requestSendMessage(params, caller),
         interrupt: async params => { await handleInterrupt(params); return { ok: true }; },
@@ -1064,21 +1064,19 @@ function publishCatalogTitles() {
 sessionIndex.pendingDetail = pendingInteractionDetail;
 sessionIndex.awaitsAgents = poolAwaitsAgents;
 
-// "Being viewed": a page showing the root answers `notify_check` with `notify_seen` while it is
-// visible and focused. A suspended iOS page keeps its subscription but cannot answer.
-const NOTIFY_VIEW_WAIT_MS = 3000;
-const _notifyChecks = new Map(); // eventId → settle
-function viewedOnApp(rootSessionId, eventId) {
-  const targets = _subscribers.targets(rootSessionId, { root: true });
-  if (!targets.length || !_directRpc) return Promise.resolve(false);
-  return new Promise((resolve) => {
-    const settle = (seen) => { clearTimeout(timer); _notifyChecks.delete(eventId); resolve(seen); };
-    const timer = setTimeout(() => settle(false), NOTIFY_VIEW_WAIT_MS);
-    _notifyChecks.set(eventId, settle);
-    _directRpc.publish({ action: 'notify_check', rootSessionId, eventId }, targets);
-  });
+// An alert goes to every App of the account first (bridge/notify.mjs): relay → the account object fans out the
+// sealed alert; AWS → the root's subscribers and the 32 App connections last heard from, sealed per connection.
+function checkApps(alert, sealed) {
+  const rpc = _directRpc;
+  if (!rpc?.keys) return false;
+  if (rpc.relay) return !!sealed && wsSend({ to: 'apps', kind: 'notify', ...sealed });
+  const subscribed = _subscribers.targets(alert.rootSessionId, { root: true });
+  const targets = [...subscribed, ...[...rpc.peers.keys()].slice(-32).filter((id) => !subscribed.some(([s]) => s === id)).map((id) => [id, { deflate: false }])];
+  rpc.publish({ action: 'notify_check', ...alert }, targets);
+  return targets.length > 0;
 }
-configureNotifier({ post, sendAlert: (frame) => (_relay || _directRpc?.relay ? relayAlert(frame) : null), history: params => historyService.history(params), viewed: viewedOnApp,
+configureNotifier({ post, sendAlert: (frame) => (_relay || _directRpc?.relay ? relayAlert(frame) : null), history: params => historyService.history(params), checkApps,
+  viewWait: () => (_directRpc?.relay ? 2000 : 3000), // AWS: notify_seen takes two Lambda-routed hops
   notifyKey: () => _directRpc?.keys?.notifyKey });
 setTransferKeys(() => _directRpc?.keys?.files() || null);
 setTransferAccess(() => {

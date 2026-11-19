@@ -13,7 +13,8 @@ let deps = {
   post: async () => null,                 // (endpoint, body) → Response | null
   sendAlert: () => null,                  // ({ action: 'alert', ...alert }) → sent over the relay socket: true/false; null → post
   history: async () => ({ messages: [] }), // ({ sessionId, limit }) → newest rows, oldest first
-  viewed: async () => false,              // (rootSessionId, eventId) → a page shows it now (waits up to 3 s)
+  checkApps: () => false,                 // (alert, sealed) → notify_check sent to the account's Apps: true/false
+  viewWait: () => 2000,                   // ms an App has to answer notify_seen
   sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
 };
 const rows = new Map();  // `device|project|sessionId` → the last reported row
@@ -188,8 +189,21 @@ export async function alertFor(old, row) {
   };
 }
 
+// A visible, focused App shows the alert itself and answers `notify_seen`: then no push to any device.
+const checks = new Map(); // eventId → settle
+export const noteSeen = (eventId) => checks.get(eventId)?.(true);
+function viewed(alert) {
+  const key = deps.notifyKey?.();
+  return new Promise((resolve) => {
+    const settle = (seen) => { clearTimeout(timer); checks.delete(alert.eventId); resolve(seen); };
+    const timer = setTimeout(() => settle(false), deps.viewWait());
+    checks.set(alert.eventId, settle);
+    if (!deps.checkApps(alert, key ? sealAlert(alert, key) : null)) settle(false);
+  });
+}
+
 async function deliver(alert) {
-  if (await deps.viewed(alert.rootSessionId, alert.eventId)) return;
+  if (await viewed(alert)) return;
   if (!await send(alert)) enqueue(alert);
 }
 

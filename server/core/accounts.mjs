@@ -210,7 +210,7 @@ export function createAccounts({ env, table, auth, devices, sockets, log }) {
   // ---- Removal, rotation, deletion ----
 
   async function close(account, digest = null, notice = null) {
-    for (const role of ['app', 'bridge', 'app_data', 'bridge_data']) {
+    for (const role of ['app', 'bridge', 'app_data', 'bridge_data', 'notify']) { // notify: Cloudflare's Android alert socket
       const endpoint = env[role.endsWith('_data') ? 'TERMINAL_DIRECT_ENDPOINT' : 'WS_API_ENDPOINT'] ?? '';
       for (const item of endpoint ? await sockets.query(account, role) : []) {
         // The role index projects only deviceName: read the connection itself for its token.
