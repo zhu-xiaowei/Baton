@@ -2,13 +2,14 @@
 // Publishes the homepage (this folder) as an assets-only Worker on agentbaton.app/* (no code runs per request).
 // The more specific agentbaton.app/install(.ps1) routes keep going to the service Worker; www redirects to the apex.
 //   node home/deploy.mjs [--name baton-home] [--host agentbaton.app] [--zone <zone id>]   env: CF_ACCOUNT_ID, CF_API_TOKEN
+//   --downloads instead sets up dl.<host>: the public R2 bucket baton-downloads that scripts/publish-downloads.mjs fills.
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { parseArgs } from 'node:util';
 
 const { values: f } = parseArgs({ options: { name: { type: 'string', default: 'baton-home' }, host: { type: 'string', default: 'agentbaton.app' },
-  zone: { type: 'string', default: '387d3d961b05753a9bb536e6545f817b' } } });
+  zone: { type: 'string', default: '387d3d961b05753a9bb536e6545f817b' }, downloads: { type: 'boolean', default: false } } });
 const { CF_ACCOUNT_ID: ACCOUNT, CF_API_TOKEN: TOKEN } = process.env;
 if (!ACCOUNT || !TOKEN) throw new Error('CF_ACCOUNT_ID and CF_API_TOKEN are required');
 const API = 'https://api.cloudflare.com/client/v4';
@@ -22,6 +23,27 @@ async function cf(method, url, body, auth = TOKEN) {
   const json = await res.json().catch(() => ({}));
   if (!res.ok || json.success === false) throw new Error(`${method} ${url.replace(API, '')}: ${res.status} ${JSON.stringify(json.errors ?? json).slice(0, 300)}`);
   return json.result;
+}
+
+// Replaces only the rule with this ref in a zone phase; the zone's other rules are kept.
+async function rule(phase, r) {
+  const url = `${ZONE}/rulesets/phases/${phase}/entrypoint`;
+  const current = await cf('GET', url).catch((e) => (/: 404 /.test(e.message) ? { rules: [] } : Promise.reject(e)));
+  const keep = (current.rules ?? []).filter((x) => x.ref !== r.ref).map(({ ref, description, expression, action, action_parameters, enabled }) =>
+    ({ ref, description, expression, action, action_parameters, enabled }));
+  await cf('PUT', url, { rules: [...keep, r] });
+}
+
+if (f.downloads) {
+  const dl = `dl.${f.host}`;
+  const bucket = `${API}/accounts/${ACCOUNT}/r2/buckets/baton-downloads`;
+  await cf('GET', bucket).catch((e) => (/: 404 /.test(e.message) ? cf('POST', `${API}/accounts/${ACCOUNT}/r2/buckets`, { name: 'baton-downloads' }) : Promise.reject(e)));
+  if (!(await cf('GET', `${bucket}/domains/custom`)).domains.some((d) => d.domain === dl)) await cf('POST', `${bucket}/domains/custom`, { domain: dl, zoneId: f.zone, enabled: true });
+  // Cached at the edge for as long as each object's own Cache-Control says.
+  await rule('http_request_cache_settings', { ref: 'dl-cache', description: `${dl} cache`, expression: `(http.host eq "${dl}")`, action: 'set_cache_settings',
+    action_parameters: { cache: true, edge_ttl: { mode: 'respect_origin' }, browser_ttl: { mode: 'respect_origin' } } });
+  console.log(`https://${dl}/ serves baton-downloads`);
+  process.exit(0);
 }
 
 // Assets: every .html file under this folder; / and /privacy/ resolve through auto-trailing-slash.
@@ -59,11 +81,7 @@ const route = (await cf('GET', `${ZONE}/workers/routes`)).find((r) => r.pattern 
 if (!route) await cf('POST', `${ZONE}/workers/routes`, { pattern, script: f.name });
 else if (route.script !== f.name) await cf('PUT', `${ZONE}/workers/routes/${route.id}`, { pattern, script: f.name });
 
-// www → apex, path and query kept; other Single Redirects in the zone are kept.
-const PHASE = `${ZONE}/rulesets/phases/http_request_dynamic_redirect/entrypoint`;
-const current = await cf('GET', PHASE).catch((e) => (/: 404 /.test(e.message) ? { rules: [] } : Promise.reject(e)));
-const keep = (current.rules ?? []).filter((r) => r.ref !== 'home-www').map(({ ref, description, expression, action, action_parameters, enabled }) =>
-  ({ ref, description, expression, action, action_parameters, enabled }));
-await cf('PUT', PHASE, { rules: [...keep, { ref: 'home-www', description: `${www} to ${f.host}`, expression: `(http.host eq "${www}")`, action: 'redirect',
-  action_parameters: { from_value: { status_code: 301, preserve_query_string: true, target_url: { expression: `concat("https://${f.host}", http.request.uri.path)` } } } }] });
+// www → apex, path and query kept.
+await rule('http_request_dynamic_redirect', { ref: 'home-www', description: `${www} to ${f.host}`, expression: `(http.host eq "${www}")`, action: 'redirect',
+  action_parameters: { from_value: { status_code: 301, preserve_query_string: true, target_url: { expression: `concat("https://${f.host}", http.request.uri.path)` } } } });
 console.log(`deployed https://${f.host}/ (route ${pattern}), ${www} redirects`);
