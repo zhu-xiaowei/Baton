@@ -71,7 +71,8 @@ export class AccountObject extends DurableObject {
     if (role === 'bridge' && bridgesFull(this.live('bridge'), device, max.bridges)) return refuse(4429, 'too_many_bridges');
     const [client, socket] = Object.values(new WebSocketPair());
     const id = randomHex(12);
-    this.ctx.acceptWebSocket(socket, [role, `id:${id}`, ...(role === 'bridge' && device ? [`dev:${device}`] : [])]);
+    const tok = role === 'notify' && resolved.tokenHash ? [`tok:${resolved.tokenHash}`] : []; // one notify socket per App token
+    this.ctx.acceptWebSocket(socket, [role, `id:${id}`, ...(role === 'bridge' && device ? [`dev:${device}`] : []), ...tok]);
     const me = { role, id, account, device, tokenHash: resolved.tokenHash ?? '', connectedAt: Date.now() };
     socket.serializeAttachment(me);
     if (role !== 'notify') await this.usage.joined(request, me, () => this.store('getItem', { Key: { pk: `ACCOUNT#${account}`, sk: 'META' } })
@@ -91,6 +92,7 @@ export class AccountObject extends DurableObject {
     if (role === 'app') {
       for (const [old] of leastActive(this.live('app').filter(([ws]) => ws !== socket), max.apps - 1)) await this.retire(old, 4429, 'too_many_apps');
     }
+    for (const [old] of tok.length ? this.live(tok[0]) : []) if (old !== socket) await this.retire(old, 4409, 'replaced');
     if (role === 'notify' && query.get('after')) {
       const list = this.replay(account);
       const at = list.findIndex((entry) => entry.alert.eventId === query.get('after'));
@@ -145,7 +147,7 @@ export class AccountObject extends DurableObject {
     }
   }
 
-  // A Bridge's alert, checked like the REST body, pushed to the account's iOS devices; nothing is stored.
+  // A Bridge's alert, checked like the REST body, pushed to the account's iOS devices and notify sockets; only sealed ones are kept (replay).
   // Acknowledged (`alert_ok`) once taken; a resend of an alert already taken is only acknowledged again.
   async alert(ws, account, { action, ...body }) {
     const alert = validateAlert(body);
@@ -154,7 +156,7 @@ export class AccountObject extends DurableObject {
       ConditionExpression: 'attribute_not_exists(pk)' });
     send(ws, { action: 'alert_ok', eventId: alert.eventId });
     if (seen.error) return;
-    const list = [...this.replay(account), { at: Date.now(), alert }].slice(-REPLAY_COUNT);
+    const list = [...this.replay(account), ...(alert.e ? [{ at: Date.now(), alert }] : [])].slice(-REPLAY_COUNT); // sealed ones only
     this.store('putItem', { Item: { pk: `NOTIFYQ#${account}`, sk: '-', list, ttl: nowInt() + REPLAY_MS / 1000 } });
     for (const [socket] of this.live('notify')) send(socket, { action: 'alert', ...alert, accountId: account }); // a tap checks the account
     try {
