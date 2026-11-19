@@ -176,7 +176,7 @@ const quotaName = (k, paid) => { const [label, daily] = QUOTA[k] ?? [k, 0]; retu
 
 function render(d) {
   charts.length = 0;
-  const L0 = d.latest ?? {}, live = d.live ?? {}, u = live.users ?? {}, series = d.series ?? [], now = d.now;
+  const L0 = d.latest ?? {}, live = d.live ?? {}, u = live.users ?? { error: live.error }, series = d.series ?? [], now = d.now;
   const probes = L0.probes ?? [];
   const noToken = /ANALYTICS_TOKEN/.test(L0.error ?? '');
   const problems = [...probes.flatMap((p, i) => (p.ok ? [] : [`${PROBE[i]} 不通`])), ...(L0.error && !noToken ? ['用量读取失败'] : []),
