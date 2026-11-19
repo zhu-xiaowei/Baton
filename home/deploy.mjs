@@ -28,10 +28,11 @@ async function cf(method, url, body, auth = TOKEN) {
 const files = {};
 const manifest = {};
 for (const rel of fs.readdirSync(DIR, { recursive: true }).filter((p) => p.endsWith('.html'))) {
-  const b64 = fs.readFileSync(path.join(DIR, rel)).toString('base64');
+  const bytes = fs.readFileSync(path.join(DIR, rel));
+  const b64 = bytes.toString('base64');
   const hash = createHash('sha256').update(b64 + 'html').digest('hex').slice(0, 32);
   files[hash] = b64;
-  manifest[`/${rel.split(path.sep).join('/')}`] = { hash, size: Buffer.from(b64, 'base64').length };
+  manifest[`/${rel.split(path.sep).join('/')}`] = { hash, size: bytes.length };
 }
 const session = await cf('POST', `${API}/accounts/${ACCOUNT}/workers/scripts/${f.name}/assets-upload-session`, { manifest });
 let jwt = session.jwt;
@@ -48,7 +49,7 @@ await cf('PUT', `${API}/accounts/${ACCOUNT}/workers/scripts/${f.name}`, meta);
 await cf('POST', `${API}/accounts/${ACCOUNT}/workers/scripts/${f.name}/subdomain`, { enabled: false, previews_enabled: false });
 console.log(`${f.name}: ${Object.keys(manifest).length} files, ${(session.buckets ?? []).flat().length} uploaded`);
 
-// Routes need proxied records; the apex one already carries the install routes.
+// Routes and the redirect need proxied records (an existing record is assumed proxied); the apex one already carries the install routes.
 const www = `www.${f.host}`;
 for (const name of [f.host, www]) {
   if (!(await cf('GET', `${ZONE}/dns_records?name=${name}`)).length) await cf('POST', `${ZONE}/dns_records`, { type: 'AAAA', name, content: '100::', proxied: true });
@@ -58,8 +59,11 @@ const route = (await cf('GET', `${ZONE}/workers/routes`)).find((r) => r.pattern 
 if (!route) await cf('POST', `${ZONE}/workers/routes`, { pattern, script: f.name });
 else if (route.script !== f.name) await cf('PUT', `${ZONE}/workers/routes/${route.id}`, { pattern, script: f.name });
 
-// www → apex, path and query kept: the zone's single redirect rule set holds only this rule.
-await cf('PUT', `${ZONE}/rulesets/phases/http_request_dynamic_redirect/entrypoint`, { rules: [{ description: `${www} to ${f.host}`,
-  expression: `(http.host eq "${www}")`, action: 'redirect', action_parameters: { from_value: { status_code: 301, preserve_query_string: true,
-    target_url: { expression: `concat("https://${f.host}", http.request.uri.path)` } } } }] });
+// www → apex, path and query kept; other Single Redirects in the zone are kept.
+const PHASE = `${ZONE}/rulesets/phases/http_request_dynamic_redirect/entrypoint`;
+const current = await cf('GET', PHASE).catch((e) => (/: 404 /.test(e.message) ? { rules: [] } : Promise.reject(e)));
+const keep = (current.rules ?? []).filter((r) => r.ref !== 'home-www').map(({ ref, description, expression, action, action_parameters, enabled }) =>
+  ({ ref, description, expression, action, action_parameters, enabled }));
+await cf('PUT', PHASE, { rules: [...keep, { ref: 'home-www', description: `${www} to ${f.host}`, expression: `(http.host eq "${www}")`, action: 'redirect',
+  action_parameters: { from_value: { status_code: 301, preserve_query_string: true, target_url: { expression: `concat("https://${f.host}", http.request.uri.path)` } } } }] });
 console.log(`deployed https://${f.host}/ (route ${pattern}), ${www} redirects`);

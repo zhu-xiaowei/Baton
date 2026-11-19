@@ -19,9 +19,9 @@ if(s!=='en'&&s!=='zh'){var l=(navigator.languages&&navigator.languages[0])||navi
 d.lang=s==='zh'?'zh-CN':'en';d.className='js';if(s==='zh')document.title='Baton：电脑上的 Agent，手机上接着用'})();
 </script>
 <style>
-:root{--bg:#0d1117;--surface:#161b22;--surface2:#1c2330;--border:#30363d;--border2:#21262d;--text:#e6edf3;--muted:#8b949e;--faint:#6e7681;--accent:#58a6ff;--accent2:#a371f7;--green:#3fb950;--amber:#d29922;--red:#f85149;--glow:rgba(56,139,253,.18);--glow2:rgba(163,113,247,.12);--btn:#e6edf3;--on-btn:#0d1117;--code:#0b0f14;--ctl:#1c2330;--ctl-h:#262c36;--ctl-b:#30363d;--ctl-t:#c9d1d9;--ok:#56d364;
+:root{--bg:#0d1117;--surface:#161b22;--surface2:#1c2330;--border:#30363d;--border2:#21262d;--text:#e6edf3;--muted:#8b949e;--faint:#7d8590;--accent:#58a6ff;--accent2:#a371f7;--green:#3fb950;--amber:#d29922;--red:#f85149;--glow:rgba(56,139,253,.18);--glow2:rgba(163,113,247,.12);--btn:#e6edf3;--on-btn:#0d1117;--code:#0b0f14;--ctl:#1c2330;--ctl-h:#262c36;--ctl-b:#30363d;--ctl-t:#c9d1d9;--ok:#56d364;
 --sans:-apple-system,BlinkMacSystemFont,"Segoe UI","Helvetica Neue",Arial,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans CJK SC",sans-serif;--mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace}
-@media (prefers-color-scheme:light){:root{--bg:#ffffff;--surface:#f6f8fa;--surface2:#eaeef2;--border:#d0d7de;--border2:#e4e8ec;--text:#1f2328;--muted:#59636e;--faint:#6e7781;--accent:#0969da;--accent2:#8250df;--glow:rgba(9,105,218,.10);--glow2:rgba(130,80,223,.08);--btn:#1f2328;--on-btn:#ffffff;--code:#f6f8fa;--ctl:#ffffff;--ctl-h:#f3f4f6;--ctl-b:#d0d7de;--ctl-t:#1f2328;--ok:#1a7f37}}
+@media (prefers-color-scheme:light){:root{--bg:#ffffff;--surface:#f6f8fa;--surface2:#eaeef2;--border:#d0d7de;--border2:#e4e8ec;--text:#1f2328;--muted:#59636e;--faint:#656d76;--accent:#0969da;--accent2:#8250df;--glow:rgba(9,105,218,.10);--glow2:rgba(130,80,223,.08);--btn:#1f2328;--on-btn:#ffffff;--code:#f6f8fa;--ctl:#ffffff;--ctl-h:#f3f4f6;--ctl-b:#d0d7de;--ctl-t:#1f2328;--ok:#1a7f37}}
 /* product mocks always use the App's dark palette */
 .mock{--bg:#0d1117;--surface:#161b22;--surface2:#1c2330;--border:#30363d;--border2:#21262d;--text:#e6edf3;--muted:#8b949e;--faint:#6e7681;--accent:#58a6ff;color:var(--text)}
 *{box-sizing:border-box}
@@ -234,8 +234,6 @@ html[lang|=zh] h2{letter-spacing:0}
 .copy:hover{background:var(--ctl-h)}
 .copy:focus-visible{outline:2px solid var(--accent)}
 .copy.ok{color:var(--ok)}
-.note{margin-top:12px!important;font-size:13.5px!important;color:var(--faint)!important}
-.note b{color:var(--muted);font-weight:600}
 .plat{display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin-top:8px}
 .plat a{display:flex;flex-direction:column;align-items:center;gap:8px;min-width:0;padding:14px 2px 10px;border:1px solid var(--border);border-radius:12px;background:var(--bg);font-size:12px;color:var(--muted);white-space:nowrap;transition:border-color .15s,transform .15s,color .15s}
 .plat a:hover{border-color:var(--faint);color:var(--text)}
@@ -447,11 +445,11 @@ section{padding-top:76px}
 <div class="hero">
 <div class="wrap">
 <h1><span class="en">Pass the baton<br><span class="grad">to your phone.</span></span><span class="zh" lang="zh-CN">电脑上的 Agent，<br><span class="grad">手机上接着用。</span></span></h1>
-<p class="lede"><span class="en">Pick up your coding-agent Sessions on your phone, right where you left off. Watch live, reply and approve — everything stays on your computer.</span><span class="zh" lang="zh-CN">离开电脑，Claude Code、Codex 等编程 Agent 的 Session 也能在手机上接着用：实时看输出、继续对话、审批权限。对话始终留在你自己的电脑上。</span></p>
+<p class="lede"><span class="en">Pick up your coding-agent Sessions on your phone, right where you left off. Watch live, reply and approve — your conversations stay on your computer.</span><span class="zh" lang="zh-CN">离开电脑，Claude Code、Codex 等编程 Agent 的 Session 也能在手机上接着用：实时看输出、继续对话、审批权限。对话始终留在你自己的电脑上。</span></p>
 <div class="cta"><a class="btn" href="#start"><span class="en">Get started</span><span class="zh" lang="zh-CN">开始使用</span><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8h9M8.5 4l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></a></div>
 <div class="agents">
 <p><span class="en">Works with 7 agents</span><span class="zh" lang="zh-CN">支持 7 种 Agent</span></p>
-<ul class="ags"><li><span class="ag" tabindex="0" role="img" aria-label="Claude Code" data-n="Claude Code"><svg class="claude" aria-hidden="true"><use href="#rt-claude"/></svg></span><small aria-hidden="true"><span class="sn">Claude</span><span class="fn2">Claude Code</span></small></li><li><span class="ag" tabindex="0" role="img" aria-label="Codex" data-n="Codex"><svg class="codex" aria-hidden="true"><use href="#rt-codex"/></svg></span><small aria-hidden="true">Codex</small></li><li><span class="ag" tabindex="0" role="img" aria-label="Pi" data-n="Pi"><svg class="pi" aria-hidden="true"><use href="#rt-pi"/></svg></span><small aria-hidden="true">Pi</small></li><li><span class="ag" tabindex="0" role="img" aria-label="Hermes" data-n="Hermes"><svg class="hermes" aria-hidden="true"><use href="#rt-hermes"/></svg></span><small aria-hidden="true">Hermes</small></li><li><span class="ag" tabindex="0" role="img" aria-label="OpenCode" data-n="OpenCode"><svg class="opencode" aria-hidden="true"><use href="#rt-opencode"/></svg></span><small aria-hidden="true">OpenCode</small></li><li><span class="ag" tabindex="0" role="img" aria-label="Kiro" data-n="Kiro"><svg class="kiro" aria-hidden="true"><use href="#rt-kiro"/></svg></span><small aria-hidden="true">Kiro</small></li><li><span class="ag" tabindex="0" role="img" aria-label="DeepSeek Harness" data-n="DeepSeek Harness"><svg class="dsh" aria-hidden="true"><use href="#rt-dsh"/></svg></span><small aria-hidden="true"><span class="sn">DeepSeek</span><span class="fn2">DeepSeek Harness</span></small></li></ul>
+<ul class="ags"><li><span class="ag" role="img" aria-label="Claude Code" data-n="Claude Code"><svg class="claude" aria-hidden="true"><use href="#rt-claude"/></svg></span><small aria-hidden="true"><span class="sn">Claude</span><span class="fn2">Claude Code</span></small></li><li><span class="ag" role="img" aria-label="Codex" data-n="Codex"><svg class="codex" aria-hidden="true"><use href="#rt-codex"/></svg></span><small aria-hidden="true">Codex</small></li><li><span class="ag" role="img" aria-label="Pi" data-n="Pi"><svg class="pi" aria-hidden="true"><use href="#rt-pi"/></svg></span><small aria-hidden="true">Pi</small></li><li><span class="ag" role="img" aria-label="Hermes" data-n="Hermes"><svg class="hermes" aria-hidden="true"><use href="#rt-hermes"/></svg></span><small aria-hidden="true">Hermes</small></li><li><span class="ag" role="img" aria-label="OpenCode" data-n="OpenCode"><svg class="opencode" aria-hidden="true"><use href="#rt-opencode"/></svg></span><small aria-hidden="true">OpenCode</small></li><li><span class="ag" role="img" aria-label="Kiro" data-n="Kiro"><svg class="kiro" aria-hidden="true"><use href="#rt-kiro"/></svg></span><small aria-hidden="true">Kiro</small></li><li><span class="ag" role="img" aria-label="DeepSeek Harness" data-n="DeepSeek Harness"><svg class="dsh" aria-hidden="true"><use href="#rt-dsh"/></svg></span><small aria-hidden="true"><span class="sn">DeepSeek</span><span class="fn2">DeepSeek Harness</span></small></li></ul>
 </div>
 
 <div class="stage" id="stage" role="img" aria-label="Animated example: Claude Code works in a terminal, and the same Session continues in the Baton App on a phone">
@@ -510,7 +508,7 @@ section{padding-top:76px}
 <div class="go">
 <div class="gs">
 <p class="gl"><i>1</i><span class="en">Install Bridge on your computer</span><span class="zh" lang="zh-CN">在电脑上安装 Bridge</span></p>
-<div class="cmd"><span class="os" role="group" aria-label="Operating system"><button type="button" data-o="unix" aria-pressed="true" aria-label="macOS / Linux" title="macOS / Linux"><svg aria-hidden="true"><use href="#p-apple"/></svg><svg aria-hidden="true"><use href="#p-linux"/></svg></button><button type="button" data-o="win" aria-pressed="false" aria-label="Windows" title="Windows"><svg aria-hidden="true"><use href="#p-win"/></svg></button></span><code tabindex="0">curl -fsSL https://agentbaton.app/install | bash</code><button type="button" class="copy"><span class="en">Copy</span><span class="zh" lang="zh-CN">复制</span></button></div>
+<div class="cmd"><span class="os" role="group" aria-label="Operating system"><button type="button" data-o="unix" aria-pressed="true" aria-label="macOS / Linux" title="macOS / Linux"><svg aria-hidden="true"><use href="#p-apple"/></svg><svg aria-hidden="true"><use href="#p-linux"/></svg></button><button type="button" data-o="win" aria-pressed="false" aria-label="Windows" title="Windows"><svg aria-hidden="true"><use href="#p-win"/></svg></button></span><code tabindex="0">curl -fsSL https://agentbaton.app/install | bash</code><button type="button" class="copy" aria-live="polite"><span class="en">Copy</span><span class="zh" lang="zh-CN">复制</span></button></div>
 </div>
 <div class="gs">
 <p class="gl"><i>2</i><span class="en">Get the App, scan the QR or paste the Start URL</span><span class="zh" lang="zh-CN">下载 App，扫码或粘贴 Start URL 连接</span></p>
@@ -544,7 +542,7 @@ section{padding-top:76px}
 <div class="fr"><span class="fi"><svg><use href="#f-json"/></svg></span><span class="fn">package.json</span></div>
 <div class="fr"><span class="fi"><svg><use href="#f-ts"/></svg></span><span class="fn">tsconfig.json</span></div>
 </div>
-<div class="txt"><h3><span class="en">Project files</span><span class="zh" lang="zh-CN">项目文件</span></h3><p><span class="en">Browse and share your source.</span><span class="zh" lang="zh-CN">浏览、下载和分享源码。</span></p></div>
+<div class="txt"><h3><span class="en">Project files</span><span class="zh" lang="zh-CN">项目文件</span></h3><p><span class="en">Browse, download and share your source.</span><span class="zh" lang="zh-CN">浏览、下载和分享源码。</span></p></div>
 </article>
 
 <article class="card feat rv">
@@ -611,7 +609,7 @@ README.md  <span class="b">docs</span>  package.json  <span class="b">public</sp
 var d=document.documentElement,$=function(s,r){return(r||document).querySelector(s)},$$=function(s,r){return[].slice.call((r||document).querySelectorAll(s))};
 var reduce=matchMedia('(prefers-reduced-motion: reduce)').matches;
 function zh(){return d.lang.indexOf('zh')===0}
-function setLang(l){d.lang=l==='zh'?'zh-CN':'en';try{localStorage.setItem('baton-lang',l)}catch(e){}sync()}
+function setLang(l){d.lang=l==='zh'?'zh-CN':'en';try{localStorage.setItem('baton-lang',l)}catch(e){}sync();if(window.onLang)onLang()}
 function sync(){var z=zh();$$('.lang button').forEach(function(b){b.setAttribute('aria-pressed',String((b.dataset.lang==='zh')===z))});
 document.title=z?'Baton：电脑上的 Agent，手机上接着用':'Baton: your coding agents, on your phone'}
 $$('.lang button').forEach(function(b){b.onclick=function(){setLang(b.dataset.lang)}});sync();
@@ -683,6 +681,7 @@ if(j<r.length)timers.push(setTimeout(tick,k==='zh'?55:28));else at(400,done)});
 function done(){prep.innerHTML=md(r,'');busy(false);at(900,function(){pia.classList.add('on')});
 at(6200,function(){pia.classList.remove('on')});at(7000,function(){stage.classList.add('fade')});
 at(7400,function(){visible?cycle():running=false})}}
+window.onLang=function(){if(reduce||!io)final();else if(running)cycle()};
 if(reduce||!io)final();
 else{stage.classList.add('anim');new IntersectionObserver(function(es){visible=es[0].isIntersecting;if(visible&&!running)cycle()}).observe(stage)}
 
