@@ -41,7 +41,7 @@ if (f.downloads) {
   if (!(await cf('GET', `${bucket}/domains/custom`)).domains.some((d) => d.domain === dl)) await cf('POST', `${bucket}/domains/custom`, { domain: dl, zoneId: f.zone, enabled: true });
   // Cached at the edge for as long as each object's own Cache-Control says.
   await rule('http_request_cache_settings', { ref: 'dl-cache', description: `${dl} cache`, expression: `(http.host eq "${dl}")`, action: 'set_cache_settings',
-    action_parameters: { cache: true, edge_ttl: { mode: 'respect_origin' }, browser_ttl: { mode: 'respect_origin' } } });
+    action_parameters: { cache: true, edge_ttl: { mode: 'respect_origin' } } });
   console.log(`https://${dl}/ serves baton-downloads`);
   process.exit(0);
 }

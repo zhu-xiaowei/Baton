@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Publishes a GitHub Release's packages on dl.agentbaton.app (public R2 bucket baton-downloads, set up by home/deploy.mjs --downloads):
 // <tag>/Baton.* never change and are cached for a year; the top-level Baton.* are the latest release and cached for 5 minutes.
-//   node scripts/publish-downloads.mjs <tag>   env: CF_ACCOUNT_ID, CF_API_TOKEN
+//   node scripts/publish-downloads.mjs <tag>   env: CF_ACCOUNT_ID, CF_API_TOKEN (R2 edit + zone cache purge)
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -23,14 +23,16 @@ async function cf(method, route, body, headers = { 'content-type': 'application/
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'baton-dl-'));
 execFileSync('gh', ['release', 'download', tag, '-R', 'zhu-xiaowei/Baton', '-D', dir, ...Object.keys(TYPES).flatMap((e) => ['-p', `Baton.${e}`])], { stdio: 'inherit' });
-for (const [ext, type] of Object.entries(TYPES)) {
-  const name = `Baton.${ext}`;
-  const bytes = fs.readFileSync(path.join(dir, name));
+// All four are read before anything is written, so a missing asset never leaves a half-updated "latest".
+const files = Object.entries(TYPES).map(([ext, type]) => [`Baton.${ext}`, type, fs.readFileSync(path.join(dir, `Baton.${ext}`))]);
+const urls = [];
+for (const [name, type, bytes] of files) {
   for (const [key, cache] of [[`${tag}/${name}`, 'public, max-age=31536000, immutable'], [name, 'public, max-age=300']]) {
     await cf('PUT', `/accounts/${ACCOUNT}/r2/buckets/baton-downloads/objects/${key}`, bytes,
       { 'content-type': type, 'cache-control': cache, 'content-disposition': `attachment; filename="${name}"` });
-    console.log(`https://dl.agentbaton.app/${key}  ${bytes.length} B`);
+    urls.push(`https://dl.agentbaton.app/${key}`);
+    console.log(`${urls.at(-1)}  ${bytes.length} B`);
   }
 }
-await cf('POST', '/zones/387d3d961b05753a9bb536e6545f817b/purge_cache', { files: Object.keys(TYPES).map((e) => `https://dl.agentbaton.app/Baton.${e}`) });
+await cf('POST', '/zones/387d3d961b05753a9bb536e6545f817b/purge_cache', { files: urls });
 fs.rmSync(dir, { recursive: true, force: true });
