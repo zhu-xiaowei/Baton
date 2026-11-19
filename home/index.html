@@ -681,7 +681,7 @@ if(j<r.length)timers.push(setTimeout(tick,k==='zh'?55:28));else at(400,done)});
 function done(){prep.innerHTML=md(r,'');busy(false);at(900,function(){pia.classList.add('on')});
 at(6200,function(){pia.classList.remove('on')});at(7000,function(){stage.classList.add('fade')});
 at(7400,function(){visible?cycle():running=false})}}
-window.onLang=function(){if(reduce||!io)final();else if(running)cycle()};
+window.onLang=function(){if(reduce||!io)final();else if(running){var p=manual&&stage.classList.contains('v-phone');cycle();if(p){manual=true;view('phone')}}};
 if(reduce||!io)final();
 else{stage.classList.add('anim');new IntersectionObserver(function(es){visible=es[0].isIntersecting;if(visible&&!running)cycle()}).observe(stage)}
 
