@@ -2,11 +2,12 @@
 // Development deploy of the hosted service through the Cloudflare API (no wrangler). Idempotent.
 //   node server/cloudflare/deploy.mjs --name pr2-baton --bucket pr2-baton-files --api-domain api.agentbaton.app \
 //     [--web-domain web.agentbaton.app] [--install-domain agentbaton.app] [--zone <zone id>] [--secrets <json file>]
-//     [--relay] [--skip-build]
+//     [--relay] [--skip-build] [--rate-limit] [--max-apps 20] [--max-bridges 5]
 // One Worker on every domain: the API host serves REST, /ws and the Bridge package; the web host the web app (default:
 // the API host); on the install domain only the routes /install and /install.ps1 (the scripts always name the API host), the
 // rest of that host stays someone else's (the homepage).
 // env: CF_ACCOUNT_ID, CF_API_TOKEN. --secrets: { API_KEY, API_KEY_NAME, ORIGIN_SECRET?, R2_API_TOKEN?, R2_PARENT_KEY_ID? }.
+// --rate-limit adds the zone's rate-limiting rule for the API host. --max-apps / --max-bridges: sockets per account (defaults in ports.mjs).
 // --relay first deploys push-relay/worker.mjs as <name>-push with the APNs key read from stdin (the relay's SSM JSON).
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -18,7 +19,8 @@ import { parseArgs } from 'node:util';
 const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), '../..');
 const { values: flags } = parseArgs({ options: { name: { type: 'string', default: 'pr2-baton' }, bucket: { type: 'string', default: 'pr2-baton-files' },
   'api-domain': { type: 'string' }, 'web-domain': { type: 'string' }, 'install-domain': { type: 'string' }, zone: { type: 'string', default: '387d3d961b05753a9bb536e6545f817b' }, secrets: { type: 'string' },
-  relay: { type: 'boolean', default: false }, 'skip-build': { type: 'boolean', default: false } } });
+  relay: { type: 'boolean', default: false }, 'skip-build': { type: 'boolean', default: false }, 'rate-limit': { type: 'boolean', default: false },
+  'max-apps': { type: 'string' }, 'max-bridges': { type: 'string' } } });
 const { CF_ACCOUNT_ID: ACCOUNT, CF_API_TOKEN: TOKEN } = process.env;
 if (!ACCOUNT || !TOKEN) throw new Error('CF_ACCOUNT_ID and CF_API_TOKEN are required');
 const API_HOST = flags['api-domain'];
@@ -100,6 +102,22 @@ async function installRoutes() {
   }
 }
 
+// One rule for the API host (the Free plan allows one per zone): over 200 requests in 10 s from one IP → 429 for 10 s.
+// WebSocket frames are no requests; only upgrades count.
+async function rateLimit() {
+  const zone = `https://api.cloudflare.com/client/v4/zones/${flags.zone}/rulesets`;
+  const ref = `baton_${API_HOST.replace(/\W/g, '_')}`;
+  const rule = { ref, description: `Baton API ${API_HOST}`, expression: `(http.host eq "${API_HOST}")`, action: 'block',
+    action_parameters: { response: { status_code: 429, content_type: 'application/json', content: '{"error":"rate_limited"}' } },
+    ratelimit: { characteristics: ['cf.colo.id', 'ip.src'], period: 10, requests_per_period: 200, mitigation_timeout: 10 } };
+  const entry = await cf('GET', `${zone}/phases/http_ratelimit/entrypoint`, undefined, { ok404: true });
+  const old = entry?.rules?.find((r) => r.ref === ref);
+  if (!entry) await cf('PUT', `${zone}/phases/http_ratelimit/entrypoint`, { rules: [rule] });
+  else if (old) await cf('PATCH', `${zone}/${entry.id}/rules/${old.id}`, rule);
+  else await cf('POST', `${zone}/${entry.id}/rules`, rule);
+  console.log(`rate limit: ${API_HOST}`);
+}
+
 async function bucket() {
   if (!(await cf('GET', `/r2/buckets/${flags.bucket}`, undefined, { ok404: true }))) await cf('POST', '/r2/buckets', { name: flags.bucket });
   await cf('PUT', `/r2/buckets/${flags.bucket}/cors`, { rules: [{ allowed: { origins: ['*'], methods: ['GET', 'PUT', 'HEAD'], headers: ['*'] },
@@ -175,7 +193,7 @@ await bridgePackage(version);
 const accountId = secrets.API_KEY ? createHash('sha256').update(secrets.API_KEY).digest('hex').slice(0, 16) : '';
 const vars = { API_URL: `https://${API_HOST}`, WEB_URL: `https://${WEB_HOST}`, APP_VERSION: version, BRIDGE_VERSION: version, OPEN_REGISTRATION: 'true',
   CF_ACCOUNT_ID: ACCOUNT, R2_BUCKET: flags.bucket, ACCOUNT_ID: secrets.ACCOUNT_ID ?? accountId, API_KEY_NAME: secrets.API_KEY_NAME ?? '',
-  R2_PARENT_KEY_ID: secrets.R2_PARENT_KEY_ID ?? '', ...(INSTALL_HOST && { INSTALL_URL: `https://${INSTALL_HOST}` }) };
+  R2_PARENT_KEY_ID: secrets.R2_PARENT_KEY_ID ?? '', MAX_APPS: flags['max-apps'], MAX_BRIDGES: flags['max-bridges'], ...(INSTALL_HOST && { INSTALL_URL: `https://${INSTALL_HOST}` }) };
 const bindings = [{ type: 'assets', name: 'ASSETS' }, { type: 'r2_bucket', name: 'FILES', bucket_name: flags.bucket },
   { type: 'durable_object_namespace', name: 'ACCOUNT', class_name: 'AccountObject' },
   { type: 'durable_object_namespace', name: 'INDEX', class_name: 'IndexObject' },
@@ -188,4 +206,5 @@ await upload(flags.name, { main_module: 'server/cloudflare/worker.mjs', compatib
   observability: OBSERVABILITY }, modules, { new_tag: 'v1', new_sqlite_classes: ['AccountObject', 'IndexObject'] });
 for (const hostname of domains) await cf('PUT', '/workers/domains', { hostname, service: flags.name, zone_id: flags.zone, environment: 'production' });
 if (INSTALL_HOST) await installRoutes();
+if (flags['rate-limit']) await rateLimit();
 console.log(`deployed ${[...domains, ...(INSTALL_HOST ? [`${INSTALL_HOST}/install(.ps1)`] : [])].join(', ')} (version ${version}${bindings.some((b) => b.name === 'PUSH') ? ', push relay bound' : ''})`);

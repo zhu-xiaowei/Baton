@@ -35,6 +35,14 @@ export function server(env, ports) {
   return { ...createServer(all), auth: createAuth(all), devices: createDevices(all.table), notifications: createNotifications(all) };
 }
 
+// Hosted per-account socket limits (Worker vars MAX_APPS, MAX_BRIDGES).
+export const limits = (env) => ({ apps: Number(env.MAX_APPS) || 20, bridges: Number(env.MAX_BRIDGES) || 5 });
+// The `[ws, attachment]` Apps beyond `max`, least recently active first: closed to admit a new one.
+export const leastActive = (apps, max) => [...apps].sort(([, a], [, b]) => (a.activeAt ?? a.connectedAt) - (b.activeAt ?? b.connectedAt))
+  .slice(0, Math.max(0, apps.length - max));
+// A Bridge of another device than `max` online ones is refused; one of the same device replaces its old socket.
+export const bridgesFull = (bridges, device, max) => bridges.filter(([, a]) => !device || a.device !== device).length >= max;
+
 export const toResponse = (out, method) => new Response(method === 'HEAD' || NO_BODY.has(out.status) ? null : out.body,
   { status: out.status, headers: out.headers });
 

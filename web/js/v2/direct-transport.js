@@ -10,6 +10,7 @@ import { RpcAssembler, createHeaderSigner, decodeRpcPayload, fromBase64, openStr
 import { appKeys, fingerprint, openRotation } from '../../../bridge/e2ee.mjs';
 import { loadAccountKey, saveAccountKey } from './account-key.js';
 import { setTransferAccess, setTransferKeys } from '../../../bridge/transfer-store.mjs';
+import { showLimit } from './limit-banner.js';
 
 // At SLOW_MS the page is told (it shows its cache) and the request is resent once: all of it if no
 // chunk arrived, else only the missing chunks. At DEADLINE_MS it fails.
@@ -45,6 +46,7 @@ let dataUrl = '';
 let retryTimer = null;
 let retries = 0;              // consecutive drops since the last whoami
 let refused = false;          // the relay closed with 4401/4403: no reconnects
+let limited = '';             // the relay closed with 4429: its reason; no reconnects until reconnect()
 let pingTimer = null;
 let tickTimer = null;
 let lastInboundAt = 0;
@@ -300,7 +302,8 @@ if (typeof document !== 'undefined' && document.addEventListener) {
       for (const entry of subscriptions.values()) leave(entry.device, entry.sessionId);
       return;
     }
-    if (socket?.readyState === WebSocket.OPEN) probe({ foreground: true });
+    if (limited) reconnect();
+    else if (socket?.readyState === WebSocket.OPEN) probe({ foreground: true });
     else if (subscriptions.size) connect();
     resubscribe();
   });
@@ -309,7 +312,7 @@ if (typeof document !== 'undefined' && document.addEventListener) {
 // The server is reached through its CloudFront domain, which also serves /data.
 let transportAsked = false;
 export function connect() {
-  if (!state.KEY || !state.SERVER || refused) return;
+  if (!state.KEY || !state.SERVER || refused || limited) return;
   // Nothing known yet (first start): the server names its transport (relay or the data API) before a socket opens.
   if (!rpc) restore();
   if (!rpc && (devicesInflight || !transportAsked)) { transportAsked = true; (devicesInflight || devices()).catch(() => {}).finally(connect); return; }
@@ -355,14 +358,20 @@ export function connect() {
     socket = null;
     connectionId = '';
     clearInterval(pingTimer);
+    // bridges_changed pushes are missed while closed, so the next request fetches /devices again.
+    routesKnown = false;
     // The relay refused the key (4401: revoked or wrong) or its role (4403): retrying cannot help.
     if (event?.code === 4401 || event?.code === 4403) {
       refused = true;
       if (event.code === 4401) window.logout?.();
       return;
     }
-    // bridges_changed pushes are missed while closed, so the next request fetches /devices again.
-    routesKnown = false;
+    // An account limit (4429): too_many_apps closed this, the least recently used window; monthly_limit lasts until the App restarts.
+    if (event?.code === 4429) {
+      limited = event.reason || 'too_many_apps';
+      showLimit(limited, reconnect);
+      return;
+    }
     // A hidden page reconnects only for a request in flight; showing it reconnects. Past the
     // quick retries, keep trying only while a visible page still needs the socket.
     const visible = document.visibilityState === 'visible';
@@ -371,6 +380,15 @@ export function connect() {
     const delay = !retries++ ? 0 : Math.random() * RETRY_JITTER_MS + (retries > MAX_RETRIES ? 5000 : 0);
     retryTimer = setTimeout(() => { retryTimer = null; connect(); }, delay);
   };
+}
+
+// After too_many_apps: again on request (the banner's button) or when the page is shown.
+function reconnect() {
+  if (!limited || limited === 'monthly_limit') return;
+  limited = '';
+  retries = 0;
+  showLimit('');
+  connect();
 }
 
 function receive(ws, text) {
@@ -723,6 +741,8 @@ export function resetDirectTransport() {
   retryTimer = null;
   retries = 0;
   refused = false;
+  limited = '';
+  showLimit('');
   try { localStorage.removeItem(storageKey()); } catch {}
   if (socket) { const ws = socket; socket = null; ws.close(); }
 }
