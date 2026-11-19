@@ -213,11 +213,11 @@ export class MonitorStore extends DurableObject {
     this.sql.exec('CREATE TABLE IF NOT EXISTS snaps (t INTEGER PRIMARY KEY, ok INTEGER, online INTEGER, data TEXT)');
   }
 
-  // Each keyed alert once (until its email is sent); one email per run lists them all.
+  // Each keyed alert once; one email per run lists them all.
   alert(state, key, subject, text) {
     if (key && state.sent[key]) return;
     if (key) state.sent[key] = Date.now();
-    (this.pending ??= []).push([subject, text, key]);
+    (this.pending ??= []).push([subject, text]);
   }
 
   async run() {
@@ -265,13 +265,15 @@ export class MonitorStore extends DurableObject {
         this.alert(state, `cost:${month}`, 'monthly cost alert', `Month-to-date usage $${used.cost.usage.toFixed(2)} is over $${env.COST_ALERT}.`);
       }
     }
-    const alerts = this.pending ?? [];
+    // New alerts are logged once; an email that could not be sent is retried with the next run's (at most 20 kept).
+    const fresh = this.pending ?? [];
     this.pending = null;
+    const alerts = [...(state.unsent ?? []), ...fresh];
     if (alerts.length) {
       const subject = alerts.length > 1 ? `${alerts[0][0]} (+${alerts.length - 1} more)` : alerts[0][0];
       const result = await mail(env, subject, alerts.map(([s, t]) => `${s}\n${t}`).join('\n\n'));
-      state.log = [...alerts.map(([s]) => ({ t: now, subject: s, result })), ...(state.log ?? [])].slice(0, 30);
-      if (result !== 'sent') for (const [, , key] of alerts) delete state.sent[key]; // retried next run
+      state.log = [...fresh.map(([s]) => ({ t: now, subject: s, result })), ...(state.log ?? [])].slice(0, 30);
+      state.unsent = result === 'sent' ? [] : alerts.slice(-20);
     }
     // An unblock may have landed during the awaits above: keep it.
     state.lifted = (await this.ctx.storage.get('state'))?.lifted ?? state.lifted;
