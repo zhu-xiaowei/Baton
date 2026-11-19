@@ -179,7 +179,7 @@ class AlertService : Service() {
         show(open(event))
       }
     } catch (closed: RelaySocket.Closed) {
-      if (closed.code == 4401 || closed.code == 4403) throw StopPolling() // signed out or rotated key
+      if (closed.code == 4401 || closed.code == 4403 || closed.code == 4429) throw StopPolling() // signed out, rotated key, monthly limit
     } catch (_: java.io.IOException) {
       // Dropped (network change, closed by onStartCommand): reconnect, at once if it had worked.
     } finally {

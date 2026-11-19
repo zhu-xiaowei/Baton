@@ -1070,10 +1070,10 @@ function checkApps(alert, sealed) {
   const rpc = _directRpc;
   if (!rpc?.keys) return false;
   if (rpc.relay) return !!sealed && wsSend({ to: 'apps', kind: 'notify', ...sealed });
-  const subscribed = _subscribers.targets(alert.rootSessionId, { root: true });
-  const targets = [...subscribed, ...[...rpc.peers.keys()].slice(-32).filter((id) => !subscribed.some(([s]) => s === id)).map((id) => [id, { deflate: false }])];
-  rpc.publish({ action: 'notify_check', ...alert }, targets);
-  return targets.length > 0;
+  const targets = new Map(_subscribers.targets(alert.rootSessionId, { root: true }));
+  for (const id of [...rpc.peers.keys()].slice(-32)) if (!targets.has(id)) targets.set(id, { deflate: false });
+  rpc.publish({ action: 'notify_check', ...alert }, [...targets]);
+  return targets.size > 0;
 }
 configureNotifier({ post, sendAlert: (frame) => (_relay || _directRpc?.relay ? relayAlert(frame) : null), history: params => historyService.history(params), checkApps,
   viewWait: () => (_directRpc?.relay ? 2000 : 3000), // AWS: notify_seen takes two Lambda-routed hops
