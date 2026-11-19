@@ -2,13 +2,48 @@
 
 [English](README.md) | [中文](README.zh-CN.md) | **Español**
 
-Continúa en tu teléfono las tareas de [Claude Code](https://github.com/anthropics/claude-code) y [Codex](https://openai.com/codex) justo donde las dejaste en tu ordenador.
+Continúa en tu teléfono las tareas de [Claude Code](https://github.com/anthropics/claude-code), [Codex](https://openai.com/codex) y otros agentes de programación justo donde las dejaste en tu ordenador.
 
 <p align="center">
   <img src="docs/assets/promo.avif" alt="Baton" width="100%">
 </p>
 
-Baton sincroniza y muestra en tiempo real las sesiones de Claude Code y Codex entre tus dispositivos, sin cambiar tu forma de trabajar. Los datos de tus sesiones permanecen en tu propia cuenta de AWS.
+Baton transmite y muestra en tiempo real, sin interferir en tu forma de trabajar, las Sessions de Claude Code, Codex, Pi, Hermes, OpenCode, Kiro y DeepSeek Harness en todos tus dispositivos. Todo va cifrado de extremo a extremo y tus conversaciones permanecen en tu propio ordenador.
+
+
+## Inicio rápido
+
+### 1. Instala el Bridge en tu ordenador
+
+```bash
+curl -fsSL https://agentbaton.app/install | bash
+```
+
+<details>
+<summary>Windows</summary>
+
+En PowerShell, con la opción **Ejecutar como administrador**:
+
+```powershell
+irm https://agentbaton.app/install.ps1 | iex
+```
+
+</details>
+
+Obtendrás un código QR y una **Start URL**.
+
+### 2. Descarga la App y conéctate
+
+| iOS | Android | HarmonyOS | macOS | Windows | Linux |
+|:---:|:---:|:---:|:---:|:---:|:---:|
+| <img src="docs/assets/baton_ios.avif" width="88" alt="iOS"> | <img src="docs/assets/baton_android.avif" width="88" alt="Android"> | <img src="docs/assets/harmonyos.avif" width="88" alt="HarmonyOS"> | <img src="docs/assets/macOS.avif" width="88" alt="macOS"> | <img src="docs/assets/windows.avif" width="88" alt="Windows"> | <img src="docs/assets/linux.avif" width="88" alt="Linux"> |
+| [TestFlight](https://testflight.apple.com/join/UekStGCA) | [Baton.apk](https://dl.agentbaton.app/Baton.apk) | [Compilar e instalar](harmony/README.md) | [Baton.dmg](https://dl.agentbaton.app/Baton.dmg) | [Baton.exe](https://dl.agentbaton.app/Baton.exe) | [Baton.deb](https://dl.agentbaton.app/Baton.deb) |
+
+Todas las versiones: [GitHub Releases](https://github.com/zhu-xiaowei/Baton/releases)
+
+Escanea el código QR o pega la Start URL.
+
+---
 
 ### Herramientas de desarrollo
 
@@ -24,70 +59,37 @@ Baton sincroniza y muestra en tiempo real las sesiones de Claude Code y Codex en
 
 ---
 
-## Inicio rápido
-
-### 1. Desplegar el servidor
-
-Requiere [AWS CLI](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html) con permisos para crear pilas de CloudFormation.
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/zhu-xiaowei/baton/main/server/install.sh | bash
-```
-
-Tarda unos 6–8 minutos. Al finalizar, muestra una **Start URL** y un código QR. Admite las opciones `--region`, `--stack` y `--profile` (añádelas después de `bash -s --`).
-
-### 2. Instalar el Bridge
-
-El instalador descarga su propio entorno de [Node.js](https://nodejs.org/) 24 (si falla, usa un Node.js 22.15 o posterior ya instalado).
-
-1. Abre la **Start URL** en tu navegador (también sirve como visor web).
-2. Copia el comando de una línea **Install bridge** de la página Setup.
-3. Ejecútalo en el ordenador donde se esté ejecutando Claude Code o Codex.
-
-En Windows, ejecuta el comando de instalación en PowerShell con la opción **Ejecutar como administrador**.
-
-### 3. Descargar la aplicación
-
-| iOS | Android | HarmonyOS | macOS | Windows | Linux |
-|:---:|:---:|:---:|:---:|:---:|:---:|
-| <img src="docs/assets/baton_ios.avif" width="88" alt="iOS"> | <img src="docs/assets/baton_android.avif" width="88" alt="Android"> | <img src="docs/assets/harmonyos.avif" width="88" alt="HarmonyOS"> | <img src="docs/assets/macOS.avif" width="88" alt="macOS"> | <img src="docs/assets/windows.avif" width="88" alt="Windows"> | <img src="docs/assets/linux.avif" width="88" alt="Linux"> |
-| [TestFlight](https://testflight.apple.com/join/UekStGCA) | [Baton.apk](https://github.com/zhu-xiaowei/baton/releases/download/v1.1.0/Baton.apk) | [Compilar e instalar](harmony/README.md) | [Baton.dmg](https://github.com/zhu-xiaowei/baton/releases/download/v1.1.0/Baton.dmg) | [Baton.exe](https://github.com/zhu-xiaowei/baton/releases/download/v1.1.0/Baton.exe) | [Baton.deb](https://github.com/zhu-xiaowei/baton/releases/download/v1.1.0/Baton.deb) |
-
-Después de descargar la aplicación, escanea el código QR o introduce la Start URL para comenzar.
-
----
-
 ## Funcionalidades
 
 ### Funciones principales
 
-- **Claude Code y Codex** — ambos entornos en un único catálogo de Dispositivo → Proyecto → Sesión.
+- **Siete agentes** — Claude Code, Codex, Pi, Hermes, OpenCode, Kiro y DeepSeek Harness en un único catálogo de Dispositivo → Proyecto → Session.
 - **Transmisión en tiempo real** — las respuestas, el razonamiento y las llamadas a herramientas aparecen a medida que se generan.
-- **Seguimiento de sesiones existentes** — sigue usando Claude Code y Codex en tu ordenador como siempre; un Bridge local ligero refleja el progreso en directo y los estados de ejecución, espera de entrada y finalización.
-- **Interacción con sesiones existentes** — envía mensajes de seguimiento, incluso durante la ejecución, interrumpe tareas en curso y continúa el trabajo desde cualquier dispositivo conectado.
-- **Creación de proyectos y sesiones** — crea un proyecto, inicia sesiones de Claude Code, Codex o agentes de Claude en segundo plano de forma remota y sigue supervisándolas tras desconectarte.
+- **Seguimiento de Sessions existentes** — sigue usando Claude Code y Codex en tu ordenador como siempre; un Bridge local ligero refleja el progreso en directo y los estados de ejecución, espera de entrada y finalización.
+- **Interacción con Sessions existentes** — envía mensajes de seguimiento, incluso durante la ejecución, interrumpe tareas en curso y continúa el trabajo desde cualquier dispositivo conectado.
+- **Creación de proyectos y Sessions** — crea un proyecto, inicia Sessions de Claude Code, Codex o agentes de Claude en segundo plano de forma remota y sigue supervisándolas tras desconectarte.
 - **Permisos y preguntas** — aprueba o rechaza llamadas a herramientas, responde preguntas y revisa planes, incluidas las aprobaciones de comandos, archivos y MCP de Codex.
 - **Comandos con barra y Skills** — autocompletado con `/` para los comandos integrados y personalizados de cada entorno, las Skills de Codex y los prompts guardados.
 - **Codex Goals** — establece, pausa, reanuda o elimina objetivos de una conversación con `/goal` y sigue sus turnos de continuación autónoma en tiempo real.
-- **Subagentes** — subagentes anidados de Claude Code y Codex agrupados bajo su sesión principal, con estado en directo y una lista jerárquica de hilos.
-- **Notificaciones móviles** — recibe avisos en iOS y Android cuando una sesión termina o necesita tu intervención; toca el aviso para abrir la sesión.
-- **Infraestructura propia** — despliega con un solo comando en tu cuenta de AWS; los datos de tus sesiones permanecen en ella.
+- **Subagentes** — subagentes anidados de Claude Code y Codex agrupados bajo su Session principal, con estado en directo y una lista jerárquica de hilos.
+- **Notificaciones móviles** — recibe avisos en iOS y Android cuando una Session termina o necesita tu intervención; toca el aviso para abrir la Session (los avisos de Android en el servicio alojado llegarán pronto).
+- **Privacidad desde el diseño** — cifrado de extremo a extremo; las conversaciones permanecen en tu ordenador y el servidor solo las retransmite; usa el servicio alojado o despliégalo tú mismo en AWS.
 
 ### Herramientas de desarrollo
 
 - **Archivos del proyecto** — explora el código fuente con resaltado de líneas y descarga o comparte archivos mediante las funciones nativas del sistema.
 - **Git** — revisa cambios, añade o retira archivos del área de preparación, descarta cambios, crea commits, envía cambios o publica una rama y explora el gráfico de ramas con diferencias históricas.
 - **Terminales** — hasta cinco sesiones de shell por proyecto, compartidas en directo entre dispositivos y restauradas al volver, con una barra de teclas móvil, un control de dirección que repite las pulsaciones al mantenerlo presionado y acelera cuanto más lo arrastras, y desplazamiento suave con inercia (Bridge en macOS o Linux).
-- **Vista previa de localhost** — abre `http://localhost:3000` (o cualquier puerto local) del ordenador donde se ejecuta el Bridge dentro de la aplicación nativa, tocando un enlace de la sesión o introduciendo el puerto, sin SSH, reenvío de puertos ni exposición pública.
+- **Vista previa de localhost** — abre `http://localhost:3000` (o cualquier puerto local) del ordenador donde se ejecuta el Bridge dentro de la App nativa, tocando un enlace de la Session o introduciendo el puerto, sin SSH, reenvío de puertos ni exposición pública.
 
 ### Rápido, estable y ligero
 
-- **Experiencia de aplicación nativa** — la pantalla de inicio nativa da paso sin interrupciones a las pantallas de carga de cada etapa, sin destellos blancos; al deslizar desde el borde para volver, se revela la página anterior.
+- **Experiencia de App nativa** — la pantalla de inicio nativa da paso sin interrupciones a las pantallas de carga de cada etapa, sin destellos blancos; al deslizar desde el borde para volver, se revela la página anterior.
 - **Temas claro y oscuro** — elige Sistema, Claro u Oscuro en Ajustes; la interfaz, el código, los diagramas y la apariencia nativa cambian juntos.
-- **Tamaño de página ajustable** — cambia el tamaño de letra en el móvil o usa los atajos de zoom en el escritorio; la elección se conserva entre páginas y al reiniciar la aplicación.
+- **Tamaño de página ajustable** — cambia el tamaño de letra en el móvil o usa los atajos de zoom en el escritorio; la elección se conserva entre páginas y al reiniciar la App.
 - **Carga instantánea** — las listas, el historial y los datos del proyecto se abren desde la caché local y se actualizan en segundo plano.
-- **Entrega estable** — la transmisión ordenada, la reconexión automática y la cola de envíos mantienen la continuidad de las sesiones con redes móviles inestables y después de pasar la aplicación a segundo plano.
-- **Aplicaciones ligeras** — paquetes nativos pequeños basados en Tauri, además de una aplicación contenedora con ArkWeb para HarmonyOS NEXT.
+- **Entrega estable** — la transmisión ordenada, la reconexión automática y la cola de envíos mantienen la continuidad de las Sessions con redes móviles inestables y después de pasar la App a segundo plano.
+- **Apps ligeras** — paquetes nativos pequeños basados en Tauri, además de una App contenedora con ArkWeb para HarmonyOS NEXT.
 - **Bridge sin mantenimiento** — funciona de forma permanente en macOS, Linux y Windows, conecta varios ordenadores a una cuenta y se actualiza automáticamente.
 
 ### Visualización de contenido
@@ -100,31 +102,58 @@ Después de descargar la aplicación, escanea el código QR o introduce la Start
 ### Más funciones
 
 - **Entrada de archivos, imágenes y voz** — adjunta archivos, arrastra archivos o imágenes en el escritorio, envía imágenes comprimidas y dicta mensajes en iOS.
-- **Borradores de sesión** — conserva el texto y los archivos adjuntos ya subidos al cambiar de sesión o volver a abrir la aplicación en el mismo dispositivo.
-- **Gestión de sesiones** — cambia el nombre de las sesiones mediante su entorno nativo y mantén pulsado para seleccionar y eliminar varias sesiones o proyectos, con la opción de eliminar también sus archivos locales.
-- **Gestión de dispositivos** — elimina dispositivos de Baton y detén sus Bridges conectados, conservando los archivos locales de las sesiones.
+- **Borradores de Session** — conserva el texto y los archivos adjuntos ya subidos al cambiar de Session o volver a abrir la App en el mismo dispositivo.
+- **Gestión de Sessions** — cambia el nombre de las Sessions mediante su entorno nativo y mantén pulsado para seleccionar y eliminar varias Sessions o proyectos, con la opción de eliminar también sus archivos locales.
+- **Emparejamiento y dispositivos** — añade ordenadores y teléfonos con un código QR, elimina un dispositivo (lo que sustituye la clave de cifrado) y recupera tu cuenta con una frase de recuperación.
 - **Rotación de la clave API** — cambia la clave API con `--rotate-key` y conserva los datos existentes.
-- **Pestañas en macOS** — trabaja en varias sesiones mediante pestañas independientes.
+- **Pestañas en macOS** — trabaja en varias Sessions mediante pestañas independientes.
 - **Estadísticas de uso de Claude** — consulta el estado, la configuración, los límites de uso, el historial de tokens y los gráficos de uso de modelos.
 
 ---
 
 ## Arquitectura
 
-```text
-┌────────────────┐               ┌────────────────┐               ┌──────────────────┐
-│     Bridge     │ ◀────WS─────▶ │     Server     │ ◀────WS─────▶ │     App/Web      │
-│ (local hosts)  │               │  (AWS APIs)    │               │  (phone/desktop) │
-└────────────────┘               └───────┬────────┘               └──────────────────┘
-                                         │
-                                         ▼
-                                 ┌────────────────┐
-                                 │ DynamoDB + S3  │
-                                 │ (data + media) │
-                                 └────────────────┘
+```
+┌────────────────┐               ┌──────────────────────┐               ┌──────────────────┐
+│     Bridge     │ ◀────WS─────▶ │        Relay         │ ◀────WS─────▶ │     App/Web      │
+│ (local hosts)  │               │                      │               │  (phone/desktop) │
+└────────────────┘               └──────────┬───────────┘               └──────────────────┘
+                                            │
+                                            ▼
+                                 ┌──────────────────────┐
+                                 │ accounts + devices,  │
+                                 │ 1-day file transfer  │
+                                 └──────────────────────┘
 ```
 
-El **Bridge** descubre las sesiones de Claude Code y Codex, normaliza sus eventos, conserva las relaciones entre agentes principales y subagentes y gestiona el control local de agentes, los archivos del proyecto, los comandos de Git y los procesos de terminal. El **Server** autentica y enruta los mensajes de control, guarda en DynamoDB solo los registros de conexiones y dispositivos (las sesiones permanecen en tu ordenador) y emite credenciales por cuenta con las que la App y el Bridge intercambian archivos a través de una zona de tránsito temporal en S3. La **App/Web** carga el historial en caché, se suscribe a las actualizaciones de las sesiones y los agentes raíz, agrupa los hilos anidados bajo la sesión principal y envía las acciones del usuario al entorno local correspondiente.
+El **Bridge** descubre las Sessions de los agentes, normaliza sus eventos, conserva las relaciones entre agentes principales y subagentes y gestiona el control local de agentes, los archivos del proyecto, los comandos de Git y los procesos de terminal. El **Relay** autentica los dispositivos de una misma cuenta y retransmite sus mensajes cifrados de extremo a extremo; solo guarda los registros de cuentas, dispositivos y tokens (las Sessions permanecen en tu ordenador) y una zona de tránsito de archivos que se conserva 1 día. La **App/Web** carga el historial en caché, se suscribe a las actualizaciones de las Sessions y los agentes raíz, agrupa los hilos anidados bajo la Session principal y envía las acciones del usuario al entorno local correspondiente.
+
+---
+
+## Alojamiento propio (AWS)
+
+Ejecuta tu propio servidor en tu cuenta de AWS en lugar de usar el servicio alojado.
+
+### 1. Desplegar el servidor
+
+Requiere [AWS CLI](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html) con permisos para crear pilas de CloudFormation.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/zhu-xiaowei/baton/main/server/install.sh | bash
+```
+
+Tarda unos 6–8 minutos. Al finalizar, muestra una **Start URL** y un código QR. Admite las opciones `--region`, `--stack` y `--profile` (añádelas después de `bash -s --`).
+
+
+### 2. Instalar el Bridge
+
+1. Abre la **Start URL** en tu navegador (también sirve como visor web).
+2. Copia el comando de una línea **Install bridge** de la página Setup.
+3. Ejecútalo en el ordenador donde se esté ejecutando Claude Code o Codex.
+
+En Windows, ejecuta el comando de instalación en PowerShell con la opción **Ejecutar como administrador**.
+
+Después, descarga la App indicada arriba y escanea el código QR o introduce la Start URL.
 
 ---
 
