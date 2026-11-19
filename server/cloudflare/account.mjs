@@ -6,6 +6,7 @@ import { nowInt, randomHex } from '../core/util.mjs';
 import { MAX_FRAME_BYTES, bridgesFull, leastActive, limits, refuse, server, toResponse } from './ports.mjs';
 import { createCredentials, storageInfo } from './r2.mjs';
 import { createItems, createTable, serve } from './store.mjs';
+import { Usage } from './usage.mjs';
 
 const SILENT_MS = 75_000; // three missed 25 s text pings
 const SWEEP_MS = 60_000;
@@ -20,6 +21,7 @@ export class AccountObject extends DurableObject {
     this.store = serve(createItems(ctx.storage.sql), (fn) => ctx.storage.transactionSync(fn));
     this.credentials = createCredentials(env, ctx.storage);
     this.swept = 0;
+    this.usage = new Usage(ctx, env);
     ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair('{"action":"realtime_ping"}', '{"action":"realtime_pong"}'));
   }
 
@@ -57,15 +59,19 @@ export class AccountObject extends DurableObject {
     const device = query.get('device') ?? '';
     const core = this.core(account);
     const resolved = await core.auth.resolve(query.get('apiKey') ?? '');
-    if (!resolved || resolved.accountId !== account) return refuse(4401, 'unauthorized');
+    if (!resolved || resolved.accountId !== account) return this.usage.refuse(account, 4401, 'unauthorized');
+    if (await this.usage.blocked()) return refuse(4429, 'monthly_limit');
     if (!['app', 'bridge'].includes(role) || (resolved.kind !== 'key' && (resolved.kind === 'bridge') !== (role === 'bridge'))
-      || (resolved.kind === 'bridge' && device && device !== resolved.deviceName) || device.length > 200) return refuse(4403, 'forbidden');
+      || (resolved.kind === 'bridge' && device && device !== resolved.deviceName) || device.length > 200) return this.usage.refuse(account, 4403, 'forbidden');
     const max = limits(this.env);
     if (role === 'bridge' && bridgesFull(this.live('bridge'), device, max.bridges)) return refuse(4429, 'too_many_bridges');
     const [client, socket] = Object.values(new WebSocketPair());
     const id = randomHex(12);
     this.ctx.acceptWebSocket(socket, [role, `id:${id}`, ...(role === 'bridge' && device ? [`dev:${device}`] : [])]);
-    socket.serializeAttachment({ role, id, account, device, tokenHash: resolved.tokenHash ?? '', connectedAt: Date.now() });
+    const me = { role, id, account, device, tokenHash: resolved.tokenHash ?? '', connectedAt: Date.now() };
+    socket.serializeAttachment(me);
+    await this.usage.joined(request, me, () => this.store('getItem', { Key: { pk: `ACCOUNT#${account}`, sk: 'META' } })
+      .result?.Item?.createdAt >= Date.parse(new Date().toISOString().slice(0, 10)) / 1000);
     if (role === 'bridge' && device) {
       for (const [old] of this.live(`dev:${device}`)) {
         if (old === socket) continue;
@@ -144,13 +150,19 @@ export class AccountObject extends DurableObject {
     }
   }
 
-  async webSocketClose(ws) {
+  async webSocketClose(ws, code) {
     try { ws.close(1000, 'closed'); } catch {}
-    await this.leave(ws);
+    await this.leave(ws, code);
   }
 
   async webSocketError(ws) {
-    await this.leave(ws);
+    await this.leave(ws, 1006);
+  }
+
+  // The monitor Worker's cost cap, through its binding to this namespace (no route of the public Worker calls it); 0 lifts it.
+  async monthlyLimit(until) {
+    await this.usage.block(until);
+    if (until > Date.now()) for (const [ws] of this.live()) await this.retire(ws, 4429, 'monthly_limit');
   }
 
   async alarm() {
@@ -171,12 +183,12 @@ export class AccountObject extends DurableObject {
   }
 
   async retire(ws, code, reason) {
-    await this.leave(ws); // marked `closing` first: a dead socket stays listed for minutes
+    await this.leave(ws, code); // marked `closing` first: a dead socket stays listed for minutes
     try { ws.close(code, reason); } catch {}
   }
 
   // Once per socket (marked `closing`, which routing skips): Apps → peer_left to Bridges, joined Bridges → Apps.
-  async leave(ws) {
+  async leave(ws, code) {
     const a = ws.deserializeAttachment();
     if (!a || a.closing) return;
     a.closing = Date.now();
@@ -185,6 +197,7 @@ export class AccountObject extends DurableObject {
       for (const [bridge] of this.live('bridge')) send(bridge, { action: 'peer_left', id: a.id });
       if (!this.live('app').length) await this.ctx.storage.deleteAlarm();
     } else if (a.joined) await this.notifyApps(a.account);
+    await this.usage.left(a, code, this.live('app').length).catch((error) => console.log(`usage: ${error.message}`));
   }
 
   record(a) {

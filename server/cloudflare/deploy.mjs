@@ -9,6 +9,9 @@
 // env: CF_ACCOUNT_ID, CF_API_TOKEN. --secrets: { API_KEY, API_KEY_NAME, ORIGIN_SECRET?, R2_API_TOKEN?, R2_PARENT_KEY_ID? }.
 // --rate-limit adds the zone's rate-limiting rule for the API host. --max-apps / --max-bridges: sockets per account (defaults in ports.mjs).
 // --relay first deploys push-relay/worker.mjs as <name>-push with the APNs key read from stdin (the relay's SSM JSON).
+// --monitor <host> --admin-email <address> [--monitor-name] [--cost-cap 1] [--cost-alert 20] [--plan free|paid] deploys only the monitor of the
+// service <name> (server/cloudflare/monitor.mjs) behind Cloudflare Access; env MONITOR_API_TOKEN: a read-only token with
+// Account Analytics Read + zone Analytics Read (kept from the last deploy when unset).
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
@@ -20,7 +23,9 @@ const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), '../.
 const { values: flags } = parseArgs({ options: { name: { type: 'string', default: 'pr2-baton' }, bucket: { type: 'string', default: 'pr2-baton-files' },
   'api-domain': { type: 'string' }, 'web-domain': { type: 'string' }, 'install-domain': { type: 'string' }, zone: { type: 'string', default: '387d3d961b05753a9bb536e6545f817b' }, secrets: { type: 'string' },
   relay: { type: 'boolean', default: false }, 'skip-build': { type: 'boolean', default: false }, 'rate-limit': { type: 'boolean', default: false },
-  'max-apps': { type: 'string' }, 'max-bridges': { type: 'string' } } });
+  'max-apps': { type: 'string' }, 'max-bridges': { type: 'string' }, 'usage-dataset': { type: 'string' }, monitor: { type: 'string' },
+  'monitor-name': { type: 'string' }, 'admin-email': { type: 'string' }, 'cost-cap': { type: 'string', default: '1' },
+  'cost-alert': { type: 'string', default: '20' }, plan: { type: 'string', default: 'free' } } });
 const { CF_ACCOUNT_ID: ACCOUNT, CF_API_TOKEN: TOKEN } = process.env;
 if (!ACCOUNT || !TOKEN) throw new Error('CF_ACCOUNT_ID and CF_API_TOKEN are required');
 const API_HOST = flags['api-domain'];
@@ -31,6 +36,8 @@ if (!API_HOST || [...domains, INSTALL_HOST ?? 'x.y'].some((d) => !/^[a-z0-9-]+(\
 const API = `https://api.cloudflare.com/client/v4/accounts/${ACCOUNT}`;
 const DATE = '2026-04-07';
 const RELAY = `${flags.name}-push`;
+// Usage points (Workers Analytics Engine, enabled once in the dashboard); --usage-dataset '' deploys without them.
+const DATASET = flags['usage-dataset'] ?? `${flags.name.replaceAll('-', '_')}_usage`;
 // Tokens travel in WebSocket URL queries: logs must never record them.
 const OBSERVABILITY = { enabled: true, redact_query_string: true, logs: { enabled: true, invocation_logs: false, persist: true, head_sampling_rate: 1 } };
 const sh = (cmd, args, opts = {}) => (execFileSync(cmd, args, { cwd: ROOT, encoding: 'utf8', ...opts }) ?? '').trim();
@@ -47,7 +54,8 @@ async function cf(method, route, body, { auth = TOKEN, ok404 = false } = {}) {
 }
 
 const exists = async (name) => !!(await cf('GET', `/workers/scripts/${name}/settings`, undefined, { ok404: true }));
-const module = (form, name, file) => form.append(name, new Blob([fs.readFileSync(path.join(ROOT, file))], { type: 'application/javascript+module' }), name);
+const module = (form, name, file) => form.append(name, new Blob([fs.readFileSync(path.join(ROOT, file))],
+  { type: file.endsWith('.html') ? 'text/plain' : 'application/javascript+module' }), name);
 
 // A new script is created with its migrations (PUT); later code goes up as a version that is then deployed and checked,
 // because a plain re-upload can silently leave the previous version live.
@@ -182,6 +190,70 @@ async function assets(name) {
   return { jwt, config: { html_handling: 'none', not_found_handling: 'none', _headers: HEADERS } };
 }
 
+// The monitor: probe account (registered once, its token a secret), Access app (email one-time PIN), Email Routing
+// (alerts + support@ forwarding to --admin-email), the Worker with its 5-minute cron.
+async function deployMonitor() {
+  const name = flags['monitor-name'] ?? `${flags.name}-monitor`;
+  const email = flags['admin-email'];
+  if (!/^\S+@\S+\.\S+$/.test(email ?? '')) throw new Error('--admin-email is required');
+  const zone = `https://api.cloudflare.com/client/v4/zones/${flags.zone}`;
+  const zoneName = (await cf('GET', zone)).name;
+  const namespaces = (await cf('GET', '/workers/durable_objects/namespaces?per_page=1000')).filter((n) => [flags.name, RELAY].includes(n.script));
+  const accountNs = namespaces.find((n) => n.script === flags.name && n.class === 'AccountObject')?.id;
+  if (!accountNs) throw new Error(`${flags.name} has no AccountObject namespace`);
+  const old = (await exists(name)) ? Object.fromEntries((await cf('GET', `/workers/scripts/${name}/settings`)).bindings.map((b) => [b.name, b.text])) : {};
+  const secrets = {};
+  if (process.env.MONITOR_API_TOKEN) secrets.ANALYTICS_TOKEN = process.env.MONITOR_API_TOKEN;
+  else if (!('ANALYTICS_TOKEN' in old)) throw new Error('MONITOR_API_TOKEN is required for the first deploy');
+  let probe = old.PROBE_ACCOUNT;
+  if (!probe || !('PROBE_TOKEN' in old)) {
+    const { accountOf } = await import('../../bridge/e2ee-node.mjs');
+    const id = accountOf(crypto.getRandomValues(Buffer.alloc(32)));
+    const res = await fetch(`https://${API_HOST}/api/account/register`, { method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ...id, deviceName: 'monitor-probe' }) });
+    if (!res.ok) throw new Error(`probe account: ${res.status} ${await res.text()}`);
+    [probe, secrets.PROBE_TOKEN] = [id.accountId, (await res.json()).token];
+  }
+  // Access: the Zero Trust organization (once per Cloudflare account), one-time PIN login, the app allowing only --admin-email.
+  let org = await cf('GET', '/access/organizations').catch(() => null);
+  org ??= await cf('POST', '/access/organizations', { name: zoneName, auth_domain: `${zoneName.split('.')[0]}.cloudflareaccess.com` });
+  const idps = await cf('GET', '/access/identity_providers');
+  const otp = idps.find((i) => i.type === 'onetimepin') ?? await cf('POST', '/access/identity_providers', { name: 'One-time PIN', type: 'onetimepin', config: {} });
+  const appBody = { name, domain: flags.monitor, type: 'self_hosted', session_duration: '24h', allowed_idps: [otp.id], auto_redirect_to_identity: true,
+    policies: [{ name: 'admins', decision: 'allow', include: [{ email: { email } }] }] };
+  const app = (await cf('GET', '/access/apps')).find((a) => a.domain === flags.monitor);
+  const { aud } = app ? await cf('PUT', `/access/apps/${app.id}`, appBody) : await cf('POST', '/access/apps', appBody);
+  // Email Routing: alerts may only go to a verified destination; the user clicks the link Cloudflare mails once.
+  if (!(await cf('GET', `${zone}/email/routing`)).enabled) await cf('POST', `${zone}/email/routing/enable`, {});
+  const address = (await cf('GET', '/email/routing/addresses')).find((a) => a.email === email) ?? await cf('POST', '/email/routing/addresses', { email });
+  const support = `support@${zoneName}`;
+  if (address.verified && !(await cf('GET', `${zone}/email/routing/rules`)).some((r) => r.matchers?.some((m) => m.value === support))) {
+    await cf('POST', `${zone}/email/routing/rules`, { name: 'support', enabled: true, matchers: [{ type: 'literal', field: 'to', value: support }],
+      actions: [{ type: 'forward', value: [email] }] });
+  }
+  // SCRIPTS names only existing Workers: an unknown name empties a scriptName_in query.
+  const vars = { CF_ACCOUNT_ID: ACCOUNT, ZONE_ID: flags.zone, TARGET_API: `https://${API_HOST}`, SERVICE_SCRIPT: flags.name, PUSH_SCRIPT: RELAY,
+    SCRIPTS: [flags.name, ...((await exists(RELAY)) ? [RELAY] : []), name].join(','), ACCOUNT_NS: accountNs, NAMESPACES: namespaces.map((n) => n.id).join(','), BUCKET: flags.bucket,
+    HOSTS: domains.join(','), DATASET, PROBE_ACCOUNT: probe, PROBE_HASH: createHash('sha256').update(probe).digest('hex').slice(0, 16),
+    COST_CAP: flags['cost-cap'], COST_ALERT: flags['cost-alert'], PLAN: flags.plan === 'paid' ? 'paid' : 'free', ADMIN_EMAIL: email, FROM_EMAIL: `monitor@${zoneName}`,
+    MONITOR_URL: `https://${flags.monitor}`, ACCESS_AUD: aud, ACCESS_TEAM: org.auth_domain };
+  await upload(name, { main_module: 'server/cloudflare/monitor.mjs', compatibility_date: DATE, observability: OBSERVABILITY, keep_bindings: ['secret_text'],
+    bindings: [{ type: 'durable_object_namespace', name: 'ACCOUNT', class_name: 'AccountObject', script_name: flags.name },
+      { type: 'durable_object_namespace', name: 'STORE', class_name: 'MonitorStore' }, { type: 'send_email', name: 'EMAIL', destination_address: email },
+      ...Object.entries(vars).filter(([, v]) => v).map(([n, text]) => ({ type: 'plain_text', name: n, text }))] },
+  ['monitor.mjs', 'cost.mjs', 'monitor.html'].map((f) => [`server/cloudflare/${f}`, `server/cloudflare/${f}`]), { new_tag: 'v1', new_sqlite_classes: ['MonitorStore'] });
+  for (const [n, text] of Object.entries(secrets)) await cf('PUT', `/workers/scripts/${name}/secrets`, { name: n, text, type: 'secret_text' });
+  await cf('PUT', `/workers/scripts/${name}/schedules`, [{ cron: '*/5 * * * *' }]);
+  await cf('PUT', '/workers/domains', { hostname: flags.monitor, service: name, zone_id: flags.zone, environment: 'production' });
+  console.log(`monitor ${name} on https://${flags.monitor} (Access: ${email}); alerts to ${email}: ${address.verified ? 'verified'
+    : 'NOT verified yet: click the link Cloudflare mailed to it'}; ${address.verified ? `${support} forwards there` : `rerun after verifying to forward ${support}`}`);
+}
+
+if (flags.monitor) {
+  await deployMonitor();
+  process.exit(0);
+}
+
 const secrets = flags.secrets ? JSON.parse(fs.readFileSync(flags.secrets, 'utf8')) : {};
 const semantic = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
 const version = `${semantic}-${sh('git', ['rev-parse', '--short', 'HEAD'])}${sh('git', ['status', '--porcelain']) ? `-${Date.now().toString(36)}` : ''}`;
@@ -197,11 +269,12 @@ const vars = { API_URL: `https://${API_HOST}`, WEB_URL: `https://${WEB_HOST}`, A
 const bindings = [{ type: 'assets', name: 'ASSETS' }, { type: 'r2_bucket', name: 'FILES', bucket_name: flags.bucket },
   { type: 'durable_object_namespace', name: 'ACCOUNT', class_name: 'AccountObject' },
   { type: 'durable_object_namespace', name: 'INDEX', class_name: 'IndexObject' },
+  ...(DATASET ? [{ type: 'analytics_engine', name: 'USAGE', dataset: DATASET }] : []),
   ...((await exists(RELAY)) ? [{ type: 'service', name: 'PUSH', service: RELAY }] : []),
   ...Object.entries(vars).filter(([, v]) => v).map(([name, text]) => ({ type: 'plain_text', name, text })),
   ...['API_KEY', 'ORIGIN_SECRET', 'R2_API_TOKEN'].filter((n) => secrets[n]).map((name) => ({ type: 'secret_text', name, text: secrets[name] }))];
 const modules = [...fs.readdirSync(path.join(ROOT, 'server/core')).filter((f) => f.endsWith('.mjs')).map((f) => `server/core/${f}`),
-  ...['worker', 'account', 'store', 'ports', 'r2'].map((f) => `server/cloudflare/${f}.mjs`)].map((f) => [f, f]);
+  ...['worker', 'account', 'store', 'ports', 'r2', 'usage'].map((f) => `server/cloudflare/${f}.mjs`)].map((f) => [f, f]);
 await upload(flags.name, { main_module: 'server/cloudflare/worker.mjs', compatibility_date: DATE, bindings, assets: await assets(flags.name),
   observability: OBSERVABILITY }, modules, { new_tag: 'v1', new_sqlite_classes: ['AccountObject', 'IndexObject'] });
 for (const hostname of domains) await cf('PUT', '/workers/domains', { hostname, service: flags.name, zone_id: flags.zone, environment: 'production' });
