@@ -8,11 +8,10 @@ const INCLUDED = { workerRequests: 10e6, workerCpuMs: 30e6, doRequests: 1e6, doG
   sqlGbMonths: 5, r2GbMonths: 10, r2ClassA: 1e6, r2ClassB: 10e6 };
 // The quotas shown per plan: Free counts most per day (R2 operations per month), Paid's included usage per month;
 // sqlBytes / r2Bytes are current storage.
+const STORAGE = { sqlBytes: 5e9, r2Bytes: 10e9 };
 export const PLANS = {
-  free: { workerRequests: 100e3, doRequests: 100e3, doGbSec: 13e3, rowsRead: 5e6, rowsWritten: 100e3, aePoints: 100e3,
-    sqlBytes: 5e9, r2Bytes: 10e9, r2ClassA: 1e6, r2ClassB: 10e6 },
-  paid: { workerRequests: 10e6, workerCpuMs: 30e6, doRequests: 1e6, doGbSec: 400e3, rowsRead: 25e9, rowsWritten: 50e6, aePoints: 10e6,
-    sqlBytes: 5e9, r2Bytes: 10e9, r2ClassA: 1e6, r2ClassB: 10e6 },
+  free: { workerRequests: 100e3, doRequests: 100e3, doGbSec: 13e3, rowsRead: 5e6, rowsWritten: 100e3, aePoints: 100e3, r2ClassA: 1e6, r2ClassB: 10e6, ...STORAGE },
+  paid: { ...Object.fromEntries(Object.entries(INCLUDED).filter(([k]) => !k.endsWith('GbMonths'))), aePoints: 10e6, ...STORAGE },
 };
 export const MONTHLY_ON_FREE = new Set(['r2ClassA', 'r2ClassB']);
 

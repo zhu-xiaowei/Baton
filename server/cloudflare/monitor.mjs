@@ -89,8 +89,12 @@ const USAGE = `query($a:string!,$ns:string!,$nss:[string!],$scripts:[string!],$m
 // Incoming WebSocket messages of hibernatable sockets are `hibernation` invocations (measured: inboundWebsocketMsgCount stays 0
 // for them; auto-answered pings appear in neither).
 const doUsage = (s) => ({ gbSec: s?.duration ?? 0, wsIn: s?.inboundWebsocketMsgCount ?? 0, rowsRead: s?.rowsRead ?? 0, rowsWritten: s?.rowsWritten ?? 0 });
-const split = (rows, periodic) => ({ calls: sum(rows.filter((r) => r.dimensions.hibernation !== 'hibernation'), (r) => r.sum.requests),
-  wsIn: sum(rows.filter((r) => r.dimensions.hibernation === 'hibernation'), (r) => r.sum.requests) + (periodic?.inboundWebsocketMsgCount ?? 0) });
+// A period's Durable Object totals from its invocations (grouped by type) and periodic sums.
+const doTotals = (calls, periodic) => {
+  const ws = sum(calls.filter((r) => r.dimensions.hibernation === 'hibernation'), (r) => r.sum.requests);
+  const { gbSec, wsIn, rowsRead, rowsWritten } = doUsage(periodic);
+  return { doRequests: doRequests({ calls: sum(calls, (r) => r.sum.requests) - ws, wsIn: ws + wsIn }), doGbSec: gbSec, rowsRead, rowsWritten };
+};
 const r2Class = (action) => (/^(Delete|Abort)/.test(action) ? '' : /^(Get|Head)/.test(action) ? 'r2ClassB' : 'r2ClassA');
 
 async function usage(env, now) {
@@ -112,8 +116,8 @@ async function usage(env, now) {
     .sort((x, y) => y.cost - x.cost);
 
   const latest = (rows, key) => [...new Map(rows.map((r) => [key(r), r])).values()]; // rows are newest first: keep the first
-  const sqlBytes = sum(latest([...v.sql].reverse(), (r) => r.dimensions.namespaceId).filter((r) => list(env.NAMESPACES).includes(r.dimensions.namespaceId)),
-    (r) => r.max.storedBytes);
+  const sqlRows = latest([...v.sql].reverse(), (r) => r.dimensions.namespaceId);
+  const [sqlBytes, allSql] = [sqlRows.filter((r) => list(env.NAMESPACES).includes(r.dimensions.namespaceId)), sqlRows].map((rows) => sum(rows, (r) => r.max.storedBytes));
   const buckets = latest([...v.r2].reverse(), (r) => r.dimensions.bucketName);
   const r2Bytes = (rows) => sum(rows, (r) => r.max.payloadSize + r.max.metadataSize);
   const ops = (rows) => rows.reduce((o, r) => { const c = r2Class(r.dimensions.actionType); if (c) o[c] += r.sum.requests; return o; }, { r2ClassA: 0, r2ClassB: 0 });
@@ -122,8 +126,7 @@ async function usage(env, now) {
   // Month to date: the service's own Workers and objects (usage at list price) and the whole Cloudflare account (the bill;
   // the push relay is reached only through a service binding: its CPU is billed, its requests are not).
   const month_ = (workers, periodic, calls) => ({ workerRequests: workers?.sum.requests ?? 0, workerCpuMs: (workers?.sum.cpuTimeUs ?? 0) / 1000,
-    doRequests: doRequests(split(calls, periodic)), ...(({ gbSec, rowsRead, rowsWritten }) => ({ doGbSec: gbSec, rowsRead, rowsWritten }))(doUsage(periodic)) });
-  const allSql = sum(latest([...v.sql].reverse(), (r) => r.dimensions.namespaceId), (r) => r.max.storedBytes);
+    ...doTotals(calls, periodic) });
   const push = v.pushMonth[0]?.sum ?? { requests: 0, cpuTimeUs: 0 };
   const totals = { ...month_(v.workersMonth[0], v.doMonth[0]?.sum, v.callsMonth), sqlGbMonths: (sqlBytes / 1e9) * elapsed,
     r2GbMonths: (r2Bytes(mine(buckets)) / 1e9) * elapsed, ...ops(mine(v.r2ops)) };
@@ -136,8 +139,7 @@ async function usage(env, now) {
   const cost = { ...serviceCost(totals), bill: serviceCost(account).bill, projectedUsage: ahead(totals).usage, projectedBill: ahead(account).bill };
   // [used, limit] per quota of the plan, account-wide as Cloudflare counts them; Free mostly per day.
   const plan = env.PLAN === 'paid' ? 'paid' : 'free';
-  const today = { workerRequests: v.workersDay[0]?.sum.requests ?? 0, doRequests: doRequests(split(v.callsDay, v.doDay[0]?.sum)),
-    ...(({ gbSec, rowsRead, rowsWritten }) => ({ doGbSec: gbSec, rowsRead, rowsWritten }))(doUsage(v.doDay[0]?.sum)), aePoints: v.aeDay[0]?.count ?? 0 };
+  const today = { workerRequests: v.workersDay[0]?.sum.requests ?? 0, ...doTotals(v.callsDay, v.doDay[0]?.sum), aePoints: v.aeDay[0]?.count ?? 0 };
   const used = { ...account, ...(plan === 'free' ? today : {}), sqlBytes: allSql, r2Bytes: r2Bytes(buckets) };
   const quotas = Object.fromEntries(Object.entries(PLANS[plan]).map(([k, limit]) => [k, [used[k] ?? 0, limit]]));
   const names = (rows) => new Set(rows.map((r) => r.dimensions.name).filter((n) => n !== env.PROBE_ACCOUNT));
@@ -278,7 +280,6 @@ export class MonitorStore extends DurableObject {
     const ok = probes.reduce((bits, p, i) => bits | (p.ok ? 1 << i : 0), 0);
     this.sql.exec('INSERT OR REPLACE INTO snaps VALUES (?, ?, ?, ?)', now, ok, used.online?.apps ?? null, JSON.stringify({ probes, ...used, accounts: used.accounts?.slice(0, 10) }));
     this.sql.exec('DELETE FROM snaps WHERE t < ?', now - 35 * 1440 * MIN);
-    return { probes, error: used.error };
   }
 
   // The operator's unblock (dashboard): lifts the object's block and exempts it for the rest of the month.
