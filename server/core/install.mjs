@@ -360,12 +360,17 @@ function windowsInstallScript(url, server, apiKey, name) {
     "if ($existingConfig.bridgeId) { $config.bridgeId = [string]$existingConfig.bridgeId }",
     // A public install keeps an earlier pairing with the same server; otherwise the computer joins an account first.
     "if (-not $config.apiKey -and $existingConfig.server -eq $config.server) { foreach ($k in 'apiKey', 'accountKey', 'accountKeyAt', 'accounts') { if ($existingConfig.$k) { $config[$k] = $existingConfig.$k } } }",
+    // A dropped pairing stays recoverable from a backup.
+    "if ($existingConfig.apiKey -and $config.apiKey -ne $existingConfig.apiKey) { Copy-Item $configPath ($configPath + '.bak-' + [DateTimeOffset]::Now.ToUnixTimeMilliseconds()) }",
     "$utf8 = New-Object System.Text.UTF8Encoding($false)",
     "[System.IO.File]::WriteAllText($configPath, ($config | ConvertTo-Json), $utf8)",
-    // `pair` joins an account, or shows a paired computer's one-time code for a new phone. Windows PowerShell
-    // turns a captured native stderr line into an error under 'Stop', so a paired install must not stop there.
-    "$ErrorActionPreference = 'Continue'; & $nodePath (Join-Path $dir 'bridge.mjs') pair; $pairExit = $LASTEXITCODE; $ErrorActionPreference = 'Stop'",
-    "if ($pairExit -ne 0 -and -not $config.apiKey) { throw 'This computer has not joined an account.' }",
+    // `pair` joins an account, or shows a paired computer's one-time code for a new phone (a keyed install
+    // without K has none). Windows PowerShell turns a captured native stderr line into an error under 'Stop',
+    // so a paired install must not stop there.
+    "if (-not $config.apiKey -or $config.accountKey) {",
+    "  $ErrorActionPreference = 'Continue'; & $nodePath (Join-Path $dir 'bridge.mjs') pair; $pairExit = $LASTEXITCODE; $ErrorActionPreference = 'Stop'",
+    "  if ($pairExit -ne 0 -and -not $config.apiKey) { throw 'This computer has not joined an account.' }",
+    "}",
     "$bridge = Join-Path $dir 'bridge-launcher.mjs'",
     "$logPath = Join-Path $dir 'bridge.log'",
     "Remove-Item $logPath -Force -ErrorAction SilentlyContinue",
@@ -497,11 +502,15 @@ export async function installScript({ headers }, apiKey, name, platform, presign
     'deviceName:process.env.BATON_DEVICE_NAME,deviceDisplayName:process.env.BATON_DEVICE_DISPLAY_NAME};' +
     'if(existing.bridgeId)config.bridgeId=existing.bridgeId;' +
     'if(!config.apiKey&&existing.server===config.server)for(const k of ["apiKey","accountKey","accountKeyAt","accounts"])if(existing[k])config[k]=existing[k];' +
+    // A dropped pairing stays recoverable from a backup.
+    'if(existing.apiKey&&config.apiKey!==existing.apiKey)fs.writeFileSync(p+".bak-"+Date.now(),JSON.stringify(existing,null,2),{mode:0o600});' +
     'fs.writeFileSync(p,JSON.stringify(config,null,2),{mode:0o600});fs.chmodSync(p,0o600);\' "$DIR/config.json"\n' +
     // `pair` joins an account (QR code) before the service starts; a paired computer shows a one-time code for a
-    // new phone, and only an unpaired one fails the install when `pair` cannot run (no terminal).
-    'node "$DIR/bridge.mjs" pair ||\n' +
-    '  node -e \'process.exit(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).apiKey?0:1)\' "$DIR/config.json"\n' +
+    // new phone and continues if it cannot (no terminal); a keyed install without K has no code to show.
+    'case $(node -p \'const c=require(process.argv[1]);c.apiKey?(c.accountKey?"paired":"keyed"):"new"\' "$DIR/config.json") in\n' +
+    '  new) node "$DIR/bridge.mjs" pair ;;\n' +
+    '  paired) node "$DIR/bridge.mjs" pair || true ;;\n' +
+    'esac\n' +
     '\n' +
     '# WSL: symlink Windows .claude directory so bridge can monitor Windows CC sessions\n' +
     'if [ -n "$WSL_DISTRO_NAME" ]; then\n' +

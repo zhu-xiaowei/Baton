@@ -271,7 +271,7 @@ setNativeTabTitle('Baton');
   async function applyLink(link, signedIn) {
     showLoading('Connecting');
     if (signedIn) {
-      if (link.kind !== 'j') throw new Error('This computer is in another account. To add it to yours, run `node ~/.baton-bridge/bridge.mjs pair --leave` on it and scan the new code.');
+      if (link.kind !== 'j') throw new Error('This code adds a new phone. To move that computer to your account, run `node ~/.baton-bridge/bridge.mjs pair --leave` on it and scan the new code.');
       var reply = await viaComputer('pair_approve', { link: link.text });
       return finishAdd(reply.deviceName);
     }
