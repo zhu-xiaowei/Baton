@@ -3,9 +3,11 @@
 // under, so they are printed only to an interactive terminal, never to the service's logs.
 import { randomBytes } from 'crypto';
 import fs from 'fs';
+import { createInterface } from 'readline/promises';
 import qrcode from 'qrcode-terminal';
-import { CONFIG_PATH, saveConfig } from './config.mjs';
+import { BRIDGE_HOME, CONFIG_PATH, saveConfig } from './config.mjs';
 import { fingerprint, openPair, openRotation, pairCode, sealPair } from './e2ee-node.mjs';
+import { runningBridgePid } from './instance-lock.mjs';
 
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -80,8 +82,19 @@ export async function rotatedKey(config) {
   return k.toString('base64') === config.accountKey ? null : k;
 }
 
+// `pair --leave`: joins another account with the same server and device fields. config.json is written, and the
+// old one backed up, only once the join succeeded; an abort or a failure leaves the old account in place.
+export async function leave(config, options) {
+  const credentials = ['apiKey', 'accountKey', 'accountKeyAt', 'accounts'];
+  const next = await join(Object.fromEntries(Object.entries(config).filter(([k]) => !credentials.includes(k))), options);
+  fs.writeFileSync(`${CONFIG_PATH}.bak-${Date.now()}`, JSON.stringify(config, null, 2), { mode: 0o600 });
+  saveConfig(next);
+  return next;
+}
+
 export async function runPair() {
-  const target = process.argv[3];
+  const leaving = process.argv[3] === '--leave';
+  const target = leaving ? undefined : process.argv[3];
   let config;
   try { config = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8')); } catch {
     console.error('No Bridge config; run the install command first.');
@@ -95,6 +108,21 @@ export async function runPair() {
     console.error('Run `node ~/.baton-bridge/bridge.mjs pair` in a terminal: its QR code is shown only there.');
     return 1;
   }
+  if (leaving && config.apiKey) {
+    const prompt = createInterface({ input: process.stdin, output: process.stdout });
+    const asking = new AbortController();
+    prompt.on('SIGINT', () => asking.abort());
+    const answer = await prompt.question('Move this computer out of its current account? [y/N] ', asking).catch(() => '');
+    prompt.close();
+    if (!/^y(es)?$/i.test(answer.trim())) return 0;
+    await leave(config);
+    // Like after an update, the service manager restarts a Bridge that exits non-zero: SIGHUP makes it do so
+    // (Windows has no SIGHUP; SIGTERM there terminates it with code 1, which bridge-launcher.mjs restarts).
+    const pid = await runningBridgePid(BRIDGE_HOME).catch(() => 0);
+    if (pid) process.kill(pid, process.platform === 'win32' ? 'SIGTERM' : 'SIGHUP');
+    console.log(pid ? 'The Bridge is restarting in the new account.' : 'The Bridge uses the new account when it starts.');
+    return 0;
+  }
   if (!config.accountKey && config.apiKey) {
     console.error('This computer has no account key yet; open the Baton app once, then try again.');
     return 1;
@@ -103,10 +131,9 @@ export async function runPair() {
     saveConfig(await join(config));
     return 0;
   }
-  for (;;) {
-    const { link: invite, expiresIn } = await createInvite(config);
-    console.log('\nScan with the Baton app on a new phone, or open the link in a browser, to add it (Ctrl-C to stop):');
-    show(console.log, invite);
-    await pause(expiresIn * 1000);
-  }
+  const { link: invite, expiresIn } = await createInvite(config);
+  console.log(`\nScan with the Baton app on a new phone, or open the link in a browser, to add it (valid ${Math.round(expiresIn / 60)} minutes):`);
+  show(console.log, invite);
+  console.log('To move this computer to another account, run: node ~/.baton-bridge/bridge.mjs pair --leave');
+  return 0;
 }
