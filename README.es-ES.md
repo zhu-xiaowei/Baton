@@ -30,8 +30,6 @@ irm https://agentbaton.app/install.ps1 | iex
 
 </details>
 
-Obtendrás un código QR y una **Start URL**.
-
 ### 2. Descarga la App y conéctate
 
 | iOS | Android | HarmonyOS | macOS | Windows | Linux |
@@ -39,9 +37,7 @@ Obtendrás un código QR y una **Start URL**.
 | <img src="docs/assets/baton_ios.avif" width="88" alt="iOS"> | <img src="docs/assets/baton_android.avif" width="88" alt="Android"> | <img src="docs/assets/harmonyos.avif" width="88" alt="HarmonyOS"> | <img src="docs/assets/macOS.avif" width="88" alt="macOS"> | <img src="docs/assets/windows.avif" width="88" alt="Windows"> | <img src="docs/assets/linux.avif" width="88" alt="Linux"> |
 | [TestFlight](https://testflight.apple.com/join/UekStGCA) | [Baton.apk](https://dl.agentbaton.app/Baton.apk) | [Compilar e instalar](harmony/README.md) | [Baton.dmg](https://dl.agentbaton.app/Baton.dmg) | [Baton.exe](https://dl.agentbaton.app/Baton.exe) | [Baton.deb](https://dl.agentbaton.app/Baton.deb) |
 
-Todas las versiones: [GitHub Releases](https://github.com/zhu-xiaowei/Baton/releases)
-
-Escanea el código QR o pega la Start URL.
+Escanea el código QR que muestra el Bridge o pega su **Start URL**.
 
 ---
 

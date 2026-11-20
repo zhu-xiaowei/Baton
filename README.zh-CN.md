@@ -30,8 +30,6 @@ irm https://agentbaton.app/install.ps1 | iex
 
 </details>
 
-安装完成后会显示一个二维码和一个 **Start URL**。
-
 ### 2. 下载 App 并连接
 
 | iOS | Android | HarmonyOS | macOS | Windows | Linux |
@@ -39,9 +37,7 @@ irm https://agentbaton.app/install.ps1 | iex
 | <img src="docs/assets/baton_ios.avif" width="88" alt="iOS"> | <img src="docs/assets/baton_android.avif" width="88" alt="Android"> | <img src="docs/assets/harmonyos.avif" width="88" alt="HarmonyOS（鸿蒙）"> | <img src="docs/assets/macOS.avif" width="88" alt="macOS"> | <img src="docs/assets/windows.avif" width="88" alt="Windows"> | <img src="docs/assets/linux.avif" width="88" alt="Linux"> |
 | [TestFlight](https://testflight.apple.com/join/UekStGCA) | [Baton.apk](https://dl.agentbaton.app/Baton.apk) | [构建与安装](harmony/README.zh-CN.md) | [Baton.dmg](https://dl.agentbaton.app/Baton.dmg) | [Baton.exe](https://dl.agentbaton.app/Baton.exe) | [Baton.deb](https://dl.agentbaton.app/Baton.deb) |
 
-所有版本：[GitHub Releases](https://github.com/zhu-xiaowei/Baton/releases)
-
-扫描二维码，或粘贴 Start URL 即可连接。
+扫描 Bridge 显示的二维码，或粘贴 **Start URL** 连接。
 
 ---
 
