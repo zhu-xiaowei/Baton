@@ -17,6 +17,8 @@
   min-width: 0;
   overflow-x: auto;
   overflow-y: hidden;
+  /* WebKit snaps the scrolled layer to whole pixels; this keeps the 29.4px items' bottom border inside it. */
+  padding: 1px 0;
   white-space: nowrap;
   scrollbar-width: none;
   -webkit-overflow-scrolling: touch;

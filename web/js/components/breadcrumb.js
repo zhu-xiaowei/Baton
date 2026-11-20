@@ -68,9 +68,11 @@ export function createBreadcrumb(container, options) {
   }
 
   container.addEventListener('click', handleClick);
+  var observer;
 
   return {
     render: function (items) {
+      if (observer) observer.disconnect();
       resetBreadcrumbItems(container.querySelectorAll('.path-breadcrumb-item'));
       container.innerHTML = backButtonHtml({ className: 'path-breadcrumb-back' })
         + '<div class="path-breadcrumb-scroll">'
@@ -82,21 +84,27 @@ export function createBreadcrumb(container, options) {
         + '</div>';
       var scroll = container.querySelector('.path-breadcrumb-scroll');
       var anchor = (items || []).findIndex(function (item) { return item.anchor; });
-      requestAnimationFrame(function () {
-        if (!scroll) return;
-        // Ancestors of the anchor stay reachable by scrolling left; a spacer lets the anchor start the row.
-        var item = anchor > 0 && scroll.querySelectorAll('.path-breadcrumb-item')[anchor];
-        if (item) {
-          var gap = item.getBoundingClientRect().left - scroll.getBoundingClientRect().left
-            - (scroll.scrollWidth - scroll.clientWidth);
-          if (gap > 0) {
-            var spacer = document.createElement('span');
-            spacer.style.cssText = 'display:inline-block;width:' + gap + 'px';
-            scroll.appendChild(spacer);
-          }
+      // Ancestors of the anchor stay reachable by scrolling left; a spacer lets the anchor start the row.
+      // Placed again whenever the row's width changes (a panel opening or docking, a window resize).
+      function place() {
+        if (!scroll || !scroll.clientWidth) return; // not laid out yet
+        var spacer = scroll.querySelector('.path-breadcrumb-spacer');
+        if (spacer) spacer.remove();
+        var items = scroll.querySelectorAll('.path-breadcrumb-item');
+        var item = anchor > 0 && items[anchor];
+        var gap = item ? scroll.clientWidth - (items[items.length - 1].getBoundingClientRect().right - item.getBoundingClientRect().left) : 0;
+        if (gap > 0) {
+          spacer = document.createElement('span');
+          spacer.className = 'path-breadcrumb-spacer';
+          spacer.style.cssText = 'display:inline-block;width:' + gap + 'px';
+          scroll.appendChild(spacer);
         }
         scroll.scrollLeft = scroll.scrollWidth;
-      });
+      }
+      if (typeof ResizeObserver === 'function' && scroll) {
+        observer = new ResizeObserver(place);
+        observer.observe(scroll);
+      } else requestAnimationFrame(place);
     },
     setLoading: function (loading) {
       setBreadcrumbItemsLoading(
@@ -105,6 +113,7 @@ export function createBreadcrumb(container, options) {
       );
     },
     destroy: function () {
+      if (observer) observer.disconnect();
       resetBreadcrumbItems(container.querySelectorAll('.path-breadcrumb-item'));
       container.removeEventListener('click', handleClick);
       container.innerHTML = '';

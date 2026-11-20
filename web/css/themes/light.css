@@ -55,7 +55,7 @@
   --surface-alert: #fff1e5;
   --banner-bg: rgba(246, 248, 250, 0.86);
   --banner-border: rgba(0, 0, 0, 0.06);
-  --banner-shadow: 0 8px 28px rgba(31, 35, 40, 0.18);
+  --banner-shadow: 0 6px 20px rgba(31, 35, 40, 0.16);
   --surface-info: #ddf4ff;
   --surface-toggle: #ddf4ff;
   --text-emphasis: #1f2328;
