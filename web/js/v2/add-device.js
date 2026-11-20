@@ -12,8 +12,8 @@ export function openAddDevice({ underlaySelectors, onAdded }) {
   if (current) return;
   const root = document.createElement('div');
   root.className = 'add-device-page';
-  root.innerHTML = '<span class="add-back"></span><div></div>';
-  const form = mountStartUrlForm(root.lastChild, { adding: true, onAdded });
+  root.innerHTML = '<span class="add-back"></span><div class="add-device-scroll"><div></div></div>';
+  const form = mountStartUrlForm(root.lastChild.firstChild, { adding: true, onAdded });
 
   function close() {
     if (current !== root) return;

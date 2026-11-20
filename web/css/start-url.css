@@ -50,9 +50,11 @@ html.native-mobile[data-page-zoom] .start-url-form .input-group input { font-siz
 @keyframes spin { to { transform: rotate(360deg); } }
 
 /* Add device: a full-screen page over the current one (add-device.js). */
-.add-device-page {
-  position: fixed; inset: 0; z-index: 1000; display: flex; justify-content: center; align-items: flex-start;
-  overflow-y: auto; padding-top: var(--sat, env(safe-area-inset-top, 0px)); background: var(--canvas);
+/* The swipe moves the page; only its inner box scrolls, so the back button stays put. */
+.add-device-page { position: fixed; inset: 0; z-index: 1000; background: var(--canvas); }
+.add-device-scroll {
+  height: 100%; display: flex; justify-content: center; align-items: flex-start;
+  overflow-y: auto; padding-top: var(--sat, env(safe-area-inset-top, 0px));
 }
 .add-device-page .add-back { position: fixed; top: calc(var(--sat, env(safe-area-inset-top, 0px)) + 6px); left: 8px; width: 28px; height: 28px; display: flex; }
 html.native-mobile .add-device-page .add-back { width: 44px; height: 44px; top: var(--sat, env(safe-area-inset-top, 0px)); left: 0; }
