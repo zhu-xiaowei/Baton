@@ -81,6 +81,10 @@ function swipe(el, id) {
     if (event.target.closest('.inapp-close')) return;
     x0 = event.clientX; y0 = event.clientY; dx = dy = 0; axis = '';
     el.setPointerCapture(event.pointerId);
+    // A drag must not select the page below; on touch this would also cancel the click.
+    if (event.pointerType === 'mouse') event.preventDefault();
+    // Removing .dragging would otherwise replay the entrance and move the card off the click point.
+    el.classList.remove('fresh');
     el.classList.add('dragging');
   });
   el.addEventListener('pointermove', (event) => {
