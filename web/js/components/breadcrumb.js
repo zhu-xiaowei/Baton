@@ -68,9 +68,11 @@ export function createBreadcrumb(container, options) {
   }
 
   container.addEventListener('click', handleClick);
+  var observer;
 
   return {
     render: function (items) {
+      if (observer) observer.disconnect();
       resetBreadcrumbItems(container.querySelectorAll('.path-breadcrumb-item'));
       container.innerHTML = backButtonHtml({ className: 'path-breadcrumb-back' })
         + '<div class="path-breadcrumb-scroll">'
@@ -82,13 +84,14 @@ export function createBreadcrumb(container, options) {
         + '</div>';
       var scroll = container.querySelector('.path-breadcrumb-scroll');
       var anchor = (items || []).findIndex(function (item) { return item.anchor; });
-      requestAnimationFrame(function () {
-        if (!scroll) return;
-        // Ancestors of the anchor stay reachable by scrolling left; a spacer lets the anchor start the row.
-        var item = anchor > 0 && scroll.querySelectorAll('.path-breadcrumb-item')[anchor];
+      // Ancestors of the anchor stay reachable by scrolling left; a spacer lets the anchor start the row.
+      function place() {
+        if (!scroll.clientWidth) return false; // not laid out yet (hidden panel): wait for a size
+        var items = scroll.querySelectorAll('.path-breadcrumb-item');
+        var item = anchor > 0 && items[anchor];
         if (item) {
-          var gap = item.getBoundingClientRect().left - scroll.getBoundingClientRect().left
-            - (scroll.scrollWidth - scroll.clientWidth);
+          // Room after the anchor so that scrolling to the end leaves the anchor first in the row.
+          var gap = scroll.clientWidth - (items[items.length - 1].getBoundingClientRect().right - item.getBoundingClientRect().left);
           if (gap > 0) {
             var spacer = document.createElement('span');
             spacer.style.cssText = 'display:inline-block;width:' + gap + 'px';
@@ -96,6 +99,12 @@ export function createBreadcrumb(container, options) {
           }
         }
         scroll.scrollLeft = scroll.scrollWidth;
+        return true;
+      }
+      requestAnimationFrame(function () {
+        if (!scroll || place() || typeof ResizeObserver !== 'function') return;
+        observer = new ResizeObserver(function () { if (place()) observer.disconnect(); });
+        observer.observe(scroll);
       });
     },
     setLoading: function (loading) {
@@ -105,6 +114,7 @@ export function createBreadcrumb(container, options) {
       );
     },
     destroy: function () {
+      if (observer) observer.disconnect();
       resetBreadcrumbItems(container.querySelectorAll('.path-breadcrumb-item'));
       container.removeEventListener('click', handleClick);
       container.innerHTML = '';
