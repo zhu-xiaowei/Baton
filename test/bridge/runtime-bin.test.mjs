@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-test('CLI lookup: an older nvm version, the nvm default, runtimePaths, and a CLI installed later', { skip: process.platform === 'win32' }, async () => {
+test('CLI lookup: an older nvm version, the nvm default, and a CLI installed later', { skip: process.platform === 'win32' }, async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'baton-rtbin-'));
   Object.assign(process.env, { HOME: home, PATH: '/usr/bin:/bin', SHELL: '/bin/false' });
   delete process.env.NVM_DIR;
@@ -20,9 +20,6 @@ test('CLI lookup: an older nvm version, the nvm default, runtimePaths, and a CLI
   write('.nvm/versions/node/v22.21.0/bin/codex');
   write('.nvm/alias/default', '20\n');
   assert.equal(findRuntimeBin('codex').bin, codex);
-  const pinned = write('pinned/codex');
-  write('.baton-bridge/config.json', JSON.stringify({ runtimePaths: { codex: pinned } }));
-  assert.equal(findRuntimeBin('codex').bin, pinned);
   assert.equal(cachedRuntimeBin('baton-test-cli'), null);
   const later = write('.local/bin/baton-test-cli');
   assert.equal(cachedRuntimeBin('baton-test-cli'), null);

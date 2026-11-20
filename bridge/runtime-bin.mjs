@@ -3,7 +3,6 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { CONFIG_PATH } from './config.mjs';
 import { IS_WINDOWS, runExecutable } from './platform.mjs';
 
 const HOME = os.homedir();
@@ -66,21 +65,13 @@ function loginShellLookup(name) {
   } catch { return null; }
 }
 
-// config.json `runtimePaths: { codex: "/path/to/codex" }`: a CLI the lookup cannot find.
-function configuredPath(name) {
-  try { return JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8')).runtimePaths?.[name] || null; } catch { return null; }
-}
-
-// `runtimePaths`, then the first `name` in `firstDirs`, PATH, `dirs`, the usual install directories, then the login
+// The first `name` in `firstDirs`, PATH, `dirs`, the usual install directories, then the login
 // shell's lookup, whose `--version` exits 0 and, with `minVersion`, reports at least that (PATH may hold an old 1.x).
 export function findRuntimeBin(name, dirs = [], minVersion, firstDirs = []) {
   const accept = (bin) => {
     const v = version(bin);
     return v !== null && (!minVersion || rank(/\d+\.\d+\.\d+/.exec(v)?.[0]) >= rank(minVersion)) ? { bin, version: v } : null;
   };
-  const configured = configuredPath(name);
-  const chosen = configured && accept(configured);
-  if (chosen) return chosen;
   const pathDirs = (process.env.PATH || process.env.Path || '').split(path.delimiter).filter(Boolean);
   const seen = new Set();
   for (const dir of [...firstDirs, ...pathDirs, ...dirs, ...commonDirs()]) {
@@ -101,7 +92,7 @@ const INSTALL = { codex: 'npm i -g @openai/codex', claude: 'curl -fsSL https://c
 
 export function runtimeNotFoundMessage(name) {
   return `${name} was not found on this device (searched PATH, ~/.local/bin, Homebrew, npm and nvm/fnm/Volta Node versions). `
-    + `Install it (${INSTALL[name] || `install ${name}`}), or set "runtimePaths": { "${name}": "/path/to/${name}" } in ~/.baton-bridge/config.json.`;
+    + (INSTALL[name] ? `Install it with: ${INSTALL[name]}` : `Install ${name}`) + ', then try again.';
 }
 
 const resolved = new Map(); // name -> { bin, at }
