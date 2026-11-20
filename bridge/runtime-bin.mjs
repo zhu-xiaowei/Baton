@@ -92,7 +92,7 @@ const INSTALL = { codex: 'npm i -g @openai/codex', claude: 'curl -fsSL https://c
 
 export function runtimeNotFoundMessage(name) {
   return `${name} was not found on this device (searched PATH, ~/.local/bin, Homebrew, npm and nvm/fnm/Volta Node versions). `
-    + (INSTALL[name] ? `Install it with: ${INSTALL[name]}` : `Install ${name}`) + ', then try again.';
+    + (INSTALL[name] ? `Install it, then try again: ${INSTALL[name]}` : `Install ${name}, then try again.`);
 }
 
 const resolved = new Map(); // name -> { bin, at }
