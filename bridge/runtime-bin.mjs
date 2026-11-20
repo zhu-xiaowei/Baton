@@ -71,9 +71,9 @@ function configuredPath(name) {
   try { return JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8')).runtimePaths?.[name] || null; } catch { return null; }
 }
 
-// `runtimePaths`, then the first `name` in PATH, `dirs`, the usual install directories, then the login
+// `runtimePaths`, then the first `name` in `firstDirs`, PATH, `dirs`, the usual install directories, then the login
 // shell's lookup, whose `--version` exits 0 and, with `minVersion`, reports at least that (PATH may hold an old 1.x).
-export function findRuntimeBin(name, dirs = [], minVersion) {
+export function findRuntimeBin(name, dirs = [], minVersion, firstDirs = []) {
   const accept = (bin) => {
     const v = version(bin);
     return v !== null && (!minVersion || rank(/\d+\.\d+\.\d+/.exec(v)?.[0]) >= rank(minVersion)) ? { bin, version: v } : null;
@@ -83,7 +83,7 @@ export function findRuntimeBin(name, dirs = [], minVersion) {
   if (chosen) return chosen;
   const pathDirs = (process.env.PATH || process.env.Path || '').split(path.delimiter).filter(Boolean);
   const seen = new Set();
-  for (const dir of [...pathDirs, ...dirs, ...commonDirs()]) {
+  for (const dir of [...firstDirs, ...pathDirs, ...dirs, ...commonDirs()]) {
     for (const file of NAMES(name)) {
       const bin = path.join(dir, file);
       if (seen.has(bin)) continue;
@@ -106,16 +106,16 @@ export function runtimeNotFoundMessage(name) {
 
 const resolved = new Map(); // name -> { bin, at }
 
-// A runtime's CLI, resolved once. Misses are looked up again by forgetRuntimeBin().
+// A runtime's CLI, resolved once. Lookups block, so misses are looked up again only by forgetRuntimeBin().
 export function cachedRuntimeBin(name, resolve = () => findRuntimeBin(name)?.bin || null) {
   if (!resolved.has(name)) resolved.set(name, { bin: resolve(), at: Date.now() });
   return resolved.get(name).bin;
 }
 
-// Forget `name` (its launch failed), or with no name every miss older than 10s (lookups block).
-export function forgetRuntimeBin(name) {
+// Forget `name` (its launch failed), or with no name every miss older than `maxAge`.
+export function forgetRuntimeBin(name, maxAge = 5 * 60_000) {
   for (const [key, entry] of resolved) {
-    if (key === name || (!name && !entry.bin && Date.now() - entry.at > 10_000)) resolved.delete(key);
+    if (key === name || (!name && !entry.bin && Date.now() - entry.at >= maxAge)) resolved.delete(key);
   }
 }
 

@@ -462,9 +462,12 @@ function closeRuntimePicker() {
   removeEventListener('resize', closeRuntimePicker);
 }
 
-function pickNewSessionRuntime(runtime) {
+async function pickNewSessionRuntime(runtime) {
   closeRuntimePicker();
-  if (state.newSessionUnavailable[runtime]) return showToast(state.newSessionUnavailable[runtime]);
+  if (state.newSessionUnavailable[runtime]) {
+    await refreshNewSessionRuntimes(_navVersion, true); // installed since the last check?
+    if (state.newSessionUnavailable[runtime]) return showToast(state.newSessionUnavailable[runtime]);
+  }
   applyNewSessionRuntime(runtime, true);
 }
 
@@ -2001,9 +2004,9 @@ function virtualProjectRuntimes(projectHash) {
 }
 
 // The Bridge's ping lists the runtimes it can create; older Bridges keep the fallback list.
-async function refreshNewSessionRuntimes(nav) {
+async function refreshNewSessionRuntimes(nav, recheck) {
   var reply;
-  try { reply = await window.bridgeRequest('ping', {}, state.appState.device); } catch (e) { return; }
+  try { reply = await window.bridgeRequest('ping', recheck ? { recheck: true } : {}, state.appState.device); } catch (e) { return; }
   if (_navVersion !== nav || !Array.isArray(reply?.runtimes)) return;
   var runtimes = inMenuOrder(reply.runtimes);
   if (!runtimes.length) return;

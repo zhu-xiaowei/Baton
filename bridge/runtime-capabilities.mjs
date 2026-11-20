@@ -5,7 +5,7 @@ import { cachedRuntimeBin, findRuntimeBin, runtimeNotFoundMessage } from './runt
 import { resolveRuntimeLauncher } from './runtime-launcher.mjs';
 
 // The directory of the Node running Bridge, where an older service found npm-installed CLIs.
-const lookup = (name) => findRuntimeBin(name, [path.dirname(process.execPath)])?.bin || null;
+const lookup = (name, firstDirs) => findRuntimeBin(name, [path.dirname(process.execPath)], undefined, firstDirs)?.bin || null;
 
 export function resolveCodexHomes(env = process.env) {
   const candidates = [];
@@ -27,11 +27,13 @@ export function resolveCodexBin() {
 
 export function resolveClaudeBinForCapability(options = {}) {
   const home = options.home || os.homedir();
-  return resolveRuntimeLauncher(
-    'claude',
-    [],
-    { allowShellFallback: true, envFile: path.join(home, '.claude/env.sh'), findExecutableFn: lookup, ...options },
-  );
+  // The native installer's ~/.local/bin, rarely on a service's PATH, goes before an older npm/Homebrew claude.
+  return resolveRuntimeLauncher('claude', [], {
+    allowShellFallback: true,
+    envFile: path.join(home, '.claude/env.sh'),
+    findExecutableFn: (name) => lookup(name, [path.join(home, '.local/bin')]),
+    ...options,
+  });
 }
 
 export function claudeLauncherError(options = {}) {
