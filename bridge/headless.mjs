@@ -12,6 +12,7 @@ import { spawn, execFileSync } from 'child_process';
 import readline from 'readline';
 import { randomUUID } from 'node:crypto';
 import { requireClaudeBin, resolveClaudeBin } from './session.mjs';
+import { forgetRuntimeBin } from './runtime-bin.mjs';
 import { StreamFramer } from './stream-framer.mjs';
 import { userMessageUuidForTurnId } from './live-turn-stream.mjs';
 import { PREWARM_MS, trackLeftover } from './turn-process.mjs';
@@ -95,7 +96,7 @@ class HeadlessProc {
       console.log(`[headless] exit sid=${this.sessionId} pid=${this.proc.pid} code=${code} signal=${signal} busy=${this.busy} bgTasks=${this.backgroundTasks} unanswered=${this.unanswered.size} reason=${this.exitReason || 'self'} stderr=${JSON.stringify(tail)}`);
       this._onClose(code, stderr);
     });
-    this.proc.on('error', (err) => this._onClose(-1, err.message));
+    this.proc.on('error', (err) => { forgetRuntimeBin('claude'); this._onClose(-1, err.message); });
   }
 
   _onLine(line) {

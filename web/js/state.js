@@ -16,6 +16,7 @@ export const state = {
   deviceOnlineMap: {},
   deviceDisplayNameMap: {},
   newSessionRuntimes: [],
+  newSessionUnavailable: {}, // runtime -> the Bridge's install hint
   rootSessionId: null,
   rootSessionPreview: '',
   activeThreadId: null,

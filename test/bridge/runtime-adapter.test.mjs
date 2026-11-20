@@ -17,7 +17,6 @@ import {
   getSessionMetadata,
   readClaudeFirstPrompts,
 } from '../../bridge/session.mjs';
-import { resolveCodexBin } from '../../bridge/runtime-capabilities.mjs';
 
 function claudeFixture() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'baton-claude-runtime-'));
@@ -111,20 +110,6 @@ test('Codex stopped polling updates the original project after its worktree disa
 
   assert.equal(result.session.project, oldProject);
   assert.equal(result.session.status, 'completed');
-});
-
-test('Codex binary resolution finds an NVM sibling of the running Node executable', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'baton-codex-bin-'));
-  const bin = path.join(root, 'versions/node/v20.19.4/bin');
-  const nodeExecutable = path.join(bin, 'node');
-  const codexExecutable = path.join(bin, process.platform === 'win32' ? 'codex.cmd' : 'codex');
-  fs.mkdirSync(bin, { recursive: true });
-  fs.writeFileSync(codexExecutable, '');
-  try {
-    assert.equal(resolveCodexBin({ home: root, nodeExecutable }), codexExecutable);
-  } finally {
-    fs.rmSync(root, { recursive: true, force: true });
-  }
 });
 
 test('Claude metadata scan returns preview, latest model, and line count in one result', () => {

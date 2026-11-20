@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { CONFIG_PATH } from './config.mjs';
 import { IS_WINDOWS, runExecutable } from './platform.mjs';
 
 const HOME = os.homedir();
@@ -10,11 +11,21 @@ const NAMES = (name) => (IS_WINDOWS ? [`${name}.exe`, `${name}.cmd`, name] : [na
 
 const rank = (v) => String(v).replace(/^v/, '').split('.').slice(0, 3).reduce((sum, part) => sum * 1000 + (parseInt(part, 10) || 0), 0);
 
-// <root>/<version>/<suffix> for every installed version, newest first.
-function versionDirs(root, suffix) {
+// <root>/<version>/<suffix> for every installed version, `first` (a version prefix) then newest first.
+function versionDirs(root, suffix, first) {
+  const preferred = (v) => !!first && (v === first || v.startsWith(`${first}.`));
   try {
-    return fs.readdirSync(root).sort((a, b) => rank(b) - rank(a)).map((v) => path.join(root, v, suffix));
+    return fs.readdirSync(root).sort((a, b) => preferred(b) - preferred(a) || rank(b) - rank(a)).map((v) => path.join(root, v, suffix));
   } catch { return []; }
+}
+
+// nvm's default alias as a version prefix (`22`, `v22.1.0`, `lts/*` -> `lts/jod` -> `v22.21.1`).
+function nvmDefault(nvm) {
+  let alias = 'default';
+  for (let hop = 0; hop < 4; hop++) {
+    try { alias = fs.readFileSync(path.join(nvm, 'alias', alias), 'utf8').trim(); } catch { break; }
+  }
+  return /^v?\d/.test(alias) ? `v${alias.replace(/^v/, '')}` : null;
 }
 
 // Node version managers' install directories, each holding a node binary.
@@ -22,8 +33,9 @@ function nodeDirs() {
   const bin = IS_WINDOWS ? '' : 'bin';
   const fnm = process.env.FNM_DIR || (process.platform === 'darwin'
     ? path.join(HOME, 'Library/Application Support/fnm') : path.join(HOME, '.local/share/fnm'));
+  const nvm = process.env.NVM_DIR || path.join(HOME, '.nvm');
   return [
-    ...versionDirs(path.join(process.env.NVM_DIR || path.join(HOME, '.nvm'), 'versions/node'), bin),
+    ...versionDirs(path.join(nvm, 'versions/node'), bin, nvmDefault(nvm)),
     ...versionDirs(path.join(fnm, 'node-versions'), path.join('installation', bin)),
     ...versionDirs(path.join(process.env.VOLTA_HOME || path.join(HOME, '.volta'), 'tools/image/node'), bin),
   ];
@@ -32,8 +44,8 @@ function nodeDirs() {
 export function commonDirs() {
   return [
     path.join(process.env.VOLTA_HOME || path.join(HOME, '.volta'), 'bin'),
-    path.join(HOME, '.local/bin'),
-    '/opt/homebrew/bin', '/usr/local/bin', '/home/linuxbrew/.linuxbrew/bin',
+    path.join(HOME, '.local/bin'), path.join(HOME, '.npm-global/bin'),
+    '/opt/homebrew/bin', '/usr/local/bin', '/home/linuxbrew/.linuxbrew/bin', '/usr/bin',
     ...(process.env.APPDATA ? [path.join(process.env.APPDATA, 'npm')] : []),
     ...nodeDirs(),
   ];
@@ -54,13 +66,21 @@ function loginShellLookup(name) {
   } catch { return null; }
 }
 
-// The first `name` in PATH, `dirs`, the usual install directories, then the login shell's lookup,
-// whose `--version` exits 0 and, with `minVersion`, reports at least that (PATH may hold an old 1.x).
+// config.json `runtimePaths: { codex: "/path/to/codex" }`: a CLI the lookup cannot find.
+function configuredPath(name) {
+  try { return JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8')).runtimePaths?.[name] || null; } catch { return null; }
+}
+
+// `runtimePaths`, then the first `name` in PATH, `dirs`, the usual install directories, then the login
+// shell's lookup, whose `--version` exits 0 and, with `minVersion`, reports at least that (PATH may hold an old 1.x).
 export function findRuntimeBin(name, dirs = [], minVersion) {
   const accept = (bin) => {
     const v = version(bin);
     return v !== null && (!minVersion || rank(/\d+\.\d+\.\d+/.exec(v)?.[0]) >= rank(minVersion)) ? { bin, version: v } : null;
   };
+  const configured = configuredPath(name);
+  const chosen = configured && accept(configured);
+  if (chosen) return chosen;
   const pathDirs = (process.env.PATH || process.env.Path || '').split(path.delimiter).filter(Boolean);
   const seen = new Set();
   for (const dir of [...pathDirs, ...dirs, ...commonDirs()]) {
@@ -75,6 +95,28 @@ export function findRuntimeBin(name, dirs = [], minVersion) {
   }
   const bin = loginShellLookup(name);
   return bin && !seen.has(bin) ? accept(bin) : null;
+}
+
+const INSTALL = { codex: 'npm i -g @openai/codex', claude: 'curl -fsSL https://claude.ai/install.sh | bash' };
+
+export function runtimeNotFoundMessage(name) {
+  return `${name} was not found on this device (searched PATH, ~/.local/bin, Homebrew, npm and nvm/fnm/Volta Node versions). `
+    + `Install it (${INSTALL[name] || `install ${name}`}), or set "runtimePaths": { "${name}": "/path/to/${name}" } in ~/.baton-bridge/config.json.`;
+}
+
+const resolved = new Map(); // name -> { bin, at }
+
+// A runtime's CLI, resolved once. Misses are looked up again by forgetRuntimeBin().
+export function cachedRuntimeBin(name, resolve = () => findRuntimeBin(name)?.bin || null) {
+  if (!resolved.has(name)) resolved.set(name, { bin: resolve(), at: Date.now() });
+  return resolved.get(name).bin;
+}
+
+// Forget `name` (its launch failed), or with no name every miss older than 10s (lookups block).
+export function forgetRuntimeBin(name) {
+  for (const [key, entry] of resolved) {
+    if (key === name || (!name && !entry.bin && Date.now() - entry.at > 10_000)) resolved.delete(key);
+  }
 }
 
 // A node binary at least `minVersion`: Bridge's own first, then version-manager installs.

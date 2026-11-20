@@ -432,9 +432,10 @@ function openRuntimePicker() {
   var menu = document.getElementById('runtimePickerList');
   menu.innerHTML = state.newSessionRuntimes.map(function (runtime) {
     var current = runtime === state.appState.runtime;
-    return '<button class="runtime-picker-row" type="button" role="menuitemradio" aria-checked="' + current + '"'
+    var missing = state.newSessionUnavailable[runtime] ? '<span class="runtime-picker-hint">Not found</span>' : '';
+    return '<button class="runtime-picker-row' + (missing ? ' unavailable' : '') + '" type="button" role="menuitemradio" aria-checked="' + current + '"'
       + ' onclick="pickNewSessionRuntime(\'' + runtime + '\')">' + runtimeIcon('', runtime)
-      + '<span class="runtime-picker-label">' + runtimeLabel(runtime) + '</span>' + (current ? '<span class="runtime-picker-check">' + CHECK_ICON_SVG + '</span>' : '')
+      + '<span class="runtime-picker-label">' + runtimeLabel(runtime) + missing + '</span>' + (current ? '<span class="runtime-picker-check">' + CHECK_ICON_SVG + '</span>' : '')
       + '</button>';
   }).join('');
   // Drop down from the button, right-aligned, with the arrow under its centre.
@@ -463,6 +464,7 @@ function closeRuntimePicker() {
 
 function pickNewSessionRuntime(runtime) {
   closeRuntimePicker();
+  if (state.newSessionUnavailable[runtime]) return showToast(state.newSessionUnavailable[runtime]);
   applyNewSessionRuntime(runtime, true);
 }
 
@@ -1912,7 +1914,7 @@ function applyNewSessionRuntime(runtime, remember) {
 function toggleNewSessionRuntime() {
   if (state.appState.session !== '__new__') return;
   applyNewSessionRuntime(
-    nextNewSessionRuntime(state.newSessionRuntimes, state.appState.runtime),
+    nextNewSessionRuntime(usableNewSessionRuntimes(), state.appState.runtime),
     true,
   );
 }
@@ -1941,6 +1943,7 @@ async function startNewSession(projectHash) {
   if (_navVersion !== myNav) return;
   var runtimes = virtualProjectRuntimes(projectHash) || knownNewSessionRuntimes() || creatableRuntimes();
   state.newSessionRuntimes = runtimes;
+  state.newSessionUnavailable = {};
   var runtime = preferredNewSessionRuntime(runtimes, savedNewSessionRuntime());
   // Clear a prior session's permission prompt so its disabled input doesn't carry over.
   if (typeof dismissPermissionPrompt === 'function') dismissPermissionPrompt();
@@ -2007,11 +2010,22 @@ async function refreshNewSessionRuntimes(nav) {
   try { localStorage.setItem(newSessionRuntimesKey(), JSON.stringify(runtimes)); } catch (e) {}
   var only = virtualProjectRuntimes(state.appState.project?.hash);
   if (only) runtimes = runtimes.filter(function (runtime) { return only.includes(runtime); });
-  if (!runtimes.length || runtimes.join() === state.newSessionRuntimes.join()) return;
+  var unavailable = reply.unavailable || {};
+  if (!runtimes.length || (runtimes.join() === state.newSessionRuntimes.join() && !unavailable[state.appState.runtime])) {
+    state.newSessionUnavailable = unavailable;
+    return;
+  }
   state.newSessionRuntimes = runtimes;
+  state.newSessionUnavailable = unavailable;
   // The saved choice may only now be offered (the Bridge reports runtimes after the view opens).
-  var saved = savedNewSessionRuntime();
-  applyNewSessionRuntime(preferredNewSessionRuntime(runtimes, runtimes.includes(saved) ? saved : state.appState.runtime), false);
+  var saved = savedNewSessionRuntime(), usable = usableNewSessionRuntimes();
+  applyNewSessionRuntime(preferredNewSessionRuntime(usable, usable.includes(saved) ? saved : state.appState.runtime), false);
+}
+
+// Runtimes whose CLI the Bridge found (all of them when none was found).
+function usableNewSessionRuntimes() {
+  var usable = state.newSessionRuntimes.filter(function (runtime) { return !state.newSessionUnavailable[runtime]; });
+  return usable.length ? usable : state.newSessionRuntimes;
 }
 
 function inMenuOrder(runtimes) {

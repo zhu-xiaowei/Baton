@@ -9,6 +9,7 @@ import {
   resolveClaudeBinForCapability,
 } from './runtime-capabilities.mjs';
 import { runExecutable } from './platform.mjs';
+import { cachedRuntimeBin, forgetRuntimeBin } from './runtime-bin.mjs';
 import { attachmentPreviewText } from './attachments.mjs';
 
 // Mirrors CC's SKIP_FIRST_PROMPT_PATTERN (sessionStorage.ts).
@@ -589,18 +590,15 @@ export function agentDetailFor(a) {
   } catch { return a.waitingFor || ''; }
 }
 
-// Resolve the claude binary once. systemd user services run with a bare PATH
-// where `claude` isn't found, so try known install paths, then a login shell.
-let _claudeBin;
+// Resolved once: systemd/launchd services run with a bare PATH where `claude` isn't found.
 export function resolveClaudeBin() {
-  if (_claudeBin !== undefined) return _claudeBin;
-  _claudeBin = resolveClaudeBinForCapability();
-  return _claudeBin;
+  return cachedRuntimeBin('claude', () => resolveClaudeBinForCapability());
 }
 
 export function requireClaudeBin() {
   const binary = resolveClaudeBin();
   if (binary) return binary;
+  forgetRuntimeBin('claude'); // the next send looks again
   throw claudeLauncherError();
 }
 
