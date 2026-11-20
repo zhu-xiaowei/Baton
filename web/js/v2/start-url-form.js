@@ -141,6 +141,7 @@ export function mountStartUrlForm(root, { adding = false, onAdded } = {}) {
   }
 
   function finishAdd(name) {
+    if (!root.isConnected) return; // closed while connecting
     sessionStorage.setItem('baton-added', name);
     if (onAdded) onAdded();
     else location.replace('index.html');
@@ -177,7 +178,7 @@ export function mountStartUrlForm(root, { adding = false, onAdded } = {}) {
         var perm = await mod.checkPermissions();
         if (perm !== 'granted') {
           perm = await mod.requestPermissions();
-          if (perm !== 'granted') { showError('Camera permission denied'); return; }
+          if (perm !== 'granted') { scanModule = null; showError('Camera permission denied'); return; }
         }
         // windowed:false → camera fully covers the webview. iOS: native × button
         // injected by main.mm. Android: the system Back cancels (cancelScan).
