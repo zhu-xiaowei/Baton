@@ -85,27 +85,26 @@ export function createBreadcrumb(container, options) {
       var scroll = container.querySelector('.path-breadcrumb-scroll');
       var anchor = (items || []).findIndex(function (item) { return item.anchor; });
       // Ancestors of the anchor stay reachable by scrolling left; a spacer lets the anchor start the row.
+      // Placed again whenever the row's width changes (a panel opening or docking, a window resize).
       function place() {
-        if (!scroll.clientWidth) return false; // not laid out yet (hidden panel): wait for a size
+        if (!scroll || !scroll.clientWidth) return; // not laid out yet
+        var spacer = scroll.querySelector('.path-breadcrumb-spacer');
+        if (spacer) spacer.remove();
         var items = scroll.querySelectorAll('.path-breadcrumb-item');
         var item = anchor > 0 && items[anchor];
-        if (item) {
-          // Room after the anchor so that scrolling to the end leaves the anchor first in the row.
-          var gap = scroll.clientWidth - (items[items.length - 1].getBoundingClientRect().right - item.getBoundingClientRect().left);
-          if (gap > 0) {
-            var spacer = document.createElement('span');
-            spacer.style.cssText = 'display:inline-block;width:' + gap + 'px';
-            scroll.appendChild(spacer);
-          }
+        var gap = item ? scroll.clientWidth - (items[items.length - 1].getBoundingClientRect().right - item.getBoundingClientRect().left) : 0;
+        if (gap > 0) {
+          spacer = document.createElement('span');
+          spacer.className = 'path-breadcrumb-spacer';
+          spacer.style.cssText = 'display:inline-block;width:' + gap + 'px';
+          scroll.appendChild(spacer);
         }
         scroll.scrollLeft = scroll.scrollWidth;
-        return true;
       }
-      requestAnimationFrame(function () {
-        if (!scroll || place() || typeof ResizeObserver !== 'function') return;
-        observer = new ResizeObserver(function () { if (place()) observer.disconnect(); });
+      if (typeof ResizeObserver === 'function' && scroll) {
+        observer = new ResizeObserver(place);
         observer.observe(scroll);
-      });
+      } else requestAnimationFrame(place);
     },
     setLoading: function (loading) {
       setBreadcrumbItemsLoading(
