@@ -49,20 +49,19 @@ export function executableOptions(binary, options = {}, runtime = {}) {
   };
 }
 
+// A `.cmd` run through the shell needs its path quoted when it contains spaces.
+function shellCommand(binary, options, platform) {
+  return platform === 'win32' && options.shell && /\.(?:cmd|bat)$/i.test(binary) && /\s/.test(binary) ? `"${binary}"` : binary;
+}
+
 export function runExecutable(binary, args, options = {}) {
-  return execFileSync(binary, args, executableOptions(binary, options));
+  const runOptions = executableOptions(binary, options);
+  return execFileSync(shellCommand(binary, runOptions, process.platform), args, runOptions);
 }
 
 export function spawnExecutable(binary, args, options = {}, spawnFn = spawn, runtime = {}) {
-  const platform = runtime.platform || process.platform;
   const spawnOptions = executableOptions(binary, options, runtime);
-  const command = platform === 'win32'
-    && spawnOptions.shell
-    && /\.(?:cmd|bat)$/i.test(binary)
-    && /\s/.test(binary)
-    ? `"${binary}"`
-    : binary;
-  return spawnFn(command, args, spawnOptions);
+  return spawnFn(shellCommand(binary, spawnOptions, runtime.platform || process.platform), args, spawnOptions);
 }
 
 export function validateProductionDependencies(cwd) {

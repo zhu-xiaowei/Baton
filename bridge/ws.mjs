@@ -13,9 +13,13 @@ import {
   getDaemonRunningSessionIds,
   getAgentsJson,
   requireClaudeBin,
+  resolveClaudeBin,
   liveRecordBusy,
   claudeSessionWriter,
 } from './session.mjs';
+import { forgetRuntimeBin, runtimeNotFoundMessage } from './runtime-bin.mjs';
+import { resolveCodexBin } from './runtime-capabilities.mjs';
+import { managedSocketPath } from './codex-app-server.mjs';
 import { parseStorageSessionId, runtimeDescriptor, storageSessionId } from './session-identity.mjs';
 import { SessionGrants } from './session-grants.mjs';
 import { getRuntimeAdapter, registerInstalledRuntimes, runtimeAdapters } from './runtime-registry.mjs';
@@ -851,7 +855,8 @@ function connect() {
         pair_approve: async params => { await catchUpAccountKey(); return approveJoin(_config, params.link); },
         // The recovery phrase is K: shown to an App of the account only (sealed like every reply).
         recovery_key: () => ({ k: _config.accounts ? _config.accountKey : '' }),
-        ping: async () => (await registerLateRuntimes(), { bridgeVersion: BRIDGE_VERSION, runtimes: runtimeAdapters.filter(adapter => adapter.features.create).map(adapter => adapter.runtime) }),
+        // `recheck` (the App's tap on a runtime marked not found) looks for missing CLIs again now.
+        ping: async (params) => (params?.recheck && forgetRuntimeBin(undefined, 0), await registerLateRuntimes(), { bridgeVersion: BRIDGE_VERSION, runtimes: runtimeAdapters.filter(adapter => adapter.features.create).map(adapter => adapter.runtime), unavailable: unavailableRuntimes() }),
       },
     });
     _directRpc.start();
@@ -1017,9 +1022,17 @@ async function handleMessage(msg) {
   }
 }
 
-// A harness installed after start appears on the next home or ping, exactly as if present at start.
+// A CLI not found is reported with its install hint, so New Session does not offer it.
+// Codex also runs through a managed app-server socket (the Codex app's daemon) without its CLI.
+function unavailableRuntimes() {
+  return Object.fromEntries([['claude', resolveClaudeBin], ['codex', () => managedSocketPath() || resolveCodexBin()]]
+    .filter(([, resolve]) => !resolve()).map(([runtime]) => [runtime, runtimeNotFoundMessage(runtime)]));
+}
+
+// A harness or CLI installed after start appears on the next home or ping, exactly as if present at start.
 let _lateRuntimes = null;
 export function registerLateRuntimes() {
+  forgetRuntimeBin();
   return _lateRuntimes ||= registerInstalledRuntimes().then(async (added) => {
     if (!added.length) return;
     await sessionIndex.readyPromise;
