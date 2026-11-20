@@ -465,7 +465,9 @@ function closeRuntimePicker() {
 async function pickNewSessionRuntime(runtime) {
   closeRuntimePicker();
   if (state.newSessionUnavailable[runtime]) {
-    await refreshNewSessionRuntimes(_navVersion, true); // installed since the last check?
+    var nav = _navVersion;
+    await refreshNewSessionRuntimes(nav, true); // installed since the last check?
+    if (_navVersion !== nav) return;
     if (state.newSessionUnavailable[runtime]) return showToast(state.newSessionUnavailable[runtime]);
   }
   applyNewSessionRuntime(runtime, true);
