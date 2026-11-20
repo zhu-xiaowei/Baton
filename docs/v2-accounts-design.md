@@ -112,8 +112,9 @@ a phone (no empty accounts to expire), and every computer and phone of one perso
    token + sealed; opens `K`; stores token as `_ak`, server as `_as`, `K` (§7). It sees every computer of the
    account at once (`/devices` is per account).
 4. **Show a code again:** `node ~/.baton-bridge/bridge.mjs pair` (Bridge with `K`: App code; without: join
-   code). `pair --join` makes a Bridge leave its account and show a join code (moving a computer to another
-   account). The install script prints these lines.
+   code; one code, then it exits). `pair --leave` asks for confirmation, then shows a join code and moves the
+   computer to the account that approves it (the old config.json is kept as `config.json.bak-<time>` and changes
+   only once joined; the running Bridge restarts). Every install run ends with `pair`.
 5. **Recovery** (§9 of the plan): 24 words → `K` → `accountId`, `joinSecret` → `recover` → App token.
 - In hosted mode the clear `account_key` method (PR A migration) is refused by Bridge: `config.accounts`
   is set when the Bridge joined; self-host keeps PR A's migration.
@@ -122,7 +123,7 @@ a phone (no empty accounts to expire), and every computer and phone of one perso
 
 - `bridge/accounts.mjs` (new): `createAppCode()`, `join()` (start/wait), `printQr(url)`
   (`qrcode-terminal@0.12.0`, approved; `small: true`), all small functions over `fetch`.
-- `bridge/bridge.mjs`: `pair` subcommand (`--once`, `--join`) and the first-start branch (no `apiKey` +
+- `bridge/bridge.mjs`: `pair` subcommand (`--leave`) and the first-start branch (no `apiKey` +
   `--server` given → join); the install script passes `--server`.
 - `server/src/bridge_read.py` `install_script`: a public `/install` route (only with `OpenRegistration`)
   that installs without a key; the existing keyed script is unchanged.

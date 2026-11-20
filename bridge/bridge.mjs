@@ -31,7 +31,7 @@ import {
 import { extractTar, installProductionDependencies } from './platform.mjs';
 
 // Not the service: shows a pairing QR code in this terminal, while the service keeps running.
-if (process.argv[2] === 'pair') process.exit(await (await import('./accounts.mjs')).runPair());
+if (process.argv[2] === 'pair') process.exit(await (await import('./accounts.mjs')).runPair().catch((error) => { console.error(error.message); return 1; }));
 
 const releaseInstanceLock = await acquireInstanceLock(BRIDGE_HOME);
 if (!releaseInstanceLock) {
@@ -51,6 +51,8 @@ async function shutdownBridge(exitCode = 0) {
 }
 process.on('SIGTERM', () => { shutdownBridge(0).catch(() => process.exit(1)); });
 process.on('SIGINT', () => { shutdownBridge(0).catch(() => process.exit(1)); });
+// `pair --leave` saved another account: exit non-zero, so the service manager starts it again.
+process.on('SIGHUP', () => { shutdownBridge(1).catch(() => process.exit(1)); });
 
 const CONFIG = loadConfig();
 if (removeServiceKeyArgs()) console.log('[init] removed the key from the service definition');

@@ -1,0 +1,30 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { randomBytes } from 'node:crypto';
+
+test('pair --leave keeps config.json until another account approves, then keeps the device fields', async () => {
+  process.env.HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'leave-'));
+  const { leave } = await import('../../bridge/accounts.mjs');
+  const { pairCode, sealPair } = await import('../../bridge/e2ee-node.mjs');
+  const dir = path.join(process.env.HOME, '.baton-bridge');
+  const old = { server: 'https://s/v1', apiKey: 'bt_old', accountKey: 'a', accounts: true, deviceName: 'mac', bridgeId: 'b' };
+  fs.mkdirSync(dir);
+  fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify(old));
+  const k = randomBytes(32);
+  let p;
+  const fetchImpl = async (url, { headers, body }) => {
+    assert.equal(headers['x-api-key'], undefined);
+    if (url.endsWith('/start')) return { ok: true, json: async () => ({ code: JSON.parse(body).code, poll: 'x', expiresIn: 600 }) };
+    return { ok: true, json: async () => ({ token: 'bt_new', approvedBy: 'phone', sealed: sealPair(p, k, pairCode(p)) }) };
+  };
+  const print = (line) => { if (line.includes('#j=')) p = Buffer.from(line.split('#j=')[1], 'base64url'); };
+  await assert.rejects(leave(old, { print, fetchImpl: async () => ({ ok: false, status: 503, json: async () => ({}) }) }));
+  assert.deepEqual(fs.readdirSync(dir), ['config.json']);
+  await leave(old, { print, fetchImpl, sleep: async () => {} });
+  const saved = JSON.parse(fs.readFileSync(path.join(dir, 'config.json')));
+  assert.deepEqual([saved.apiKey, saved.server, saved.deviceName, saved.bridgeId], ['bt_new', old.server, 'mac', 'b']);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dir, fs.readdirSync(dir).find((f) => f.includes('.bak-'))))), old);
+});
