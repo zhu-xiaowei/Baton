@@ -467,7 +467,7 @@ async function pickNewSessionRuntime(runtime) {
   if (state.newSessionUnavailable[runtime]) {
     var nav = _navVersion;
     await refreshNewSessionRuntimes(nav, true); // installed since the last check?
-    if (_navVersion !== nav) return;
+    if (_navVersion !== nav || state.appState.session !== '__new__') return;
     if (state.newSessionUnavailable[runtime]) return showToast(state.newSessionUnavailable[runtime]);
   }
   applyNewSessionRuntime(runtime, true);
