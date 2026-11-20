@@ -358,8 +358,8 @@ function windowsInstallScript(url, server, apiKey, name) {
     "if ($npmExit -ne 0) { throw 'Bridge dependency installation failed.' }",
     "$config = @{ server = " + serverValue + "; apiKey = " + keyValue + "; deviceName = $deviceName; deviceDisplayName = $deviceDisplayName }",
     "if ($existingConfig.bridgeId) { $config.bridgeId = [string]$existingConfig.bridgeId }",
-    // A public install keeps an earlier pairing; otherwise the computer joins an account first.
-    "if (-not $config.apiKey) { foreach ($k in 'apiKey', 'accountKey', 'accountKeyAt', 'accounts') { if ($existingConfig.$k) { $config[$k] = $existingConfig.$k } } }",
+    // A public install keeps an earlier pairing with the same server; otherwise the computer joins an account first.
+    "if (-not $config.apiKey -and $existingConfig.server -eq $config.server) { foreach ($k in 'apiKey', 'accountKey', 'accountKeyAt', 'accounts') { if ($existingConfig.$k) { $config[$k] = $existingConfig.$k } } }",
     "$utf8 = New-Object System.Text.UTF8Encoding($false)",
     "[System.IO.File]::WriteAllText($configPath, ($config | ConvertTo-Json), $utf8)",
     "if (-not $config.apiKey) { & $nodePath (Join-Path $dir 'bridge.mjs') pair; if ($LASTEXITCODE -ne 0) { throw 'This computer has not joined an account.' } }",
@@ -493,7 +493,7 @@ export async function installScript({ headers }, apiKey, name, platform, presign
     'const config={server:process.env.BATON_SERVER,apiKey:process.env.BATON_API_KEY,' +
     'deviceName:process.env.BATON_DEVICE_NAME,deviceDisplayName:process.env.BATON_DEVICE_DISPLAY_NAME};' +
     'if(existing.bridgeId)config.bridgeId=existing.bridgeId;' +
-    'if(!config.apiKey)for(const k of ["apiKey","accountKey","accountKeyAt","accounts"])if(existing[k])config[k]=existing[k];' +
+    'if(!config.apiKey&&existing.server===config.server)for(const k of ["apiKey","accountKey","accountKeyAt","accounts"])if(existing[k])config[k]=existing[k];' +
     'fs.writeFileSync(p,JSON.stringify(config,null,2),{mode:0o600});fs.chmodSync(p,0o600);\' "$DIR/config.json"\n' +
     // A public install has no credential: the computer joins an account (QR code) before its service starts.
     'node -e \'process.exit(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).apiKey?0:1)\' "$DIR/config.json" ||\n' +
