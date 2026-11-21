@@ -303,6 +303,8 @@ export class MonitorStore extends DurableObject {
     // An unblock may have landed during the awaits above: keep it.
     state.lifted = (await this.ctx.storage.get('state'))?.lifted ?? state.lifted;
     for (const [name, m] of Object.entries(state.lifted ?? {})) if (m === month) delete state.blocked[name];
+    const relays = new Set([...(await this.ctx.storage.list({ prefix: 'relay:' })).keys()].map((k) => k.slice(6))); // a retire meanwhile
+    for (const name of Object.keys(state.relayStale ?? {})) if (!relays.has(name)) delete state.relayStale[name];
     await this.ctx.storage.put('state', state);
     const ok = probes.reduce((bits, p, i) => bits | (p.ok ? 1 << i : 0), 0);
     this.sql.exec('INSERT OR REPLACE INTO snaps VALUES (?, ?, ?, ?)', now, ok, used.online?.apps ?? null, JSON.stringify({ probes, ...used, accounts: used.accounts?.slice(0, 10) }));
@@ -325,6 +327,14 @@ export class MonitorStore extends DurableObject {
   // A relay's 5-minute report (checked by the Worker).
   async report(r) {
     await this.ctx.storage.put(`relay:${r.name}`, { ...r, t: Date.now() });
+  }
+
+  // A relay taken down for good (`{name, retire: true}`): its record and alert state go.
+  async retire(name) {
+    await this.ctx.storage.delete(`relay:${name}`);
+    const state = await this.ctx.storage.get('state');
+    if (state?.relayStale?.[name]) { delete state.relayStale[name]; await this.ctx.storage.put('state', state); }
+    this.cached = null;
   }
 
   async data() {
@@ -384,6 +394,7 @@ async function report(request, env) {
   const text = await request.text();
   let r;
   try { r = JSON.parse(text.length <= 1024 ? text : 'null'); } catch {}
+  if (r?.retire === true && REPORT.name.test(String(r.name))) return (await store(env).retire(r.name), new Response(null, { status: 204 }));
   const counts = ['dayBytes', 'monthBytes', 'cap', 'addrs'];
   if (!r || Object.entries(REPORT).some(([k, re]) => !re.test(String(r[k]))) || counts.some((k) => !(Number.isFinite(r[k]) && r[k] >= 0))
     || typeof r.stopped !== 'boolean') return new Response('Bad Request', { status: 400 });
