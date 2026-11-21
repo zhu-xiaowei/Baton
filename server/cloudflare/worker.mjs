@@ -52,9 +52,9 @@ export default {
 
     const headers = new Headers(request.headers);
     headers.delete('x-baton-account');
-    const { country = '', continent = '', longitude } = request.cf ?? {};
+    const { country = '', continent = '', longitude, asn = '' } = request.cf ?? {};
     headers.set('cf-ipcountry', country);
-    headers.set('x-baton-edge', JSON.stringify({ country, continent, lon: Number(longitude) })); // where to place a new account
+    headers.set('x-baton-edge', JSON.stringify({ country, continent, lon: Number(longitude), asn })); // where to place a new account
     headers.delete('accept-encoding'); // the edge compresses; core's gzip would be compressed again
     // Install scripts name the server from these: always the API host, whichever host was asked.
     headers.set('host', api.host);

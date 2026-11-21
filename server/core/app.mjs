@@ -128,9 +128,10 @@ export function createServer(ports) {
     { method: 'GET', path: '/api/install', query: [['name', { default: null }], ['platform', { default: '' }]],
       handler: async (context) => asText(await script(context, context.headers.get('x-api-key') ?? '', context.query)) },
     // `entries`: other hosts reaching this API (the mainland-China relay); `country` tells a client whether to use them.
-    { method: 'GET', path: '/api/version', handler: ({ headers }) => {
+    { method: 'GET', path: '/api/version', handler: async (context) => {
       const version = env.APP_VERSION ?? 'dev';
-      const entries = env.API_ENTRIES ? { entries: env.API_ENTRIES.split(','), country: headers.get('cf-ipcountry') ?? '' } : {};
+      const entries = env.API_ENTRIES ? { entries: env.API_ENTRIES.split(','), country: context.headers.get('cf-ipcountry') ?? '',
+        ipToken: await accounts.ipToken(context) } : {};
       return { version, bridgeVersion: env.BRIDGE_VERSION ?? version, ...entries };
     } },
     // Token for Setup's Start URL, QR code and install command.

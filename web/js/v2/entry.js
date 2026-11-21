@@ -1,7 +1,7 @@
 // The mainland-China relay (bridge/entry.mjs): chosen once per start, again when the network changes or the socket keeps
 // failing. The last choice is used at once on the next start while the new one is made.
 import { state } from '../state.js';
-import { pickEntry, viaEntry } from '../../../bridge/entry.mjs';
+import { pickEntry, viaEntry, vouched } from '../../../bridge/entry.mjs';
 
 const KEY = 'baton-entry';
 const started = new Map(); // server → this start's choice
@@ -18,8 +18,12 @@ export const entryUrl = (url) => viaEntry(url, state.SERVER, current());
 export const hasEntry = () => !!current(); // a relay
 export const entryKnown = () => current() !== undefined;
 
+const IP_KEY = 'baton-ip'; // the signed address (bridge/entry.mjs), valid a day: used at once on the next start
+try { vouched.token ||= localStorage.getItem(IP_KEY) || ''; } catch {}
+
 const pick = (server) => pickEntry(server).then((found) => {
   const entry = found === server ? '' : found;
+  try { if (vouched.token) localStorage.setItem(IP_KEY, vouched.token); } catch {}
   if (server === state.SERVER) state.ENTRY = entry;
   saved = { server, entry }; // the next start (and the App after pairing) uses it at once
   started.set(server, Promise.resolve(entry)); // a later choice replaces this start's
