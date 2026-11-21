@@ -327,6 +327,14 @@ export class MonitorStore extends DurableObject {
     await this.ctx.storage.put(`relay:${r.name}`, { ...r, t: Date.now() });
   }
 
+  // A relay taken down for good (`{name, retire: true}`): its record and alert state go.
+  async retire(name) {
+    await this.ctx.storage.delete(`relay:${name}`);
+    const state = await this.ctx.storage.get('state');
+    if (state?.relayStale?.[name]) { delete state.relayStale[name]; await this.ctx.storage.put('state', state); }
+    this.cached = null;
+  }
+
   async data() {
     if (this.cached?.until > Date.now()) return this.cached.value;
     const now = Date.now();
@@ -384,6 +392,7 @@ async function report(request, env) {
   const text = await request.text();
   let r;
   try { r = JSON.parse(text.length <= 1024 ? text : 'null'); } catch {}
+  if (r?.retire === true && REPORT.name.test(String(r.name))) return (await store(env).retire(r.name), new Response(null, { status: 204 }));
   const counts = ['dayBytes', 'monthBytes', 'cap', 'addrs'];
   if (!r || Object.entries(REPORT).some(([k, re]) => !re.test(String(r[k]))) || counts.some((k) => !(Number.isFinite(r[k]) && r[k] >= 0))
     || typeof r.stopped !== 'boolean') return new Response('Bad Request', { status: 400 });

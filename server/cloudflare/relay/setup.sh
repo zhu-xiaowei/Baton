@@ -115,7 +115,8 @@ if os.environ.get('REPORT_URL'):
     import urllib.request
     body = json.dumps({'name': os.environ.get('RELAY_NAME', ''), 'day': day, 'dayBytes': state['dayTotal'], 'month': month,
                        'monthBytes': state['total'], 'cap': CAP, 'stopped': bool(state.get('stopped')), 'addrs': addrs}).encode()
-    headers = {'content-type': 'application/json', 'authorization': 'Bearer ' + os.environ.get('REPORT_KEY', '')}
+    headers = {'content-type': 'application/json', 'authorization': 'Bearer ' + os.environ.get('REPORT_KEY', ''),
+               'user-agent': 'baton-relay-guard'}  # Cloudflare refuses Python-urllib's (error 1010)
     try: urllib.request.urlopen(urllib.request.Request(os.environ['REPORT_URL'], body, headers), timeout=10)
     except Exception as error: print('report failed:', error)
 PY
