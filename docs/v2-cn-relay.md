@@ -54,7 +54,7 @@ Only REST and `/ws` go through it; R2 transfers, `dl.`, the homepage and the Web
    It prints the static IPv4 and the IPv6 address. Confirm the mail Lightsail sends for a new alert address.
 2. Check that the static IP is reachable from mainland China (TCP 443 from several CN probes, e.g. Globalping): some
    AWS ranges are not (a Hong Kong `95.40.x` address was unreachable).
-3. Deploy with the entry: `deploy.mjs … --cn-entry api-jp.agentbaton.app --relay-ips <ipv4>,<ipv6> --zero-rtt`.
+3. Deploy with the entry: `deploy.mjs … --relay-domain api-jp.agentbaton.app --relay-ips <ipv4>,<ipv6> --zero-rtt`.
    This writes the DNS-only records, the route, the WAF custom rule and the Worker variables `API_ENTRIES` / `RELAY_IPS`.
    `--zero-rtt` turns on TLS 0-RTT for the zone (Cloudflare uses it for GET/HEAD/OPTIONS only).
 4. Check: `curl https://api.agentbaton.app/api/version` lists `entries`; through the relay `/api/version` answers;
