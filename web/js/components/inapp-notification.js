@@ -42,6 +42,7 @@ function draw() {
   }
   stack.textContent = '';
   if (items.length <= MAX) expanded = false;
+  stack.classList.toggle('expanded', expanded);
   for (const n of items.slice(0, expanded ? items.length : MAX)) stack.append(card(n));
   if (items.length > MAX) {
     const more = document.createElement('button');
@@ -83,7 +84,8 @@ function card(n) {
   return el;
 }
 
-// Left/right slides it out; up fades it where it is; down only stretches a little.
+// Left/right slides it out. Collapsed, up fades it where it is and down only stretches a little; expanded, a
+// vertical drag scrolls the list (touch-action: pan-y).
 function swipe(el, id) {
   let x0 = null, y0 = 0, dx = 0, dy = 0, axis = '';
   el.addEventListener('pointerdown', (event) => {
@@ -103,7 +105,7 @@ function swipe(el, id) {
     if (axis === 'x') {
       el.style.transform = `translateX(${dx}px)`;
       el.style.opacity = String(1 - Math.min(Math.abs(dx) / el.offsetWidth, 1) * 0.8);
-    } else if (axis === 'y') {
+    } else if (axis === 'y' && !expanded) {
       el.style.transform = `translateY(${Math.min(dy, 0) + Math.max(dy, 0) * 0.2}px)`;
       el.style.opacity = String(1 - Math.min(-Math.min(dy, 0) / el.offsetHeight, 1) * 0.8);
     }
@@ -113,7 +115,7 @@ function swipe(el, id) {
     x0 = null;
     el.classList.remove('dragging');
     el.classList.add('settle');
-    const gone = axis === 'x' ? Math.abs(dx) > el.offsetWidth * 0.3 : axis === 'y' && -dy > Math.min(40, el.offsetHeight * 0.4);
+    const gone = axis === 'x' ? Math.abs(dx) > el.offsetWidth * 0.3 : axis === 'y' && !expanded && -dy > Math.min(40, el.offsetHeight * 0.4);
     if (gone) {
       if (axis === 'x') el.style.transform = `translateX(${dx > 0 ? 120 : -120}%)`;
       fadeOut(el, id);

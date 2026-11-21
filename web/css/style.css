@@ -1300,6 +1300,9 @@ html.native-mobile .slash-description {
 .inapp-stack { position: fixed; left: 0; right: 0; top: calc(var(--sat, env(safe-area-inset-top, 0px)) + 4px); z-index: 2900; max-height: calc(100% - 40px); overflow-x: hidden; overflow-y: auto; display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 4px 8px 28px; pointer-events: none; }
 /* The bottom padding leaves room for the last card's shadow inside the scrolling stack. */
 .inapp-stack:empty { display: none; }
+/* iOS scrolls only a hit-testable box; the expanded list takes touches so it can scroll. */
+.inapp-stack.expanded { pointer-events: auto; }
+.inapp-stack.expanded .inapp { touch-action: pan-y; }
 .inapp { pointer-events: auto; position: relative; width: 100%; max-width: 400px; display: grid; grid-template-columns: 32px 1fr; column-gap: 9px; padding: 8px 30px 9px 10px; border-radius: 16px; border: 1px solid var(--banner-border); background: var(--banner-bg); color: var(--text-primary); box-shadow: var(--banner-shadow); -webkit-backdrop-filter: saturate(180%) blur(20px); backdrop-filter: saturate(180%) blur(20px); cursor: pointer; touch-action: none; user-select: none; -webkit-user-select: none; }
 .inapp.fresh { animation: inapp-drop 0.32s cubic-bezier(0.2, 0.9, 0.3, 1.2) both; }
 .inapp.dragging { animation: none; transition: none; }
@@ -1312,13 +1315,14 @@ html.native-mobile .slash-description {
 .inapp-body { font-size: 13px; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
 .inapp-close { position: absolute; top: 5px; right: 5px; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--text-secondary); font-size: 13px; line-height: 22px; cursor: pointer; }
 .inapp-more { pointer-events: auto; padding: 3px 10px; border: 1px solid var(--banner-border); border-radius: 999px; background: var(--banner-bg); color: var(--text-secondary); font-size: 12px; -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px); cursor: pointer; }
-.inapp-actions { display: flex; gap: 6px; }
+.inapp-actions { display: flex; justify-content: flex-end; gap: 6px; width: 100%; max-width: 400px; }
 .inapp-clear { position: relative; display: flex; align-items: center; justify-content: center; width: 25px; padding: 0; }
 .inapp-clear::before { content: ""; position: absolute; inset: -3px; } /* larger tap target, short of the 6px gaps */
 @media (hover: hover) and (pointer: fine) { .inapp-close:hover { background: rgba(var(--text-secondary-rgb), 0.18); color: var(--text-primary); } }
 @media (min-width: 768px) {
   .inapp-stack { top: calc(var(--sat, env(safe-area-inset-top, 0px)) + 52px); align-items: flex-end; padding: 4px 20px 28px; }
-  .inapp { max-width: 340px; border-radius: 12px; }
+  .inapp, .inapp-actions { max-width: 340px; }
+  .inapp { border-radius: 12px; }
 }
 @keyframes inapp-drop { from { transform: translateY(-120%); opacity: 0; } to { transform: none; opacity: 1; } }
 #img-preview-row .img-thumb { width: 64px; }
