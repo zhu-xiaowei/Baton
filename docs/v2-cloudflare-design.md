@@ -156,6 +156,7 @@ AccountObject/IndexObject with SQLite migrations, R2 binding, service binding to
 | `web.agentbaton.app` | the browser Web App (static assets) and pairing links / QR codes (later also the Universal / App Links verification files) |
 | `agentbaton.app` | future marketing homepage (not in PR 2), except `/install` and `/install.ps1`, which reach the service Worker and print scripts pointing at `api.agentbaton.app` |
 | `www.agentbaton.app` | 301 → apex |
+| `api-jp.agentbaton.app` | the same API through the Tokyo relay, for callers in mainland China only (DNS-only, [v2-cn-relay.md](v2-cn-relay.md)) |
 
 - One Worker with several custom domains; the hostnames are deploy-script parameters (`--api-domain`, `--web-domain`,
   `--install-domain`). PR 2 tests with `pr2-api.agentbaton.app` + `pr2-web.agentbaton.app`; the production names are

@@ -2,12 +2,13 @@
 // Development deploy of the hosted service through the Cloudflare API (no wrangler). Idempotent.
 //   node server/cloudflare/deploy.mjs --name pr2-baton --bucket pr2-baton-files --api-domain api.agentbaton.app \
 //     [--web-domain web.agentbaton.app] [--install-domain agentbaton.app] [--zone <zone id>] [--secrets <json file>]
-//     [--relay] [--skip-build] [--rate-limit] [--max-apps 20] [--max-bridges 5]
+//     [--relay] [--skip-build] [--rate-limit] [--max-apps 20] [--max-bridges 5] [--relay-domain <host> --relay-ips <ip,...>] [--zero-rtt]
 // One Worker on every domain: the API host serves REST, /ws and the Bridge package; the web host the web app (default:
 // the API host); on the install domain only the routes /install and /install.ps1 (the scripts always name the API host), the
 // rest of that host stays someone else's (the homepage).
 // env: CF_ACCOUNT_ID, CF_API_TOKEN. --secrets: { API_KEY, API_KEY_NAME, ORIGIN_SECRET?, R2_API_TOKEN?, R2_PARENT_KEY_ID? }.
-// --rate-limit adds the zone's rate-limiting rule for the API host. --max-apps / --max-bridges: sockets per account (defaults in ports.mjs).
+// --rate-limit adds the zone's rate-limiting rule for the API host. --relay-domain: the mainland-China relay's host (docs/v2-cn-relay.md),
+// a DNS-only record per --relay-ips address, answered only from those. --zero-rtt turns on the zone's TLS 0-RTT. --max-apps / --max-bridges: sockets per account (defaults in ports.mjs).
 // --relay first deploys push-relay/worker.mjs as <name>-push with the APNs key read from stdin (the relay's SSM JSON).
 // --monitor <host> --admin-email <address> [--monitor-name] [--cost-cap 1] [--cost-alert 20] [--plan free|paid] deploys only the monitor of the
 // service <name> (server/cloudflare/monitor.mjs) behind Cloudflare Access; env MONITOR_API_TOKEN: a read-only token with
@@ -26,12 +27,16 @@ const { values: flags } = parseArgs({ options: { name: { type: 'string', default
   relay: { type: 'boolean', default: false }, 'skip-build': { type: 'boolean', default: false }, 'rate-limit': { type: 'boolean', default: false },
   'max-apps': { type: 'string' }, 'max-bridges': { type: 'string' }, 'usage-dataset': { type: 'string' }, monitor: { type: 'string' },
   'monitor-name': { type: 'string' }, 'admin-email': { type: 'string' }, 'cost-cap': { type: 'string', default: '1' },
-  'cost-alert': { type: 'string', default: '20' }, plan: { type: 'string', default: 'free' } } });
+  'cost-alert': { type: 'string', default: '20' }, plan: { type: 'string', default: 'free' }, 'relay-domain': { type: 'string' },
+  'relay-ips': { type: 'string', default: '' }, 'zero-rtt': { type: 'boolean', default: false } } });
 const { CF_ACCOUNT_ID: ACCOUNT, CF_API_TOKEN: TOKEN } = process.env;
 if (!ACCOUNT || !TOKEN) throw new Error('CF_ACCOUNT_ID and CF_API_TOKEN are required');
 const API_HOST = flags['api-domain'];
 const WEB_HOST = flags['web-domain'] ?? API_HOST;
 const INSTALL_HOST = flags['install-domain'];
+const RELAY_HOST = flags['relay-domain'];
+const RELAY_IPS = flags['relay-ips'].split(',').filter(Boolean);
+if (RELAY_HOST && !RELAY_IPS.length) throw new Error('--relay-domain needs --relay-ips');
 const domains = [...new Set([API_HOST, WEB_HOST])];
 if (!API_HOST || [...domains, INSTALL_HOST ?? 'x.y'].some((d) => !/^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(d))) throw new Error('--api-domain (and valid hostnames) required');
 const API = `https://api.cloudflare.com/client/v4/accounts/${ACCOUNT}`;
@@ -103,28 +108,52 @@ async function installRoutes() {
   if (!(await cf('GET', `${zone}/dns_records?name=${INSTALL_HOST}`)).length) {
     await cf('POST', `${zone}/dns_records`, { type: 'AAAA', name: INSTALL_HOST, content: '100::', proxied: true });
   }
-  const routes = await cf('GET', `${zone}/workers/routes`);
-  for (const pattern of [`${INSTALL_HOST}/install`, `${INSTALL_HOST}/install.ps1`]) {
-    const route = routes.find((r) => r.pattern === pattern);
+  await routes([`${INSTALL_HOST}/install`, `${INSTALL_HOST}/install.ps1`]);
+}
+
+async function routes(patterns) {
+  const zone = `https://api.cloudflare.com/client/v4/zones/${flags.zone}`;
+  const existing = await cf('GET', `${zone}/workers/routes`);
+  for (const pattern of patterns) {
+    const route = existing.find((r) => r.pattern === pattern);
     if (!route) await cf('POST', `${zone}/workers/routes`, { pattern, script: flags.name });
     else if (route.script !== flags.name) await cf('PUT', `${zone}/workers/routes/${route.id}`, { pattern, script: flags.name });
   }
 }
 
+// DNS-only records point the host at the relays, which pass TLS through unopened; a custom rule refuses everyone else, so
+// the relay's address is the only way in (the rate-limiting rule cannot exempt an address on the Free plan, and covers api only).
+async function relayDomain() {
+  const zone = `https://api.cloudflare.com/client/v4/zones/${flags.zone}`;
+  const want = RELAY_IPS.map((ip) => ({ type: ip.includes(':') ? 'AAAA' : 'A', content: ip }));
+  const have = await cf('GET', `${zone}/dns_records?name=${RELAY_HOST}`);
+  const same = (a, b) => a.type === b.type && a.content === b.content && !a.proxied;
+  for (const r of have) if (!want.some((w) => same(r, w))) await cf('DELETE', `${zone}/dns_records/${r.id}`);
+  for (const w of want) if (!have.some((r) => same(r, w))) await cf('POST', `${zone}/dns_records`, { ...w, name: RELAY_HOST, ttl: 300, proxied: false });
+  await routes([`${RELAY_HOST}/*`]);
+  await zoneRule('http_request_firewall_custom', { ref: `baton_${RELAY_HOST.replace(/\W/g, '_')}`, description: `Baton relay entry ${RELAY_HOST}`,
+    expression: `(http.host eq "${RELAY_HOST}" and not ip.src in {${RELAY_IPS.join(' ')}})`, action: 'block' });
+  console.log(`relay domain: ${RELAY_HOST} -> ${RELAY_IPS.join(', ')}`);
+}
+
 // One rule for the API host (the Free plan allows one per zone): over 200 requests in 10 s from one IP → 429 for 10 s.
 // WebSocket frames are no requests; only upgrades count.
 async function rateLimit() {
-  const zone = `https://api.cloudflare.com/client/v4/zones/${flags.zone}/rulesets`;
-  const ref = `baton_${API_HOST.replace(/\W/g, '_')}`;
-  const rule = { ref, description: `Baton API ${API_HOST}`, expression: `(http.host eq "${API_HOST}")`, action: 'block',
+  await zoneRule('http_ratelimit', { ref: `baton_${API_HOST.replace(/\W/g, '_')}`, description: `Baton API ${API_HOST}`,
+    expression: `(http.host eq "${API_HOST}")`, action: 'block',
     action_parameters: { response: { status_code: 429, content_type: 'application/json', content: '{"error":"rate_limited"}' } },
-    ratelimit: { characteristics: ['cf.colo.id', 'ip.src'], period: 10, requests_per_period: 200, mitigation_timeout: 10 } };
-  const entry = await cf('GET', `${zone}/phases/http_ratelimit/entrypoint`, undefined, { ok404: true });
-  const old = entry?.rules?.find((r) => r.ref === ref);
-  if (!entry) await cf('PUT', `${zone}/phases/http_ratelimit/entrypoint`, { rules: [rule] });
+    ratelimit: { characteristics: ['cf.colo.id', 'ip.src'], period: 10, requests_per_period: 200, mitigation_timeout: 10 } });
+  console.log(`rate limit: ${API_HOST}`);
+}
+
+// Adds or updates the rule with this ref in the zone's entrypoint ruleset of a phase.
+async function zoneRule(phase, rule) {
+  const zone = `https://api.cloudflare.com/client/v4/zones/${flags.zone}/rulesets`;
+  const entry = await cf('GET', `${zone}/phases/${phase}/entrypoint`, undefined, { ok404: true });
+  const old = entry?.rules?.find((r) => r.ref === rule.ref);
+  if (!entry) await cf('PUT', `${zone}/phases/${phase}/entrypoint`, { rules: [rule] });
   else if (old) await cf('PATCH', `${zone}/${entry.id}/rules/${old.id}`, rule);
   else await cf('POST', `${zone}/${entry.id}/rules`, rule);
-  console.log(`rate limit: ${API_HOST}`);
 }
 
 async function bucket() {
@@ -266,7 +295,8 @@ await bridgePackage(version);
 const accountId = secrets.API_KEY ? createHash('sha256').update(secrets.API_KEY).digest('hex').slice(0, 16) : '';
 const vars = { API_URL: `https://${API_HOST}`, WEB_URL: `https://${WEB_HOST}`, APP_VERSION: version, BRIDGE_VERSION: version, OPEN_REGISTRATION: 'true',
   CF_ACCOUNT_ID: ACCOUNT, R2_BUCKET: flags.bucket, ACCOUNT_ID: secrets.ACCOUNT_ID ?? accountId, API_KEY_NAME: secrets.API_KEY_NAME ?? '',
-  R2_PARENT_KEY_ID: secrets.R2_PARENT_KEY_ID ?? '', MAX_APPS: flags['max-apps'], MAX_BRIDGES: flags['max-bridges'], ...(INSTALL_HOST && { INSTALL_URL: `https://${INSTALL_HOST}` }) };
+  R2_PARENT_KEY_ID: secrets.R2_PARENT_KEY_ID ?? '', MAX_APPS: flags['max-apps'], MAX_BRIDGES: flags['max-bridges'], ...(INSTALL_HOST && { INSTALL_URL: `https://${INSTALL_HOST}` }),
+  ...(RELAY_HOST && { API_ENTRIES: `https://${RELAY_HOST}`, RELAY_IPS: RELAY_IPS.join(',') }) };
 const bindings = [{ type: 'assets', name: 'ASSETS' }, { type: 'r2_bucket', name: 'FILES', bucket_name: flags.bucket },
   { type: 'durable_object_namespace', name: 'ACCOUNT', class_name: 'AccountObject' },
   { type: 'durable_object_namespace', name: 'INDEX', class_name: 'IndexObject' },
@@ -281,4 +311,6 @@ await upload(flags.name, { main_module: 'server/cloudflare/worker.mjs', compatib
 for (const hostname of domains) await cf('PUT', '/workers/domains', { hostname, service: flags.name, zone_id: flags.zone, environment: 'production' });
 if (INSTALL_HOST) await installRoutes();
 if (flags['rate-limit']) await rateLimit();
+if (RELAY_HOST) await relayDomain();
+if (flags['zero-rtt']) await cf('PATCH', `https://api.cloudflare.com/client/v4/zones/${flags.zone}/settings/0rtt`, { value: 'on' });
 console.log(`deployed ${[...domains, ...(INSTALL_HOST ? [`${INSTALL_HOST}/install(.ps1)`] : [])].join(', ')} (version ${version}${bindings.some((b) => b.name === 'PUSH') ? ', push relay bound' : ''})`);

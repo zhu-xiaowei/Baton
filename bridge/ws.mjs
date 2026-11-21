@@ -24,6 +24,7 @@ import { parseStorageSessionId, runtimeDescriptor, storageSessionId } from './se
 import { SessionGrants } from './session-grants.mjs';
 import { getRuntimeAdapter, registerInstalledRuntimes, runtimeAdapters } from './runtime-registry.mjs';
 import { WS_FRAME_LIMIT, saveConfig, uninstallBridge } from './config.mjs';
+import { pickEntry, viaEntry } from './entry.mjs';
 import { ClaudePool } from './headless.mjs';
 import {
   liveMessageRoute,
@@ -768,7 +769,7 @@ function connect() {
   if (_ws?.readyState === WebSocket.OPEN || _ws?.readyState === WebSocket.CONNECTING) return;
   if (_reconnectTimer) { clearTimeout(_reconnectTimer); _reconnectTimer = null; }
   resetConnection();
-  const wsUrl = _config.wsUrl;
+  const wsUrl = viaEntry(_config.wsUrl, _config.server, _config.entry);
 
   const url = `${wsUrl}?apiKey=${_config.apiKey}&role=bridge&heartbeat=${HEARTBEAT_INTERVAL / 1000}`
     + `&device=${encodeURIComponent(_config.deviceName)}`
@@ -975,6 +976,10 @@ function scheduleReconnect(wait) {
   console.log(`[ws] retry ${_consecutiveFailures} in ${delay}ms`);
   _reconnectTimer = setTimeout(() => {
     _reconnectTimer = null;
+    // Failing again: the relay may be down, or the network was not up when the entry was chosen; the next attempt uses a new choice.
+    if (_consecutiveFailures > 1 && _config) {
+      pickEntry(_config.server).then((entry) => { if (_config) _config.entry = entry; });
+    }
     connect();
   }, delay);
 }

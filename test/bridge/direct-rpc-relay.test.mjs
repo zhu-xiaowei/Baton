@@ -38,7 +38,7 @@ test('relay: the Bridge joins on its control socket, frames go unsigned both way
   const transport = await import('../../web/js/v2/direct-transport.js');
   await transport.devices();
   assert.deepEqual(await transport.request('dev', 'work'), { ok: 1 });
-  assert.equal(app.url, 'wss://relay.example/ws?apiKey=key&role=app');
+  assert.equal(app.url, 'wss://relay.example/ws?apiKey=key&role=app&hello=1');
   assert.ok(toBridge.length && toBridge.every((f) => f.to === 'b1' && f.kind === 'rpc'));
   assert.ok(toApp.length && toApp.every((f) => f.to === 'a1' && f.kind === 'rpc_result'));
   assert.equal(bridge.subscribers.targets('s1').length, 1);

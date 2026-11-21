@@ -45,8 +45,10 @@ export class Usage {
     const query = new URL(request.url).searchParams;
     if (me.role === 'bridge') await this.point(me.account, ['bridge', s.day, query.get('os') ?? '', '', '', query.get('version') ?? '']);
     else if (!s.apps?.length) {
-      await this.point(me.account, ['active', s.day, platformOf(request.headers.get('user-agent') ?? ''), request.cf?.country ?? '',
-        String(request.cf?.asOrganization ?? '').slice(0, 64), isNew() ? 'new' : '']);
+      // Through the mainland-China relay Cloudflare sees only the relay (JP, Amazon).
+      const relay = (this.env.RELAY_IPS ?? '').split(',').includes(request.headers.get('cf-connecting-ip'));
+      await this.point(me.account, ['active', s.day, platformOf(request.headers.get('user-agent') ?? ''), relay ? 'relay' : request.cf?.country ?? '',
+        relay ? 'relay' : String(request.cf?.asOrganization ?? '').slice(0, 64), isNew() ? 'new' : '']);
     }
     seen.push(app);
     await this.save();

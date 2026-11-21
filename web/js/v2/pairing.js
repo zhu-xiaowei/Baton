@@ -6,6 +6,7 @@ import { accountOf, fingerprint, openPair, pairCode, sealPair, sealRotation } fr
 import { defaultServer, state } from '../state.js';
 import { loadAccountKey, saveAccountKey } from './account-key.js';
 import { cachedOnlineDevices, devices, request } from './direct-transport.js';
+import { entryUrl } from './entry.js';
 
 export function parseLink(text) {
   let url;
@@ -42,10 +43,13 @@ const me = () => ({ deviceName: deviceName(), install: localStorage.baton_instal
   (byte) => byte.toString(16).padStart(2, '0')).join('') });  // not randomUUID: iOS 14 WebViews lack it
 
 async function post(server, path, body, key) {
-  const response = await fetch(server + path, { method: 'POST', body: JSON.stringify(body),
+  const send = (url) => fetch(url, { method: 'POST', body: JSON.stringify(body),
     headers: { 'Content-Type': 'application/json', ...(key ? { 'x-api-key': key } : {}) } });
+  let response = await send(entryUrl(server + path));
+  // The relay's one shared address may have used up a per-address limit: this device's own address then.
+  if (response.status === 429 && entryUrl(server + path) !== server + path) response = await send(server + path);
   const reply = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(reply.detail || reply.error || 'Connection failed');
+  if (!response.ok) throw Object.assign(new Error(reply.detail || reply.error || 'Connection failed'), { status: response.status });
   return reply;
 }
 
@@ -61,8 +65,12 @@ export async function signInWithLink(link) {
     if (raw?.length !== 32 || (reply.head && (await accountOf(raw)).fp !== reply.head)) throw new Error('This code does not match its account.');
     token = reply.token;
   } else {
-    raw = crypto.getRandomValues(new Uint8Array(32));
-    token = (await post(server, '/api/account/register', { ...await accountOf(raw), ...me() })).token;
+    // 425: the server placed the new account away from this computer's region; another key is another account id.
+    for (let retry = 0; !token; retry++) {
+      raw = crypto.getRandomValues(new Uint8Array(32));
+      token = (await post(server, '/api/account/register', { ...await accountOf(raw), ...me(), code, retry: String(retry) })
+        .catch((error) => { if (error.status !== 425 || retry >= 2) throw error; return {}; })).token;
+    }
     added = (await post(server, '/api/pair/approve', { code, sealed: await sealPair(link.t, raw, code) }, token)).deviceName;
   }
   await saveAccountKey(server, raw);

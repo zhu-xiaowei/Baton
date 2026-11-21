@@ -16,6 +16,7 @@ import { request as requestBridge, resetDirectTransport } from './v2/direct-tran
 import { forgetAccountKey } from './v2/account-key.js';
 import { loadLatestHistory, loadOlderHistory } from './v2/history.js';
 import { transfer } from '../../bridge/transfer-store.mjs';
+import { entryUrl } from './v2/entry.js';
 
 state.SERVER = (localStorage.getItem('_as') || defaultServer()).replace(/\/$/, '');
 state.KEY = (function () {
@@ -82,7 +83,7 @@ async function logout() {
 
 function _build(path, params, opts) {
   var qs = new URLSearchParams(params || {}).toString();
-  return ((opts && opts.server) || state.SERVER) + path + (qs ? '?' + qs : '');
+  return entryUrl(((opts && opts.server) || state.SERVER) + path + (qs ? '?' + qs : ''));
 }
 
 function _hdr(opts) {
