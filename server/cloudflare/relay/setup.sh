@@ -1,7 +1,8 @@
 #!/bin/bash
 # The mainland-China entry relay (docs/v2-cn-relay.md): a TCP passthrough to Cloudflare for the listed API hosts.
 # TLS is not terminated; the relay reads only the SNI to refuse every other name. Debian 12, run as root;
-# safe to run again. Usage: setup.sh <host>[,<host>...] [upstream]
+# safe to run again. Usage: [REPORT_URL=… REPORT_KEY=… RELAY_NAME=…] setup.sh <host>[,<host>...] [upstream]
+# With REPORT_URL, relay-guard reports its traffic every 5 minutes to the monitor (summary figures only, no addresses).
 set -euo pipefail
 HOSTS=${1:?allowed SNI hostnames, comma-separated}
 UPSTREAM=${2:-api.agentbaton.app} # any proxied hostname in the zone: it only resolves to Cloudflare's addresses
@@ -80,10 +81,12 @@ DAILY, CAP = int(os.environ.get('DAILY', 1 << 30)), int(os.environ.get('CAP', 1_
 STATE = '/var/lib/relay-guard.json'
 nft = lambda *a: subprocess.run(['nft', *a], check=True, capture_output=True, text=True).stdout
 
+addrs = 0  # addresses (IPv6: /64s) seen in the last 24 h
 for name, block, prefix in (('use4', 'block4', ''), ('use6', 'block6', '/64')):
     for item in json.loads(nft('-j', 'list', 'set', 'inet', 'relay', name))['nftables']:
         for e in item.get('set', {}).get('elem', []):
             e = e.get('elem', {}) if isinstance(e, dict) else {}
+            addrs += bool(e)
             if e.get('counter', {}).get('bytes', 0) > DAILY:
                 nft('add', 'element', 'inet', 'relay', block, '{ %s%s timeout 1d }' % (e['val'], prefix))
 
@@ -94,8 +97,12 @@ try: state = json.load(open(STATE))
 except (OSError, ValueError): state = {}
 if state.get('month') != month:
     state = {'month': month, 'total': 0, 'raw': raw, 'stopped': state.get('stopped', False)}
-state['total'] += raw - state['raw'] if raw >= state['raw'] else raw  # counters restart at boot
+delta = raw - state['raw'] if raw >= state['raw'] else raw  # counters restart at boot
+state['total'] += delta
 state['raw'] = raw
+day = time.strftime('%Y-%m-%d', time.gmtime())
+if state.get('day') != day: state['day'], state['dayTotal'] = day, 0
+state['dayTotal'] += delta
 if state['total'] > CAP:  # every run: a reboot starts nginx again
     subprocess.run(['systemctl', 'stop', 'nginx'])
     if not state.get('stopped'): print('monthly cap reached: relaying stopped until', month, 'ends')
@@ -104,9 +111,20 @@ elif state.get('stopped'):  # a new month (or a higher cap)
     subprocess.run(['systemctl', 'start', 'nginx'])
     state['stopped'] = False
 json.dump(state, open(STATE, 'w'))
+if os.environ.get('REPORT_URL'):
+    import urllib.request
+    body = json.dumps({'name': os.environ.get('RELAY_NAME', ''), 'day': day, 'dayBytes': state['dayTotal'], 'month': month,
+                       'monthBytes': state['total'], 'cap': CAP, 'stopped': bool(state.get('stopped')), 'addrs': addrs}).encode()
+    headers = {'content-type': 'application/json', 'authorization': 'Bearer ' + os.environ.get('REPORT_KEY', '')}
+    try: urllib.request.urlopen(urllib.request.Request(os.environ['REPORT_URL'], body, headers), timeout=10)
+    except Exception as error: print('report failed:', error)
 PY
+if [ -n "${REPORT_URL:-}" ]; then # a rerun keeps the relay's name
+  RELAY_NAME=${RELAY_NAME:-$(sed -n 's/^RELAY_NAME=//p' /etc/relay-guard.env 2>/dev/null || true)}
+  (umask 077; printf 'REPORT_URL=%s\nREPORT_KEY=%s\nRELAY_NAME=%s\n' "$REPORT_URL" "${REPORT_KEY:-}" "${RELAY_NAME:-$(hostname)}" >/etc/relay-guard.env)
+fi
 chmod 755 /usr/local/bin/relay-guard
-printf '[Service]\nType=oneshot\nExecStart=/usr/local/bin/relay-guard\n' >/etc/systemd/system/relay-guard.service
+printf '[Service]\nType=oneshot\nEnvironmentFile=-/etc/relay-guard.env\nExecStart=/usr/local/bin/relay-guard\n' >/etc/systemd/system/relay-guard.service
 printf '[Timer]\nOnCalendar=*:0/5\nPersistent=true\n[Install]\nWantedBy=timers.target\n' >/etc/systemd/system/relay-guard.timer
 
 mkdir -p /etc/systemd/system/nginx.service.d

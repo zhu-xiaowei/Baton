@@ -167,7 +167,9 @@ const LIVE = `query($a:string!,$z:string!,$day:Time!,$service:string!,$push:stri
 
 async function users(env) {
   const from = (days) => `FROM ${env.DATASET} WHERE timestamp > NOW() - INTERVAL '${days}' DAY AND blob2 != '${env.PROBE_HASH}'`;
-  const [daily, wau, mau, dist, time, bridges, conns] = await Promise.all([
+  const day = iso(Date.now()).slice(0, 10);
+  const relayed = (days, when) => `SELECT blob4 AS role, count(DISTINCT blob2) AS n ${from(days)} AND blob1 = 'relay' AND ${when} GROUP BY role`;
+  const [daily, wau, mau, dist, time, bridges, conns, relayDay, relayMonth] = await Promise.all([
     `SELECT blob3 AS day, count(DISTINCT blob2) AS dau, sum(if(blob7 = 'new', 1, 0)) AS new ${from(30)} AND blob1 = 'active' GROUP BY day ORDER BY day`,
     `SELECT count(DISTINCT blob2) AS n ${from(7)} AND blob1 = 'active'`,
     `SELECT count(DISTINCT blob2) AS n ${from(30)} AND blob1 = 'active'`,
@@ -175,13 +177,16 @@ async function users(env) {
     `SELECT blob2 AS account, blob3 AS day, max(double1) AS secs ${from(8)} AND blob1 = 'summary' GROUP BY account, day`,
     `SELECT blob7 AS version, blob4 AS os, count(DISTINCT blob2) AS n ${from(1)} AND blob1 = 'bridge' GROUP BY version, os`,
     `SELECT blob1 AS kind, blob4 AS role, double3 AS code, sum(_sample_interval * double4) AS n, sum(_sample_interval * double4 * double1) AS secs ${from(1)} AND blob1 IN ('conn', 'reject') GROUP BY kind, role, code`,
+    relayed(1, `blob3 = '${day}'`), relayed(31, `blob3 >= '${day.slice(0, 8)}01'`), // accounts through the mainland-China relay
   ].map((sql) => ae(env, sql)));
+  const roles = (rows) => Object.fromEntries(rows.map((r) => [r.role, Number(r.n)]));
   const by = (key) => Object.entries(dist.reduce((o, r) => ({ ...o, [r[key] || '?']: (o[r[key] || '?'] ?? 0) + Number(r.n) }), {}))
     .sort((a, b) => b[1] - a[1]);
   const days = time.filter((r) => r.day !== new Date().toISOString().slice(0, 10));
   return { daily, dau: Number(daily.at(-1)?.dau ?? 0), wau: Number(wau[0]?.n ?? 0), mau: Number(mau[0]?.n ?? 0),
     platforms: by('platform'), countries: by('country'), networks: by('network'),
-    avgDailySecs: days.length ? sum(days, (r) => Number(r.secs)) / days.length : null, bridges, conns };
+    avgDailySecs: days.length ? sum(days, (r) => Number(r.secs)) / days.length : null, bridges, conns,
+    relay: { day: roles(relayDay), month: roles(relayMonth) } };
 }
 
 async function live(env) {
@@ -268,6 +273,23 @@ export class MonitorStore extends DurableObject {
         this.alert(state, `cost:${month}`, 'monthly cost alert', `Month-to-date usage $${used.cost.usage.toFixed(2)} is over $${env.COST_ALERT}.`);
       }
     }
+    // Relays (their 5-minute reports): silent for 20 minutes and back, two thirds of the monthly cap, the cap reached.
+    state.relayStale ??= {};
+    for (const [key, r] of await this.ctx.storage.list({ prefix: 'relay:' })) {
+      const name = key.slice(6), stale = now - r.t > 20 * MIN;
+      if (now - r.t > 7 * 1440 * MIN) { await this.ctx.storage.delete(key); delete state.relayStale[name]; continue; } // retired
+      if (stale !== !!state.relayStale[name]) {
+        this.alert(state, null, `relay ${name} ${stale ? 'not reporting' : 'reporting again'}`, stale
+          ? `No report since ${iso(r.t)}: it may be down; mainland clients then use the API host directly (accounts placed in Tokyo slow down).`
+          : 'Its reports arrive again.');
+        if (stale) state.relayStale[name] = true; else delete state.relayStale[name];
+      }
+      const tb = (b) => `${(b / 1e12).toFixed(2)} TB`;
+      if (r.month === month && r.monthBytes > (r.cap * 2) / 3) this.alert(state, `relay-use:${name}:${month}`, `relay ${name} at ${tb(r.monthBytes)} this month`,
+        `${tb(r.monthBytes)} of its ${tb(r.cap)} monthly cap (both directions, as Lightsail counts its allowance). Add a relay before it stops.`);
+      if (r.month === month && r.stopped) this.alert(state, `relay-stop:${name}:${month}`, `relay ${name} stopped at its monthly cap`,
+        `It relays again next month; meanwhile mainland clients use the API host directly.`);
+    }
     // New alerts are logged once; an email that could not be sent is retried with the next run's (at most 20 kept).
     const fresh = this.pending ?? [];
     this.pending = null;
@@ -300,6 +322,11 @@ export class MonitorStore extends DurableObject {
     return true;
   }
 
+  // A relay's 5-minute report (checked by the Worker).
+  async report(r) {
+    await this.ctx.storage.put(`relay:${r.name}`, { ...r, t: Date.now() });
+  }
+
   async data() {
     if (this.cached?.until > Date.now()) return this.cached.value;
     const now = Date.now();
@@ -315,6 +342,7 @@ export class MonitorStore extends DurableObject {
     const state = (await this.ctx.storage.get('state')) ?? {};
     const value = { now, latest: latest && { t: latest.t, ...JSON.parse(latest.data) }, series, uptime: { today: uptime(midnight), week: uptime(now - 7 * 1440 * MIN) }, useToday: today?.secs ?? 0,
       blocked: state.blocked ?? {}, alerts: state.log ?? [], cap: Number(this.env.COST_CAP || 1),
+      relays: Object.fromEntries([...(await this.ctx.storage.list({ prefix: 'relay:' }))].map(([k, r]) => [k.slice(6), r])),
       live: await live(this.env).catch((error) => ({ error: error.message })) };
     this.cached = { until: now + MIN, value };
     return value;
@@ -345,10 +373,28 @@ async function accessOk(request, env) {
 }
 
 const store = (env) => env.STORE.get(env.STORE.idFromName('monitor'));
+
+// The relays' reports arrive on REPORT_HOST, outside Access, with the shared key RELAY_REPORT_KEY; nothing else is served there.
+const digest = async (text) => crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+const REPORT = { name: /^[\w.-]{1,64}$/, day: /^\d{4}-\d{2}-\d{2}$/, month: /^\d{4}-\d{2}$/ };
+async function report(request, env) {
+  if (new URL(request.url).pathname !== '/relay/report' || request.method !== 'POST' || !env.RELAY_REPORT_KEY) return new Response('Not Found', { status: 404 });
+  const key = (request.headers.get('authorization') ?? '').replace(/^Bearer /, '');
+  if (!crypto.subtle.timingSafeEqual(await digest(key), await digest(env.RELAY_REPORT_KEY))) return new Response('Forbidden', { status: 403 });
+  const text = await request.text();
+  let r;
+  try { r = JSON.parse(text.length <= 1024 ? text : 'null'); } catch {}
+  const counts = ['dayBytes', 'monthBytes', 'cap', 'addrs'];
+  if (!r || Object.entries(REPORT).some(([k, re]) => !re.test(String(r[k]))) || counts.some((k) => !(Number.isFinite(r[k]) && r[k] >= 0))
+    || typeof r.stopped !== 'boolean') return new Response('Bad Request', { status: 400 });
+  await store(env).report({ name: r.name, day: r.day, month: r.month, stopped: r.stopped, ...Object.fromEntries(counts.map((k) => [k, r[k]])) });
+  return new Response(null, { status: 204 });
+}
 const HEADERS = { 'cache-control': 'no-store', 'x-frame-options': 'DENY', 'referrer-policy': 'no-referrer' };
 
 export default {
   async fetch(request, env) {
+    if (env.REPORT_HOST && new URL(request.url).host === env.REPORT_HOST) return report(request, env);
     if (!(await accessOk(request, env))) return new Response('Forbidden', { status: 403 });
     const { pathname } = new URL(request.url);
     if (pathname === '/') return new Response(page, { headers: { ...HEADERS, 'content-type': 'text/html; charset=utf-8' } });
