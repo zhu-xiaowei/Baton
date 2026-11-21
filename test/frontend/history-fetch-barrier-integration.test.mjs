@@ -131,3 +131,18 @@ test('history recovery restores physical bottom only when follow intent remains 
   await h.tick(10);
   assert.equal(content.scrollTop, 100);
 });
+
+test('a live refresh joining the opening load still replaces the skeleton', async () => {
+  const sessionId = 'history-skeleton-join';
+  resetSession(h, { sessionId });
+  h.document.getElementById('content').innerHTML = '<div class="messages skeleton-messages"></div>';
+  const request = deferred();
+  h.setApiHandler(() => request.promise);
+  const opening = h.window.loadLatestMessages(sessionId);
+  h.window.loadLatestMessages(sessionId, { preserveLive: true });
+  request.resolve({ messages: [{ uuid: 'one', type: 'user', content: 'one', timestamp: '2026-08-27T00:00:00.000Z' }],
+    status: 'needs_input', hasMore: false });
+  await opening;
+  assert.equal(h.document.querySelector('.skeleton-messages'), null);
+  assert.ok(h.document.querySelector('[data-message-id="one"]'));
+});

@@ -1899,7 +1899,9 @@ async function loadLatestMessages(sessionId, options = {}) {
     barrier.beginCommit();
     var changed = false;
     try {
-      if (!restError && (barrier.preserveLive || (barrier.keepLive && data.status !== 'completed'))) {
+      // A skeleton has nothing live to keep (a refresh joined the opening load): the snapshot replaces it.
+      if (!restError && !document.querySelector('.skeleton-messages')
+        && (barrier.preserveLive || (barrier.keepLive && data.status !== 'completed'))) {
         commitMessages(data.messages || [], { liveStateChanged: true });
         if (data.status === 'completed' && !hasOutstandingTurns()) state.wsRunning = false;
         if (!state.wsOldestTimestamp) {
