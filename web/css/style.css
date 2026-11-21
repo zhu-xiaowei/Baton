@@ -1284,6 +1284,7 @@ html.native-mobile .slash-description {
 }
 .file-action:disabled { opacity: 0.5; cursor: wait; }
 .file-download-action { position: relative; display: inline-flex; align-items: center; justify-content: center; min-width: 32px; min-height: 32px; }
+html:not(.native-mobile) .file-modal-header > .file-download-action { min-width: 28px; min-height: 28px; padding: 6px; }
 .file-download-spinner { position: absolute; inset: 0; display: none; align-items: center; justify-content: center; }
 .file-download-action.is-downloading { opacity: 1; color: var(--text-normal); }
 .file-download-action.is-downloading > :not(.file-download-spinner) { visibility: hidden; }

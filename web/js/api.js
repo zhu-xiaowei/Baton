@@ -44,6 +44,7 @@ function clearCachedAccountData() {
   resetDirectTransport();
   answers.clear();
   localStorage.removeItem('baton-preview-ports');
+  localStorage.removeItem('baton-notification-config');
   sessionStorage.removeItem('baton-nav');
   clearListCaches();
   clearProjectDataCache();
