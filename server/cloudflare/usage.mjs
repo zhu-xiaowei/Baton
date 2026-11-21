@@ -1,6 +1,7 @@
 // Usage points (Workers Analytics Engine, env.USAGE; absent on self-hosts) and the monthly cost cap of one AccountObject.
 // No content and no account id leave the object: accounts appear as a hash. Point layout (server/cloudflare/monitor.mjs):
 // blobs [kind, account, day, platform|os|role, country, network, new|version|reason], doubles [seconds, apps, code, weight].
+import { readIpToken } from '../core/accounts.mjs';
 import { refuse } from './ports.mjs';
 
 const HOUR = 3_600_000;
@@ -45,10 +46,12 @@ export class Usage {
     const query = new URL(request.url).searchParams;
     if (me.role === 'bridge') await this.point(me.account, ['bridge', s.day, query.get('os') ?? '', '', '', query.get('version') ?? '']);
     else if (!s.apps?.length) {
-      // Through the mainland-China relay Cloudflare sees only the relay (JP, Amazon).
+      // Through the relay Cloudflare sees only the relay: the App's signed address (`ipt`) if any.
       const relay = (this.env.RELAY_IPS ?? '').split(',').includes(request.headers.get('cf-connecting-ip'));
-      await this.point(me.account, ['active', s.day, platformOf(request.headers.get('user-agent') ?? ''), relay ? 'relay' : request.cf?.country ?? '',
-        relay ? 'relay' : String(request.cf?.asOrganization ?? '').slice(0, 64), isNew() ? 'new' : '']);
+      const own = relay && await readIpToken(this.env.IP_TOKEN_KEY, query.get('ipt'));
+      const [country, network] = !relay ? [request.cf?.country ?? '', String(request.cf?.asOrganization ?? '').slice(0, 64)]
+        : own ? [own.country, `AS${own.asn}`] : ['relay', 'relay'];
+      await this.point(me.account, ['active', s.day, platformOf(request.headers.get('user-agent') ?? ''), country, network, isNew() ? 'new' : '']);
     }
     seen.push(app);
     await this.save();

@@ -40,6 +40,24 @@ export function locationHint({ relay, continent, lon } = {}) {
 }
 const JAPAN = new Set(['NRT', 'KIX']);
 
+// A direct caller's address, signed (`ip|country|asn|expiry.signature`), for its requests through the relay (docs/v2-cn-relay.md).
+const IP_TOKEN_SECONDS = 7 * 86400;
+async function ipSignature(secret, payload) {
+  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(`ip-token|${secret}`), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const mac = new Uint8Array(await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(payload))).slice(0, 16);
+  return btoa(String.fromCharCode(...mac)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+export async function issueIpToken(secret, { ip, country = '', asn = '' }) {
+  const payload = [ip, country, asn, nowInt() + IP_TOKEN_SECONDS].join('|');
+  return `${payload}.${await ipSignature(secret, payload)}`;
+}
+export async function readIpToken(secret, token) {
+  const at = String(token ?? '').lastIndexOf('.');
+  if (!secret || at < 1 || !compareDigest(token.slice(at + 1), await ipSignature(secret, token.slice(0, at)))) return null;
+  const [ip, country, asn, expiry] = token.slice(0, at).split('|');
+  return Number(expiry) > nowInt() ? { ip, country, asn } : null;
+}
+
 export function need(body, ...fields) {
   const missing = fields.filter((name) => !body[name]);
   if (missing.length) throw new HTTPError(422, `Missing: ${missing.join(', ')}`);
@@ -70,9 +88,19 @@ export function createAccounts({ env, table, auth, devices, sockets, log, place 
     return viaCdn && hops.length > 1 ? hops.at(-2) : hops.at(-1);
   }
 
-  // The mainland-China relay (docs/v2-cn-relay.md) hides its users' addresses: its own gets a larger allowance.
+  // The mainland-China relay (docs/v2-cn-relay.md) hides its users' addresses.
   const relayed = (request) => (env.RELAY_IPS ?? '').split(',').includes(ip(request));
-  const perIp = (name, request, limit) => rate(`${name}#${ip(request)}`, relayed(request) ? limit * 100 : limit);
+  // Through the relay a signed address (x-baton-ip) counts, at `own` times the limit; without one, the relay's.
+  async function perIp(name, request, limit, own = 1) {
+    const signed = relayed(request) && await readIpToken(env.IP_TOKEN_KEY, request.headers.get('x-baton-ip'));
+    return rate(`${name}#${signed ? signed.ip : ip(request)}`, signed ? limit * own : limit);
+  }
+  // /api/version signs direct callers' addresses, only where a relay is configured.
+  async function ipToken(request) {
+    const edge = edgeOf(request);
+    const secret = env.API_ENTRIES && !edge.relay && env.IP_TOKEN_KEY;
+    return secret ? issueIpToken(secret, { ip: ip(request), country: edge.country, asn: edge.asn }) : undefined;
+  }
   function edgeOf(request) {
     let edge = {};
     try { edge = JSON.parse(request.headers.get('x-baton-edge') || '{}'); } catch {}
@@ -149,7 +177,7 @@ export function createAccounts({ env, table, auth, devices, sockets, log, place 
   async function register({ body, ...request }) {
     need(body, 'accountId', 'joinSecret', 'fp', 'deviceName');
     if (!open()) throw new HTTPError(404, 'Registration is closed on this server.');
-    await perIp('register', request, 5);
+    await perIp('register', request, 5, 3); // through the relay a sign-in may take 3 (placement retries)
     if (place) await placeAccount(body, request); // before anything reads the account: its first access places it
     if (await selfHosted(body.accountId) || (await devices.list(body.accountId)).length) throw new HTTPError(409, 'Account exists.');
     if (await conditional(async () => table.putItem({ Item: { pk: `ACCOUNT#${body.accountId}`, sk: 'META',
@@ -353,5 +381,5 @@ export function createAccounts({ env, table, auth, devices, sockets, log, place 
     ['/api/pair/wait', pairWait], ['/api/tokens/revoke', revoke],
   ].map(([path, handler]) => ({ method: 'POST', path, body: Body, handler }));
   routes.push({ method: 'POST', path: '/api/account/delete', handler: deleteAccount });
-  return { routes, remove, computerTokens, listTokens, meta };
+  return { routes, remove, computerTokens, listTokens, meta, ipToken };
 }

@@ -7,7 +7,7 @@ import { createInterface } from 'readline/promises';
 import qrcode from 'qrcode-terminal';
 import { BRIDGE_HOME, CONFIG_PATH, saveConfig } from './config.mjs';
 import { fingerprint, openPair, openRotation, pairCode, sealPair } from './e2ee-node.mjs';
-import { pickEntry } from './entry.mjs';
+import { pickEntry, vouched } from './entry.mjs';
 import { runningBridgePid } from './instance-lock.mjs';
 
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -23,7 +23,8 @@ async function call(config, path, body, fetchImpl = fetch) {
 async function request(base, config, path, body, fetchImpl) {
   const res = await fetchImpl(`${base}${path}`, {
     method: body ? 'POST' : 'GET', body: body && JSON.stringify(body), signal: AbortSignal.timeout(15_000),
-    headers: { 'Content-Type': 'application/json', ...(config.apiKey ? { 'x-api-key': config.apiKey } : {}) },
+    headers: { 'Content-Type': 'application/json', ...(config.apiKey ? { 'x-api-key': config.apiKey } : {}),
+      ...(base !== config.server && vouched.token ? { 'x-baton-ip': vouched.token } : {}) },
   });
   const reply = await res.json().catch(() => ({}));
   if (!res.ok) throw Object.assign(new Error(reply.detail || `HTTP ${res.status}`), { status: res.status });

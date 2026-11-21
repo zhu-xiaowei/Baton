@@ -6,7 +6,7 @@ import { accountOf, fingerprint, openPair, pairCode, sealPair, sealRotation } fr
 import { defaultServer, state } from '../state.js';
 import { loadAccountKey, saveAccountKey } from './account-key.js';
 import { cachedOnlineDevices, devices, request } from './direct-transport.js';
-import { viaEntry } from '../../../bridge/entry.mjs';
+import { viaEntry, vouched } from '../../../bridge/entry.mjs';
 import { startEntry } from './entry.js';
 
 export function parseLink(text) {
@@ -44,8 +44,8 @@ const me = () => ({ deviceName: deviceName(), install: localStorage.baton_instal
   (byte) => byte.toString(16).padStart(2, '0')).join('') });  // not randomUUID: iOS 14 WebViews lack it
 
 async function post(server, path, body, key) {
-  const send = (url) => fetch(url, { method: 'POST', body: JSON.stringify(body),
-    headers: { 'Content-Type': 'application/json', ...(key ? { 'x-api-key': key } : {}) } });
+  const send = (url) => fetch(url, { method: 'POST', body: JSON.stringify(body), headers: { 'Content-Type': 'application/json',
+    ...(key ? { 'x-api-key': key } : {}), ...(url !== server + path && vouched.token ? { 'x-baton-ip': vouched.token } : {}) } });
   // Through the relay where it is the entry: a new account is then placed near it (server/core/accounts.mjs).
   const entry = await startEntry(server);
   let response = await send(viaEntry(server + path, server, entry));
