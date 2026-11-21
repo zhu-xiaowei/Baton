@@ -60,4 +60,4 @@ html.native-mobile[data-page-zoom] .start-url-form .input-group input { font-siz
   overflow-y: auto; padding-top: var(--sat, env(safe-area-inset-top, 0px));
 }
 .add-device-page .add-back { position: fixed; top: calc(var(--sat, env(safe-area-inset-top, 0px)) + 6px); left: 8px; width: 28px; height: 28px; display: flex; }
-html.native-mobile .add-device-page .add-back { width: 44px; height: 44px; top: var(--sat, env(safe-area-inset-top, 0px)); left: 0; }
+html.native-mobile .add-device-page .add-back { width: 44px; height: 44px; top: var(--sat, env(safe-area-inset-top, 0px)); left: var(--sal, env(safe-area-inset-left, 0px)); }
