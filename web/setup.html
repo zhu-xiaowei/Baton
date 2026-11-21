@@ -33,6 +33,8 @@
   }
   .setup-bar { display: flex; align-items: center; min-height: 44px; padding: 6px 8px; padding-top: max(var(--sat, env(safe-area-inset-top, 0px)), 6px); background: var(--surface-elevated); border-bottom: 1px solid var(--border); flex-shrink: 0; }
   .setup-content { flex: 1; overflow-y: auto; padding: 24px 16px; padding-bottom: calc(var(--sab, env(safe-area-inset-bottom, 0px)) + 24px); display: flex; flex-direction: column; align-items: center; background: var(--canvas); }
+  /* Add device's swipe-back underlay (cloned with inset: 0) keeps the page's own layout. */
+  .edge-back-underlay > :is(.setup-bar, .setup-content) { position: relative !important; inset: auto !important; }
   .setup-back-slot { width: 28px; height: 28px; flex: 0 0 28px; display: flex; }
   .setup-bar .title { flex: 1; text-align: center; font-size: 13px; font-weight: 600; color: var(--text-primary); }
   .setup-bar .spacer { width: 28px; flex-shrink: 0; }
@@ -138,7 +140,7 @@
 </div>
 
 <div class="setup-content">
-<a class="section setting-row add-device" href="landing.html?add=1">
+<a class="section setting-row add-device" href="#add">
   <strong><svg class="scan-icon" hidden viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 8V6a2 2 0 0 1 2-2h2M16 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-2M4 12h16"/></svg>Add device</strong>
   <span class="chev" aria-hidden="true">›</span>
 </a>
