@@ -11,6 +11,7 @@ const ASKED = 'baton-notifications-asked';
 const TARGET = 'baton-notification-target';
 const CONFIG = 'baton-notification-config';
 let platform, config, initialization, pendingTarget, permission;
+let refreshed = false; // devices() answered this load: K rotations are followed
 let relay = ''; // hosted: Android holds a `role=notify` socket to this URL instead of polling
 let status = '';
 
@@ -42,7 +43,8 @@ function validTarget(event) {
 
 async function openNotification(event) {
   if (!validTarget(event) && !event?.id && !event?.e) return;
-  if (!config) {
+  // A sealed tap waits for devices(): it may be sealed under a rotated K.
+  if (!config || (!validTarget(event) && !refreshed)) {
     pendingTarget = event;
     return;
   }
@@ -148,6 +150,7 @@ async function initialize() {
   sessionStorage.removeItem(TARGET);
   const body = await devices();
   config = body.notifications;
+  refreshed = true;
   relay = body.rpc?.transport === 'relay' ? body.rpc.url : '';
   if (config) localStorage.setItem(CONFIG, JSON.stringify(config));
   else localStorage.removeItem(CONFIG);
