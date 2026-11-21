@@ -277,6 +277,7 @@ export class MonitorStore extends DurableObject {
     state.relayStale ??= {};
     for (const [key, r] of await this.ctx.storage.list({ prefix: 'relay:' })) {
       const name = key.slice(6), stale = now - r.t > 20 * MIN;
+      if (now - r.t > 7 * 1440 * MIN) { await this.ctx.storage.delete(key); delete state.relayStale[name]; continue; } // retired
       if (stale !== !!state.relayStale[name]) {
         this.alert(state, null, `relay ${name} ${stale ? 'not reporting' : 'reporting again'}`, stale
           ? `No report since ${iso(r.t)}: it may be down; mainland clients then use the API host directly (accounts placed in Tokyo slow down).`

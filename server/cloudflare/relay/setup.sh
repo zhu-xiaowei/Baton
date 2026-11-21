@@ -119,9 +119,9 @@ if os.environ.get('REPORT_URL'):
     try: urllib.request.urlopen(urllib.request.Request(os.environ['REPORT_URL'], body, headers), timeout=10)
     except Exception as error: print('report failed:', error)
 PY
-if [ -n "${REPORT_URL:-}" ]; then
-  printf 'REPORT_URL=%s\nREPORT_KEY=%s\nRELAY_NAME=%s\n' "$REPORT_URL" "${REPORT_KEY:-}" "${RELAY_NAME:-$(hostname)}" >/etc/relay-guard.env
-  chmod 600 /etc/relay-guard.env
+if [ -n "${REPORT_URL:-}" ]; then # a rerun keeps the relay's name
+  RELAY_NAME=${RELAY_NAME:-$(sed -n 's/^RELAY_NAME=//p' /etc/relay-guard.env 2>/dev/null)}
+  (umask 077; printf 'REPORT_URL=%s\nREPORT_KEY=%s\nRELAY_NAME=%s\n' "$REPORT_URL" "${REPORT_KEY:-}" "${RELAY_NAME:-$(hostname)}" >/etc/relay-guard.env)
 fi
 chmod 755 /usr/local/bin/relay-guard
 printf '[Service]\nType=oneshot\nEnvironmentFile=-/etc/relay-guard.env\nExecStart=/usr/local/bin/relay-guard\n' >/etc/systemd/system/relay-guard.service

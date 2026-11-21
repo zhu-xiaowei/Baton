@@ -245,6 +245,7 @@ async function deployMonitor() {
   if (process.env.MONITOR_API_TOKEN) secrets.ANALYTICS_TOKEN = process.env.MONITOR_API_TOKEN;
   else if (!('ANALYTICS_TOKEN' in old)) console.log(`${name}: no ANALYTICS_TOKEN yet; add it as a secret (read-only analytics token) to start usage, cost and the cap`);
   if (process.env.RELAY_REPORT_KEY) secrets.RELAY_REPORT_KEY = process.env.RELAY_REPORT_KEY;
+  else if (!('RELAY_REPORT_KEY' in old)) console.log(`${name}: no RELAY_REPORT_KEY; relays cannot report until it is set`);
   const reportHost = flags.monitor.replace(/^[^.]+/, (label) => `${label}-report`);
   let probe = old.PROBE_ACCOUNT;
   if (!probe || !('PROBE_TOKEN' in old)) {
