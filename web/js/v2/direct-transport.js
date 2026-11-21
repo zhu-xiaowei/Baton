@@ -9,7 +9,7 @@ import { RpcAssembler, createHeaderSigner, decodeRpcPayload, fromBase64, openStr
   rpcRequestFrames, sealStreamMessage, streamFrame, toBase64, unpackStreamMessage } from '../../../bridge/direct-rpc-protocol.mjs';
 import { appKeys, fingerprint, openRotation } from '../../../bridge/e2ee.mjs';
 import { loadAccountKey, saveAccountKey } from './account-key.js';
-import { chooseEntry, entryKnown, entryUrl, hasEntry } from './entry.js';
+import { chooseEntry, entryKnown, entryUrl, hasEntry, startEntry } from './entry.js';
 import { setTransferAccess, setTransferKeys } from '../../../bridge/transfer-store.mjs';
 import { showLimit } from './limit-banner.js';
 
@@ -318,7 +318,7 @@ export function connect() {
   // The entry first (once per start); a remembered one is used meanwhile.
   if (!entryAsked) {
     entryAsked = true;
-    const chosen = chooseEntry();
+    const chosen = startEntry();
     if (!entryKnown()) { chosen.finally(connect); return; }
     // The remembered entry is used meanwhile; a socket still opening through one no longer chosen starts over at once.
     chosen.then(() => { if (socket?.readyState === WebSocket.CONNECTING && socket.__url !== socketUrl()) socket.close(); });

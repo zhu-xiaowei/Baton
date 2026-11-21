@@ -4,6 +4,7 @@ import { state } from '../state.js';
 import { pickEntry, viaEntry } from '../../../bridge/entry.mjs';
 
 const KEY = 'baton-entry';
+const started = new Map(); // server → this start's choice
 let saved, choosing;
 
 // The entry for state.SERVER: '' is the API host itself, undefined not chosen yet.
@@ -17,14 +18,26 @@ export const entryUrl = (url) => viaEntry(url, state.SERVER, current());
 export const hasEntry = () => !!current(); // a relay
 export const entryKnown = () => current() !== undefined;
 
+const pick = (server) => pickEntry(server).then((found) => {
+  const entry = found === server ? '' : found;
+  if (server === state.SERVER) state.ENTRY = entry;
+  saved = { server, entry }; // the next start (and the App after pairing) uses it at once
+  started.set(server, Promise.resolve(entry)); // a later choice replaces this start's
+  try { localStorage.setItem(KEY, JSON.stringify(saved)); } catch {}
+  return entry;
+});
+
+// This start's choice for `server`, made once (pairing and the first socket share it); '' is the server itself.
+export function startEntry(server = state.SERVER) {
+  if (!server) return Promise.resolve('');
+  if (!started.has(server)) started.set(server, pick(server));
+  return started.get(server);
+}
+
+// A new choice for state.SERVER (the network changed, the relay may be gone).
 export function chooseEntry() {
   if (!state.SERVER) return Promise.resolve();
-  const server = state.SERVER;
-  return (choosing ||= pickEntry(server).then((entry) => {
-    if (server !== state.SERVER) return;
-    state.ENTRY = entry === server ? '' : entry;
-    try { localStorage.setItem(KEY, JSON.stringify({ server, entry: state.ENTRY })); } catch {}
-  }).finally(() => { choosing = null; }));
+  return (choosing ||= pick(state.SERVER).finally(() => { choosing = null; }));
 }
 
 globalThis.addEventListener?.('online', chooseEntry);

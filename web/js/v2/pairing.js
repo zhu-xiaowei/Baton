@@ -6,7 +6,8 @@ import { accountOf, fingerprint, openPair, pairCode, sealPair, sealRotation } fr
 import { defaultServer, state } from '../state.js';
 import { loadAccountKey, saveAccountKey } from './account-key.js';
 import { cachedOnlineDevices, devices, request } from './direct-transport.js';
-import { entryUrl } from './entry.js';
+import { viaEntry } from '../../../bridge/entry.mjs';
+import { startEntry } from './entry.js';
 
 export function parseLink(text) {
   let url;
@@ -45,9 +46,11 @@ const me = () => ({ deviceName: deviceName(), install: localStorage.baton_instal
 async function post(server, path, body, key) {
   const send = (url) => fetch(url, { method: 'POST', body: JSON.stringify(body),
     headers: { 'Content-Type': 'application/json', ...(key ? { 'x-api-key': key } : {}) } });
-  let response = await send(entryUrl(server + path));
+  // Through the relay where it is the entry: a new account is then placed near it (server/core/accounts.mjs).
+  const entry = await startEntry(server);
+  let response = await send(viaEntry(server + path, server, entry));
   // The relay's one shared address may have used up a per-address limit: this device's own address then.
-  if (response.status === 429 && entryUrl(server + path) !== server + path) response = await send(server + path);
+  if (response.status === 429 && entry) response = await send(server + path);
   const reply = await response.json().catch(() => ({}));
   if (!response.ok) throw Object.assign(new Error(reply.detail || reply.error || 'Connection failed'), { status: response.status });
   return reply;
