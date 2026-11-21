@@ -43,8 +43,11 @@ const me = () => ({ deviceName: deviceName(), install: localStorage.baton_instal
   (byte) => byte.toString(16).padStart(2, '0')).join('') });  // not randomUUID: iOS 14 WebViews lack it
 
 async function post(server, path, body, key) {
-  const response = await fetch(entryUrl(server + path), { method: 'POST', body: JSON.stringify(body),
+  const send = (url) => fetch(url, { method: 'POST', body: JSON.stringify(body),
     headers: { 'Content-Type': 'application/json', ...(key ? { 'x-api-key': key } : {}) } });
+  let response = await send(entryUrl(server + path));
+  // The relay's one shared address may have used up a per-address limit: this device's own address then.
+  if (response.status === 429 && entryUrl(server + path) !== server + path) response = await send(server + path);
   const reply = await response.json().catch(() => ({}));
   if (!response.ok) throw Object.assign(new Error(reply.detail || reply.error || 'Connection failed'), { status: response.status });
   return reply;

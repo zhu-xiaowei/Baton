@@ -976,8 +976,8 @@ function scheduleReconnect(wait) {
   console.log(`[ws] retry ${_consecutiveFailures} in ${delay}ms`);
   _reconnectTimer = setTimeout(() => {
     _reconnectTimer = null;
-    // Failing again through the relay: it may be down, so the entry is chosen anew for the next attempt.
-    if (_consecutiveFailures > 1 && _config?.entry && _config.entry !== _config.server) {
+    // Failing again: the relay may be down, or the network was not up when the entry was chosen; the next attempt uses a new choice.
+    if (_consecutiveFailures > 1 && _config) {
       pickEntry(_config.server).then((entry) => { if (_config) _config.entry = entry; });
     }
     connect();

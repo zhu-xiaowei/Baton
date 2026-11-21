@@ -32,7 +32,8 @@ export const Body = [
 
 // A Durable Object region near where an endpoint enters Cloudflare (the Worker's x-baton-edge); through the relay that is Tokyo.
 export function locationHint({ relay, continent, lon } = {}) {
-  if (relay || continent === 'AS') return 'apac';
+  if (relay) return 'apac';
+  if (continent === 'AS') return Number.isFinite(lon) && lon < 60 ? 'me' : 'apac'; // Cloudflare's AS includes the Middle East
   if (continent === 'NA') return lon < -100 ? 'wnam' : 'enam';
   if (continent === 'EU') return lon > 20 ? 'eeur' : 'weur';
   return { OC: 'oc', SA: 'sam', AF: 'afr' }[continent];

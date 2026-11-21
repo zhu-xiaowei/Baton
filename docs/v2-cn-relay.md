@@ -19,19 +19,21 @@ Only REST and `/ws` go through it; R2 transfers, `dl.`, the homepage and the Web
   other Cloudflare sites. No access log.
 - **Choosing the entry** (`bridge/entry.mjs`, shared): `/api/version` on `api.` returns `entries` and the caller's
   `country` as Cloudflare sees it (behind a VPN or proxy, the exit's). A caller in `CN` uses the first entry that
-  answers; everyone else, and every failure, uses `api.`. The Bridge chooses at start and again when reconnecting fails
-  while on the relay; the App at each start (the last choice is used meanwhile), on network changes and when its socket
-  keeps failing through the relay. The stored server stays `api.`; the entry is never saved.
+  answers; everyone else, and every failure, uses `api.`. The Bridge chooses at start and again whenever reconnecting keeps
+  failing; the App at each start (the last choice is used meanwhile), on network changes and when its socket keeps
+  failing through the relay. The stored server stays `api.`; the entry is never saved.
 - **The Worker** treats the entry hosts as the API host. A WAF custom rule refuses the entry host from any address but
   the relays', so nobody bypasses the relay's limits.
 - **Account placement**: a new account's object is created at registration, near its first computer (the pairing
-  code's `pair/start` entry), else the App's: the relay or Asia → `apac`, North America → `wnam`/`enam` by longitude,
-  Europe → `weur`/`eeur`, and so on. Through the relay it must land in Japan (`NRT`/`KIX`): otherwise register answers
+  code's `pair/start` entry), else the App's: the relay or Asia → `apac` (west of 60°E → `me`), North America →
+  `wnam`/`enam` by longitude, Europe → `weur`/`eeur`, and so on. Through the relay it must land in Japan (`NRT`/`KIX`): otherwise register answers
   425 and the App retries with a new key (a new account id), up to twice, then accepts. Objects never move: existing
   accounts keep theirs; re-pair to move (first computer first).
 - **Addresses**: Cloudflare sees every relayed caller as the relay. Per-address register/pair/recover limits are 100×
   for relay addresses (`RELAY_IPS`); the per-account limits and the monthly cost cap still apply. Usage statistics
-  record such Apps under country/network `relay`. The rate-limiting rule covers `api.` only (on the Free plan it
+  record such Apps under country/network `relay`. Anyone can reach the relay, so its shared address can use up those
+  limits: a 429 through the relay on pairing, registration or recovery is retried on `api.` from the caller's own
+  address. The rate-limiting rule covers `api.` only (on the Free plan it
   cannot exempt an address); the relay limits its callers itself.
 
 ## Relay limits (on the instance)
@@ -41,7 +43,7 @@ Only REST and `/ws` go through it; R2 transfers, `dl.`, the homepage and the Web
 | Connections per address | 100 (nginx `limit_conn`) |
 | New connections per address (IPv6: per /64) | 20/s, burst 40 (nftables) |
 | Rate per connection | 1 MB/s each way |
-| Bytes per address (IPv6: per /64) per day | 1 GiB, then blocked for a day (`relay-guard`, every 5 min) |
+| Bytes per address (IPv6: per /64) per day | 1 GiB, then dropped for a day (`relay-guard`, every 5 min); clients time out and use `api.` |
 | Bytes per month, both directions | 1.8 TB, then relaying stops until the month ends; clients fall back to `api.` |
 | Alert | Lightsail alarm mail when NetworkOut stays above the pace of 1.2 TB a month for 2 hours (`ALERT_EMAIL`) |
 

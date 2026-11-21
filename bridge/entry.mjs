@@ -2,7 +2,11 @@
 // API host itself names the caller's country (as Cloudflare sees it) and the relay hosts; a caller in CN uses the first
 // relay that answers, everyone else (and every failure) the API host.
 export async function pickEntry(server, fetchImpl = fetch) {
-  const get = async (base) => (await fetchImpl(`${base}/api/version`, { signal: AbortSignal.timeout(5000) })).json();
+  const get = async (base) => {
+    const abort = new AbortController(); // not AbortSignal.timeout: iOS 14-15 WebViews lack it
+    const timer = setTimeout(() => abort.abort(), 5000);
+    try { return await (await fetchImpl(`${base}/api/version`, { signal: abort.signal })).json(); } finally { clearTimeout(timer); }
+  };
   try {
     const { country, entries = [] } = await get(server);
     for (const entry of country === 'CN' ? entries : []) {

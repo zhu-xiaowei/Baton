@@ -13,6 +13,6 @@ test('callers in CN use a relay that answers, everyone else the API host', async
 });
 
 test('a new account goes near the entry of its first computer', () => {
-  assert.deepEqual([{ relay: true, continent: 'EU' }, { continent: 'NA', lon: -122 }, { continent: 'NA', lon: -77 }, {}].map(locationHint),
-    ['apac', 'wnam', 'enam', undefined]);
+  assert.deepEqual([{ relay: true, continent: 'EU' }, { continent: 'AS', lon: 54 }, { continent: 'NA', lon: -122 }, { continent: 'NA', lon: -77 }, {}]
+    .map(locationHint), ['apac', 'me', 'wnam', 'enam', undefined]);
 });

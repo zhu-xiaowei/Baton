@@ -13,7 +13,15 @@ import { runningBridgePid } from './instance-lock.mjs';
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function call(config, path, body, fetchImpl = fetch) {
-  const res = await fetchImpl(`${config.entry || config.server}${path}`, {
+  try { return await request(config.entry || config.server, config, path, body, fetchImpl); } catch (error) {
+    // The relay's one shared address may have used up a per-address limit: this computer's own address then.
+    if (error.status !== 429 || !config.entry || config.entry === config.server) throw error;
+    return request(config.server, config, path, body, fetchImpl);
+  }
+}
+
+async function request(base, config, path, body, fetchImpl) {
+  const res = await fetchImpl(`${base}${path}`, {
     method: body ? 'POST' : 'GET', body: body && JSON.stringify(body), signal: AbortSignal.timeout(15_000),
     headers: { 'Content-Type': 'application/json', ...(config.apiKey ? { 'x-api-key': config.apiKey } : {}) },
   });
