@@ -20,9 +20,11 @@ import { confirmDialog } from './components/confirm-dialog.js';
 import { fromBase64 } from '../../bridge/direct-rpc-protocol.mjs';
 import { COPY_ICON } from './copy.js';
 import { showCenteredModal, hideCenteredModal } from './components/modal-viewport.js';
+import { routeExternalLinks } from './native-shell.js';
 
 initMacosTabs();
 initPageZoomShortcuts();
+routeExternalLinks();
 setNativeTabTitle('Settings');
 
 (function () {

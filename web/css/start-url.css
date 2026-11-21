@@ -7,7 +7,10 @@
 .start-url-form h1 { font-size: 28px; font-weight: 700; margin-bottom: 6px; }
 .start-url-form .tagline { color: var(--text-secondary); font-size: 14px; margin-bottom: 32px; line-height: 1.5; }
 .start-url-form .input-group { margin-bottom: 16px; text-align: left; }
-.start-url-form .input-group label { display: block; font-size: 12px; color: var(--text-normal); margin-bottom: 6px; }
+.start-url-form .input-group label { display: flex; align-items: center; gap: 2px; font-size: 12px; color: var(--text-normal); margin-bottom: 6px; }
+.start-url-form .field-help { display: flex; padding: 12px; margin: -12px -12px -12px -8px; color: var(--text-muted); opacity: 0.55; }
+.start-url-form .field-help:hover, .start-url-form .field-help:active { opacity: 1; }
+.start-url-form .field-help svg { width: 15px; height: 15px; }
 html.native-mobile .start-url-form .input-group label {
   font-size: 15px;
   line-height: 20px;
