@@ -7,6 +7,7 @@ const PAIR_SECONDS = 600;
 const MAX_BRIDGES = 10;
 const MAX_ROTATIONS = 8;
 const GONE = 'This code is used or expired.';
+const APPROVE_MARGIN = 30; // a computer's code is taken only this long before it expires, while its Bridge still waits
 const required = { required: true };
 
 export const Rotation = [
@@ -178,7 +179,10 @@ export function createAccounts({ env, table, auth, devices, sockets, log, place 
     need(body, 'accountId', 'joinSecret', 'fp', 'deviceName');
     if (!open()) throw new HTTPError(404, 'Registration is closed on this server.');
     await perIp('register', request, 5, 3); // through the relay a sign-in may take 3 (placement retries)
-    if (place) await placeAccount(body, request); // before anything reads the account: its first access places it
+    // The computer's code it comes with must still be open: an expired one leaves no empty account.
+    const pair = body.code && (await table.getItem({ Key: await pairKey(body.code) })).Item;
+    if (body.code && !(pair?.kind === 'bridge' && !('accountId' in pair) && pair.ttl > nowInt() + APPROVE_MARGIN)) throw new HTTPError(404, GONE);
+    if (place) await placeAccount(body, request, pair); // before anything reads the account: its first access places it
     if (await selfHosted(body.accountId) || (await devices.list(body.accountId)).length) throw new HTTPError(409, 'Account exists.');
     if (await conditional(async () => table.putItem({ Item: { pk: `ACCOUNT#${body.accountId}`, sk: 'META',
       joinSecretHash: await sha256(body.joinSecret), head: body.fp, createdAt: nowInt() },
@@ -190,9 +194,8 @@ export function createAccounts({ env, table, auth, devices, sockets, log, place 
 
   // The account's object goes near its first computer (the pairing code's), else this App. Through the relay it must be in
   // Japan: elsewhere the App retries with a new key (a new account id), up to twice.
-  async function placeAccount(body, request) {
-    const bridge = body.code && (await table.getItem({ Key: await pairKey(body.code) })).Item?.edge;
-    const edge = bridge || edgeOf(request);
+  async function placeAccount(body, request, pair) {
+    const edge = pair?.edge || edgeOf(request);
     const colo = await place(body.accountId, locationHint(edge)).catch(() => ''); // unknown: kept
     if (edge.relay && colo && !JAPAN.has(colo) && Number(body.retry || 0) < 2) throw new HTTPError(425, 'Placing the account; retry with a new key.');
   }
@@ -247,7 +250,7 @@ export function createAccounts({ env, table, auth, devices, sockets, log, place 
       UpdateExpression: 'SET accountId = :account, sealed = :sealed, approvedBy = :by, #by = :token',
       ConditionExpression: 'attribute_exists(pk) AND kind = :bridge AND #ttl > :now AND attribute_not_exists(accountId)',
       ExpressionAttributeNames: { '#ttl': 'ttl', '#by': 'by' }, ExpressionAttributeValues: { ':account': caller.accountId,
-        ':sealed': body.sealed, ':bridge': 'bridge', ':by': caller.deviceName || 'Baton', ':token': caller.tokenHash ?? '', ':now': nowInt() } }));
+        ':sealed': body.sealed, ':bridge': 'bridge', ':by': caller.deviceName || 'Baton', ':token': caller.tokenHash ?? '', ':now': nowInt() + APPROVE_MARGIN } }));
     if (!row) throw new HTTPError(404, GONE);
     return { deviceName: row.Attributes.deviceName };
   }
