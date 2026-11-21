@@ -13,15 +13,18 @@ import { initMobileNotifications, mountNotificationSettings } from './mobile-not
 import { mountTextSizeSettings } from './text-size-settings.js';
 import { initPageZoomShortcuts } from './page-zoom.js';
 import { removeDevice, viaComputer } from './v2/pairing.js';
+import { openAddDevice } from './v2/add-device.js';
 import { cachedOnlineDevices, connect, devices, relayFrameBytes, request } from './v2/direct-transport.js';
 import { toPhrase } from './v2/recovery.js';
 import { confirmDialog } from './components/confirm-dialog.js';
 import { fromBase64 } from '../../bridge/direct-rpc-protocol.mjs';
 import { COPY_ICON } from './copy.js';
 import { showCenteredModal, hideCenteredModal } from './components/modal-viewport.js';
+import { routeExternalLinks } from './native-shell.js';
 
 initMacosTabs();
 initPageZoomShortcuts();
+routeExternalLinks();
 setNativeTabTitle('Settings');
 
 (function () {
@@ -66,10 +69,16 @@ setNativeTabTitle('Settings');
     document.querySelector('.add-device .scan-icon').removeAttribute('hidden'); // an SVG has no .hidden property
   }
 
-  // After adding, the sign-in page returns to home past this page when home opened it.
-  document.querySelector('.add-device').addEventListener('click', function () {
-    sessionStorage.setItem('baton-add-depth', fromIndex() && history.length > 2 ? '2' : '0');
-  });
+  // After adding, home is shown: going back past this page when home opened it.
+  function addDevice() {
+    var backToHome = fromIndex() && history.length > 2;
+    openAddDevice({
+      underlaySelectors: ['.setup-bar', '.setup-content'],
+      onAdded: function () { if (backToHome) history.go(-2); else location.replace('index.html'); },
+    });
+  }
+  document.querySelector('.add-device').addEventListener('click', function (event) { event.preventDefault(); addDevice(); });
+  if (location.hash === '#add') { history.replaceState(null, '', location.pathname + location.search); addDevice(); }
 
   // Only an account created by pairing has a recovery phrase, deletion and Apps to remove (not a paired App
   // of a self-hosted, API-key account).
