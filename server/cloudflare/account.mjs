@@ -75,6 +75,8 @@ export class AccountObject extends DurableObject {
     this.ctx.acceptWebSocket(socket, [role, `id:${id}`, ...(role === 'bridge' && device ? [`dev:${device}`] : []), ...tok]);
     const me = { role, id, account, device, tokenHash: resolved.tokenHash ?? '', connectedAt: Date.now() };
     socket.serializeAttachment(me);
+    // `hello=1`: the App's address at once, saving the round trip of asking (older Apps ask, and would count a second answer as a reconnect).
+    if (role === 'app' && query.get('hello') === '1') send(socket, { action: 'whoami', connectionId: id });
     if (role !== 'notify') await this.usage.joined(request, me, () => this.store('getItem', { Key: { pk: `ACCOUNT#${account}`, sk: 'META' } })
       .result?.Item?.createdAt >= Date.parse(new Date().toISOString().slice(0, 10)) / 1000).catch((error) => console.log(`usage: ${error.message}`));
     if (role === 'bridge' && device) {

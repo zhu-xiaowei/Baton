@@ -177,7 +177,7 @@ export function relayFrameBytes() {
 function socketUrl() {
   if (rpc?.relay) {
     const url = new URL(entryUrl(rpc.url));
-    url.search = new URLSearchParams({ apiKey: state.KEY, role: 'app' }).toString();
+    url.search = new URLSearchParams({ apiKey: state.KEY, role: 'app', hello: '1' }).toString(); // hello: the server names this socket unasked
     return url.href;
   }
   dataUrl ||= 'wss://' + new URL(state.SERVER).host + '/data';
@@ -401,6 +401,7 @@ function receive(ws, text) {
   try { frame = JSON.parse(text); } catch { return; }
   if ('to' in frame && frame.action) return; // relayed from a Bridge (`to`): never one of the server's messages
   if (frame.action === 'whoami' && frame.connectionId) {
+    if (frame.connectionId === connectionId) return; // also answered when asked (servers without hello)
     const reconnected = !!lastId;
     replacedId = lastId;
     connectionId = lastId = frame.connectionId;
