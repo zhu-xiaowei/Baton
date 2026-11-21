@@ -1,10 +1,8 @@
 // The hosted service's mainland-China relay (docs/v2-cn-relay.md), shared by the Bridge and the App. /api/version on the
 // API host itself names the caller's country (as Cloudflare sees it) and the relay hosts; a caller in CN uses the first
 // relay that answers, everyone else (and every failure) the API host.
-// The caller's address as the API host saw it, signed: requests through the relay send it (x-baton-ip / ipt), since there
-// Cloudflare sees only the relay's.
+// This caller's signed address (/api/version's ipToken), sent through the relay as x-baton-ip / ipt.
 export const vouched = { token: '' };
-export const tokenFresh = (token = vouched.token) => Number(token.slice(0, token.lastIndexOf('.')).split('|')[3]) * 1000 > Date.now() + 60_000;
 
 export async function pickEntry(server, fetchImpl = fetch) {
   const get = async (base) => {
@@ -14,7 +12,7 @@ export async function pickEntry(server, fetchImpl = fetch) {
   };
   try {
     const { country, entries = [], ipToken } = await get(server);
-    vouched.token = ipToken ?? ''; // none: this server signs no address
+    vouched.token = ipToken ?? '';
     for (const entry of country === 'CN' ? entries : []) {
       if ((await get(entry).catch(() => null))?.version) return entry;
     }

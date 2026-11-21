@@ -40,9 +40,8 @@ export function locationHint({ relay, continent, lon } = {}) {
 }
 const JAPAN = new Set(['NRT', 'KIX']);
 
-// A caller's address as Cloudflare saw it on a direct /api/version, signed, so that requests through the relay (which
-// hides it) can still name it: `ip|country|asn|expiry.signature`, keyed by IP_TOKEN_KEY (docs/v2-cn-relay.md).
-const IP_TOKEN_SECONDS = 86400;
+// A direct caller's address, signed (`ip|country|asn|expiry.signature`), for its requests through the relay (docs/v2-cn-relay.md).
+const IP_TOKEN_SECONDS = 7 * 86400;
 async function ipSignature(secret, payload) {
   const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(`ip-token|${secret}`), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
   const mac = new Uint8Array(await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(payload))).slice(0, 16);
@@ -52,11 +51,11 @@ export async function issueIpToken(secret, { ip, country = '', asn = '' }) {
   const payload = [ip, country, asn, nowInt() + IP_TOKEN_SECONDS].join('|');
   return `${payload}.${await ipSignature(secret, payload)}`;
 }
-export async function readIpToken(secret, token, grace = 0) {
+export async function readIpToken(secret, token) {
   const at = String(token ?? '').lastIndexOf('.');
   if (!secret || at < 1 || !compareDigest(token.slice(at + 1), await ipSignature(secret, token.slice(0, at)))) return null;
   const [ip, country, asn, expiry] = token.slice(0, at).split('|');
-  return Number(expiry) + grace > nowInt() ? { ip, country, asn } : null;
+  return Number(expiry) > nowInt() ? { ip, country, asn } : null;
 }
 
 export function need(body, ...fields) {
@@ -91,12 +90,12 @@ export function createAccounts({ env, table, auth, devices, sockets, log, place 
 
   // The mainland-China relay (docs/v2-cn-relay.md) hides its users' addresses.
   const relayed = (request) => (env.RELAY_IPS ?? '').split(',').includes(ip(request));
-  // Through the relay the signed address (x-baton-ip) counts, `own` times the limit; a caller without one shares the relay's.
+  // Through the relay a signed address (x-baton-ip) counts, at `own` times the limit; without one, the relay's.
   async function perIp(name, request, limit, own = 1) {
     const signed = relayed(request) && await readIpToken(env.IP_TOKEN_KEY, request.headers.get('x-baton-ip'));
     return rate(`${name}#${signed ? signed.ip : ip(request)}`, signed ? limit * own : limit);
   }
-  // /api/version: the caller's address, signed (only where a relay is configured; through it the address is the relay's).
+  // /api/version signs direct callers' addresses, only where a relay is configured.
   async function ipToken(request) {
     const edge = edgeOf(request);
     const secret = env.API_ENTRIES && !edge.relay && env.IP_TOKEN_KEY;

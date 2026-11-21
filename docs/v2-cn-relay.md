@@ -31,13 +31,11 @@ Only REST and `/ws` go through it; R2 transfers, `dl.`, the homepage and the Web
   accounts keep theirs; re-pair to move (first computer first).
 - **Addresses**: Cloudflare sees every relayed caller as the relay (`RELAY_IPS`). So `/api/version`, always asked on
   `api.` directly, also returns `ipToken`: the caller's address, country and ASN as Cloudflare saw them, with an expiry
-  (a day) and a truncated HMAC-SHA256 keyed by the Worker secret `IP_TOKEN_KEY` (`ip|country|asn|expiry.signature`,
+  (a week; every start fetches a new one) and a truncated HMAC-SHA256 keyed by the Worker secret `IP_TOKEN_KEY` (`ip|country|asn|expiry.signature`,
   ~80 chars). The deploy script takes it from `--secrets`, else keeps the live one, else creates one.
   Through the relay, pairing, registration and recovery send it as `x-baton-ip`, and the App's socket as `ipt` (in
   the upgrade only, not in any frame); the per-address limits and the usage statistics then use the signed address.
-  Registration through the relay gets 3× the limit (a sign-in may take three attempts, see placement); statistics also
-  accept a token up to a week past its expiry (the first socket of a start carries the last start's); an App open for
-  over a day chooses its entry anew before pairing.
+  Registration through the relay gets 3× the limit (a sign-in may take three attempts, see placement).
   A caller without a valid token counts as the relay's one address (statistics: `relay`), and a 429 through the relay
   is retried on `api.` from the caller's own address. The per-account limits and the monthly cost cap still apply.
   The rate-limiting rule covers `api.` only (on the Free plan it cannot exempt an address); the relay limits its

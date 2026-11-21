@@ -331,7 +331,7 @@ export function connect() {
   if (socket?.readyState === WebSocket.CONNECTING) return;
   const started = performance.now();
   const url = socketUrl();
-  // Through the relay the signed address goes along (statistics); it is not part of __url, so a new one moves no socket.
+  // Through the relay the signed address goes along, outside __url: a new one moves no socket.
   const ws = socket = new WebSocket(rpc?.relay && hasEntry() && vouched.token ? `${url}&ipt=${encodeURIComponent(vouched.token)}` : url);
   ws.__url = url;
   connectionId = '';

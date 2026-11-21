@@ -111,7 +111,7 @@ async function installRoutes() {
   await routes([`${INSTALL_HOST}/install`, `${INSTALL_HOST}/install.ps1`]);
 }
 
-// The relay's address tokens are signed with IP_TOKEN_KEY: the file's, else the live one kept (inherit), else a new one.
+// IP_TOKEN_KEY signs the relay's address tokens: the file's, else the live one (inherit), else a new one.
 async function ipTokenKey() {
   if (secrets.IP_TOKEN_KEY) return { type: 'secret_text', name: 'IP_TOKEN_KEY', text: secrets.IP_TOKEN_KEY };
   const live = (await cf('GET', `/workers/scripts/${flags.name}/settings`, undefined, { ok404: true }))?.bindings ?? [];
