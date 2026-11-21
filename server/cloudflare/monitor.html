@@ -86,6 +86,7 @@ const dur = (s) => (s == null ? '—' : s < 60 ? `${Math.round(s)} 秒` : s < 36
 const bytes = (b) => (b == null ? '—' : b < 1e6 ? `${n(b / 1e3, 1)} KB` : b < 1e9 ? `${n(b / 1e6, 1)} MB` : `${n(b / 1e9, 2)} GB`);
 const hm = (t) => new Date(t).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false });
 const md = (day) => day.slice(5).replace('-', '/');
+const kv = (label, value) => `<div class="sub flex"><span>${label}</span><b style="margin-left:auto;color:var(--text);font-weight:500">${value}</b></div>`;
 const NA = (why = '数据不足') => `<div class="na">— ${why}</div>`;
 const level = (v) => (v > 0.8 ? 'bad' : v > 0.6 ? 'warn' : 'ok');
 const info = (tip) => `<span class="i" tabindex="0" data-tip="${esc(tip)}">i</span>`;
@@ -249,8 +250,10 @@ function render(d) {
     card('请求来源', bars(live.countries) + `<div class="sub">${(live.devices ?? []).map(([k, v]) => `${{ desktop: '桌面', mobile: '手机', tablet: '平板' }[k] ?? k} ${n(v)}`).join(' · ')}</div>`, '近 24 小时'),
     card(`大陆中转 ${info('流量为中转机入站加出站（Lightsail 的额度口径），达到上限即停止转发、客户端改为直连。账户数为经中转连接过的账户（按 App / Bridge）。日、月均按 UTC，北京时间 08:00 起算。')}`,
       (relays.length ? relays.map((r) => meter(r.monthBytes / r.cap, `<span>${esc(r.name)} 本月${r.stopped ? ' · <span class="bad">已停止</span>' : ''}</span>`,
-        `${bytes(r.monthBytes)} / ${bytes(r.cap)}`) + `<div class="sub ${age(r) > 15 ? 'warn' : ''}">今日（UTC） ${bytes(r.dayBytes)} · 近 24 小时 ${n(r.addrs)} 个地址 · ${n(age(r))} 分钟前上报</div>`).join('')
-        : NA('尚无上报')) + `<div class="sub">经中转账户：今日（UTC） App ${n(ru.day?.app ?? 0)} · Bridge ${n(ru.day?.bridge ?? 0)}；本月 App ${n(ru.month?.app ?? 0)} · Bridge ${n(ru.month?.bridge ?? 0)}</div>`),
+        `${bytes(r.monthBytes)} / ${bytes(r.cap)}`) + kv('今日（UTC）', bytes(r.dayBytes)) + kv('近 24 小时地址', `${n(r.addrs)} 个`)
+        + kv('上次上报', `<span class="${age(r) > 15 ? 'warn' : ''}">${n(age(r))} 分钟前</span>`)).join('') : NA('尚无上报'))
+        + kv('经中转账户 · 今日（UTC）', `App ${n(ru.day?.app ?? 0)} · Bridge ${n(ru.day?.bridge ?? 0)}`)
+        + kv('经中转账户 · 本月', `App ${n(ru.month?.app ?? 0)} · Bridge ${n(ru.month?.bridge ?? 0)}`)),
     '</div>');
 
   h.push('<h2>费用与额度</h2>');
