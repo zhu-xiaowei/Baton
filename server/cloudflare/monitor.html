@@ -247,10 +247,10 @@ function render(d) {
     card('推送', pushAll ? `<div class="big ${pushOk / pushAll < 0.95 ? 'warn' : 'ok'}">${pct(pushOk / pushAll)}</div><div class="label">成功率</div><div class="sub">成功 ${n(pushOk)} · 失败 ${n(pushAll - pushOk)}</div>`
       : NA('今日暂无推送'), '近 24 小时'),
     card('请求来源', bars(live.countries) + `<div class="sub">${(live.devices ?? []).map(([k, v]) => `${{ desktop: '桌面', mobile: '手机', tablet: '平板' }[k] ?? k} ${n(v)}`).join(' · ')}</div>`, '近 24 小时'),
-    card(`大陆中转 ${info('流量为中转机入站加出站（Lightsail 的额度口径），达到上限即停止转发、客户端改为直连。账户数为经中转连接过的账户（按 App / Bridge）。')}`,
+    card(`大陆中转 ${info('流量为中转机入站加出站（Lightsail 的额度口径），达到上限即停止转发、客户端改为直连。账户数为经中转连接过的账户（按 App / Bridge）。日、月均按 UTC，北京时间 08:00 起算。')}`,
       (relays.length ? relays.map((r) => meter(r.monthBytes / r.cap, `<span>${esc(r.name)} 本月${r.stopped ? ' · <span class="bad">已停止</span>' : ''}</span>`,
-        `${bytes(r.monthBytes)} / ${bytes(r.cap)}`) + `<div class="sub ${age(r) > 15 ? 'warn' : ''}">今日 ${bytes(r.dayBytes)} · 近 24 小时 ${n(r.addrs)} 个地址 · ${n(age(r))} 分钟前上报</div>`).join('')
-        : NA('尚无上报')) + `<div class="sub">经中转账户：今日 App ${n(ru.day?.app ?? 0)} · Bridge ${n(ru.day?.bridge ?? 0)}；本月 App ${n(ru.month?.app ?? 0)} · Bridge ${n(ru.month?.bridge ?? 0)}</div>`),
+        `${bytes(r.monthBytes)} / ${bytes(r.cap)}`) + `<div class="sub ${age(r) > 15 ? 'warn' : ''}">今日（UTC） ${bytes(r.dayBytes)} · 近 24 小时 ${n(r.addrs)} 个地址 · ${n(age(r))} 分钟前上报</div>`).join('')
+        : NA('尚无上报')) + `<div class="sub">经中转账户：今日（UTC） App ${n(ru.day?.app ?? 0)} · Bridge ${n(ru.day?.bridge ?? 0)}；本月 App ${n(ru.month?.app ?? 0)} · Bridge ${n(ru.month?.bridge ?? 0)}</div>`),
     '</div>');
 
   h.push('<h2>费用与额度</h2>');
