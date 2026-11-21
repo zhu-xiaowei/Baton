@@ -48,7 +48,20 @@ function draw() {
     more.className = 'inapp-more';
     more.textContent = expanded ? 'Collapse' : `${items.length - MAX} more`;
     more.onclick = () => { expanded = !expanded; draw(); };
-    stack.append(more);
+    const clear = document.createElement('button');
+    clear.className = 'inapp-more inapp-clear';
+    clear.textContent = '✕';
+    clear.title = 'Clear all';
+    clear.setAttribute('aria-label', 'Clear all');
+    clear.onclick = () => {
+      const ids = new Set(items.map((n) => n.id)); // a notification arriving while they fade stays
+      for (const el of stack.querySelectorAll('.inapp')) { el.classList.add('settle'); el.style.opacity = '0'; }
+      setTimeout(() => { items = items.filter((n) => !ids.has(n.id)); draw(); }, 200);
+    };
+    const row = document.createElement('div');
+    row.className = 'inapp-actions';
+    row.append(more, clear);
+    stack.append(row);
   }
 }
 
