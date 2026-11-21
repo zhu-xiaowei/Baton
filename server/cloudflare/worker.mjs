@@ -34,7 +34,8 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     const api = new URL(env.API_URL);
-    const [onApi, onWeb] = [url.host === api.host, url.host === new URL(env.WEB_URL).host];
+    const entries = (env.API_ENTRIES ?? '').split(',').filter(Boolean).map((entry) => new URL(entry).host); // the relay's hosts
+    const [onApi, onWeb] = [url.host === api.host || entries.includes(url.host), url.host === new URL(env.WEB_URL).host];
     if (onApi && /^\/v1(\/|$)/.test(url.pathname)) url.pathname = url.pathname.slice(3) || '/';
     if (url.pathname === '/install.ps1') {
       url.pathname = '/install';
@@ -51,6 +52,9 @@ export default {
 
     const headers = new Headers(request.headers);
     headers.delete('x-baton-account');
+    const { country = '', continent = '', longitude } = request.cf ?? {};
+    headers.set('cf-ipcountry', country);
+    headers.set('x-baton-edge', JSON.stringify({ country, continent, lon: Number(longitude) })); // where to place a new account
     headers.delete('accept-encoding'); // the edge compresses; core's gzip would be compressed again
     // Install scripts name the server from these: always the API host, whichever host was asked.
     headers.set('host', api.host);
@@ -73,7 +77,8 @@ export default {
     if (account) headers.set('x-baton-account', account);
     const forwarded = new Request(url, { method: request.method, headers, body: request.body, cf: request.cf }); // cf: usage points
     if (account) return env.ACCOUNT.get(env.ACCOUNT.idFromName(account)).fetch(forwarded);
-    publicServer ||= server(env, { table: createTable(env), sockets: remote(env), rpcInfo: async () => null });
+    publicServer ||= server(env, { table: createTable(env), sockets: remote(env), rpcInfo: async () => null,
+      place: (account, hint) => env.ACCOUNT.get(env.ACCOUNT.idFromName(account), hint ? { locationHint: hint } : {}).colo() });
     return toResponse(await publicServer.handle(forwarded, { path, clientIp: ip, scheme: 'https' }), request.method);
   },
 };

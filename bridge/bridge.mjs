@@ -21,6 +21,7 @@ import { registerInstalledRuntimes } from './runtime-registry.mjs';
 import { killLeftovers } from './turn-process.mjs';
 import { closeTerminalsForUpdate, initWs, shutdownInteractions, setUpdateChecker } from './ws.mjs';
 import { BRIDGE_VERSION } from './version.mjs';
+import { pickEntry } from './entry.mjs';
 import {
   cleanupStagedBridge,
   cleanupUpdateWorkspace,
@@ -64,6 +65,8 @@ console.log(`  device:   ${CONFIG.deviceName}`);
 console.log(`  server:   ${CONFIG.server}`);
 console.log(`  ws:       ${CONFIG.wsUrl || '-'}`);
 console.log(`  watching: ${CLAUDE_PROJECTS}`);
+CONFIG.entry = await pickEntry(CONFIG.server);
+if (CONFIG.entry !== CONFIG.server) console.log(`  entry:    ${CONFIG.entry}`);
 
 // The control socket's address is kept in config.json; the first start asks /devices for it.
 while (!CONFIG.wsUrl && !shuttingDown) {

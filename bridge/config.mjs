@@ -40,7 +40,8 @@ function parseArgs() {
 
 export function saveConfig(config) {
   fs.mkdirSync(BRIDGE_HOME, { recursive: true });
-  fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2), { mode: 0o600 });
+  const { entry, ...saved } = config; // chosen at each start (entry.mjs)
+  fs.writeFileSync(CONFIG_PATH, JSON.stringify(saved, null, 2), { mode: 0o600 });
   try { fs.chmodSync(CONFIG_PATH, 0o600); } catch {}
 }
 

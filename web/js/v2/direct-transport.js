@@ -9,6 +9,7 @@ import { RpcAssembler, createHeaderSigner, decodeRpcPayload, fromBase64, openStr
   rpcRequestFrames, sealStreamMessage, streamFrame, toBase64, unpackStreamMessage } from '../../../bridge/direct-rpc-protocol.mjs';
 import { appKeys, fingerprint, openRotation } from '../../../bridge/e2ee.mjs';
 import { loadAccountKey, saveAccountKey } from './account-key.js';
+import { chooseEntry, entryKnown, entryUrl, hasEntry } from './entry.js';
 import { setTransferAccess, setTransferKeys } from '../../../bridge/transfer-store.mjs';
 import { showLimit } from './limit-banner.js';
 
@@ -175,7 +176,7 @@ export function relayFrameBytes() {
 
 function socketUrl() {
   if (rpc?.relay) {
-    const url = new URL(rpc.url);
+    const url = new URL(entryUrl(rpc.url));
     url.search = new URLSearchParams({ apiKey: state.KEY, role: 'app' }).toString();
     return url.href;
   }
@@ -310,9 +311,11 @@ if (typeof document !== 'undefined' && document.addEventListener) {
 }
 
 // The server is reached through its CloudFront domain, which also serves /data.
-let transportAsked = false;
+let transportAsked = false, entryAsked = false;
 export function connect() {
   if (!state.KEY || !state.SERVER || refused || limited) return;
+  // The entry first (once per start); a remembered one is used meanwhile.
+  if (!entryAsked) { entryAsked = true; const chosen = chooseEntry(); if (!entryKnown()) { chosen.finally(connect); return; } }
   // Nothing known yet (first start): the server names its transport (relay or the data API) before a socket opens.
   if (!rpc) restore();
   if (!rpc && (devicesInflight || !transportAsked)) { transportAsked = true; (devicesInflight || devices()).catch(() => {}).finally(connect); return; }
@@ -378,7 +381,9 @@ export function connect() {
     const needed = visible && (pending.size || subscriptions.size);
     if (retryTimer || (!visible && !pending.size) || (retries > MAX_RETRIES && !needed)) return;
     const delay = !retries++ ? 0 : Math.random() * RETRY_JITTER_MS + (retries > MAX_RETRIES ? 5000 : 0);
-    retryTimer = setTimeout(() => { retryTimer = null; connect(); }, delay);
+    // Failing again through the relay: it may be down, so the entry is chosen anew first.
+    const retry = () => { retryTimer = null; connect(); };
+    retryTimer = setTimeout(() => { if (retries > 1 && hasEntry()) chooseEntry().finally(retry); else retry(); }, delay);
   };
 }
 
@@ -646,7 +651,7 @@ function reconcile() {
 export function devices() {
   devicesAt = performance.now();
   devicesInflight ||= (async () => {
-    const response = await fetch(state.SERVER + '/api/bridge/devices', { headers: { 'x-api-key': state.KEY } });
+    const response = await fetch(entryUrl(state.SERVER + '/api/bridge/devices'), { headers: { 'x-api-key': state.KEY } });
     if (response.status === 401 || response.status === 403) window.logout?.();
     if (!response.ok) throw new Error(response.status + ' ' + response.statusText);
     const body = await response.json();

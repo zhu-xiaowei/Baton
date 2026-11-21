@@ -26,14 +26,14 @@ const TOKEN_SECONDS = 600;
  *     disconnectRemovedBridge(account, endpoint, device) },
  *   rpcInfo(account, bridges): direct-channel addresses and credentials for /devices,
  *   presign(): the Bridge package URL or null, relayPost(url, body, timeoutSec): one push relay POST,
- *   web?(context): the web app's files,
+ *   web?(context): the web app's files, place?(account, hint): creates the account's object near hint, its colo (Cloudflare),
  * }
  */
 export function createServer(ports) {
   const { env, table, sockets, log } = ports;
   const auth = createAuth(ports);
   const devices = createDevices(table);
-  const accounts = createAccounts({ env, table, auth, devices, sockets, log });
+  const accounts = createAccounts({ env, table, auth, devices, sockets, log, place: ports.place });
   const notifications = createNotifications(ports);
 
   async function authenticate(context) {
@@ -127,9 +127,11 @@ export function createServer(ports) {
     // Every installed Bridge's update path.
     { method: 'GET', path: '/api/install', query: [['name', { default: null }], ['platform', { default: '' }]],
       handler: async (context) => asText(await script(context, context.headers.get('x-api-key') ?? '', context.query)) },
-    { method: 'GET', path: '/api/version', handler: () => {
+    // `entries`: other hosts reaching this API (the mainland-China relay); `country` tells a client whether to use them.
+    { method: 'GET', path: '/api/version', handler: ({ headers }) => {
       const version = env.APP_VERSION ?? 'dev';
-      return { version, bridgeVersion: env.BRIDGE_VERSION ?? version };
+      const entries = env.API_ENTRIES ? { entries: env.API_ENTRIES.split(','), country: headers.get('cf-ipcountry') ?? '' } : {};
+      return { version, bridgeVersion: env.BRIDGE_VERSION ?? version, ...entries };
     } },
     // Token for Setup's Start URL, QR code and install command.
     { method: 'POST', path: '/api/auth/start-token', handler: async () => {

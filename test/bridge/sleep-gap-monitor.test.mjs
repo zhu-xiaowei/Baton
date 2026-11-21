@@ -124,7 +124,7 @@ function connectionHarness(options = {}) {
     WebSocket: options.live ? WebSocket : FakeSocket, SleepGapMonitor, DirectRpcBridge, _subscribers: null, limitedRequest: () => true,
     sessionIndex: { home: () => ({}), projects: () => ({}), sessions: () => ({}) }, runtimeAdapters: [],
     console: { log() {}, error() {} }, process: { platform: process.platform }, BRIDGE_VERSION: 'test',
-    terminalStream() {}, previewStream() {},
+    terminalStream() {}, previewStream() {}, viaEntry: (url) => url, pickEntry: async () => '',
     handleMessage: async () => {},
     setTimeout: (callback, delay) => { const id = timerId++; timers.set(id, { callback, delay }); return id; },
     clearTimeout: (id) => timers.delete(id),

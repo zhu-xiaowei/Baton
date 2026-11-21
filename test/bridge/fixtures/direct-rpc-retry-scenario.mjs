@@ -80,7 +80,7 @@ function scenario({ devicesDelayMs = 0, online = true, dropRequests = 0, dropChu
   }
   globalThis.WebSocket = FakeWebSocket;
   // The first /devices reply carries credentials with `appExpiresIn` left, later ones fresh credentials.
-  globalThis.fetch = async () => (await new Promise((r) => setTimeout(r, devicesDelayMs)), { ok: true, status: 200, json: async () => ({ protocol: 2, devices: [],
+  globalThis.fetch = async (url) => String(url).endsWith('/api/version') ? { json: async () => ({ version: 'test' }) } : (await new Promise((r) => setTimeout(r, devicesDelayMs)), { ok: true, status: 200, json: async () => ({ protocol: 2, devices: [],
     rpc: { endpoint: ENDPOINT, bridges: online ? [{ device: 'dev', dataId: 'bridge=', pub: bridge.keys.pub, fp: bridge.keys.fp }] : [],
       credentials: { ...credentials(), sessionToken: 'TOKEN' + log.fetches, expiresAt: Math.floor(Date.now() / 1000) + (log.fetches++ ? 3600 : appExpiresIn) } } }) });
   return { log, bridge, reconnect: () => appSocket.close(), restart: () => { epoch = 'b'; } };

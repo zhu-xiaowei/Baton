@@ -6,7 +6,7 @@ export function initHttp(config) {
 
 export async function post(endpoint, data, options = {}) {
   try {
-    const res = await fetch(`${_config.server}${endpoint}`, {
+    const res = await fetch(`${_config.entry || _config.server}${endpoint}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-api-key': _config.apiKey },
       body: JSON.stringify(data),

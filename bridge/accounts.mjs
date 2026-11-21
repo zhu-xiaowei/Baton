@@ -7,12 +7,13 @@ import { createInterface } from 'readline/promises';
 import qrcode from 'qrcode-terminal';
 import { BRIDGE_HOME, CONFIG_PATH, saveConfig } from './config.mjs';
 import { fingerprint, openPair, openRotation, pairCode, sealPair } from './e2ee-node.mjs';
+import { pickEntry } from './entry.mjs';
 import { runningBridgePid } from './instance-lock.mjs';
 
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function call(config, path, body, fetchImpl = fetch) {
-  const res = await fetchImpl(`${config.server}${path}`, {
+  const res = await fetchImpl(`${config.entry || config.server}${path}`, {
     method: body ? 'POST' : 'GET', body: body && JSON.stringify(body), signal: AbortSignal.timeout(15_000),
     headers: { 'Content-Type': 'application/json', ...(config.apiKey ? { 'x-api-key': config.apiKey } : {}) },
   });
@@ -33,6 +34,7 @@ function show(print, url) {
 
 // Resolves with the config to save once an App approved this computer; a new code every 10 minutes.
 export async function join(config, { print = console.log, sleep = pause, fetchImpl = fetch } = {}) {
+  config = { ...config, entry: await pickEntry(config.server, fetchImpl) }; // the account is placed near this computer's entry
   for (;;) {
     const t = randomBytes(16);
     const { code, poll, expiresIn, web } = await call(config, '/api/pair/start', { deviceName: config.deviceName, code: pairCode(t) }, fetchImpl);

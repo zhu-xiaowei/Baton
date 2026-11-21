@@ -27,7 +27,17 @@ export const Body = [
   ['install', pattern('^[\\w-]{0,64}$')], // an App's own random id: joining again replaces its token
   ['id', pattern('^([0-9a-f]{12})?$')],
   ['rotation', { model: Rotation, nullable: true, default: null }],
+  ['retry', pattern('^[0-9]?$')], // register: attempts so far at placing the account (Cloudflare)
 ];
+
+// A Durable Object region near where an endpoint enters Cloudflare (the Worker's x-baton-edge); through the relay that is Tokyo.
+export function locationHint({ relay, continent, lon } = {}) {
+  if (relay || continent === 'AS') return 'apac';
+  if (continent === 'NA') return lon < -100 ? 'wnam' : 'enam';
+  if (continent === 'EU') return lon > 20 ? 'eeur' : 'weur';
+  return { OC: 'oc', SA: 'sam', AF: 'afr' }[continent];
+}
+const JAPAN = new Set(['NRT', 'KIX']);
 
 export function need(body, ...fields) {
   const missing = fields.filter((name) => !body[name]);
@@ -35,7 +45,7 @@ export function need(body, ...fields) {
 }
 
 // sockets: { query(account, role, device?), post(endpoint, id, data), deleteConnection(endpoint, id), handleDisconnect(id) }
-export function createAccounts({ env, table, auth, devices, sockets, log }) {
+export function createAccounts({ env, table, auth, devices, sockets, log, place }) {
   const open = () => env.OPEN_REGISTRATION === 'true';
   // Cloudflare: the Web App (WEB_URL) is on another origin than the API, which pairing links then name.
   const api = () => (env.API_URL ? { api: env.API_URL } : {});
@@ -57,6 +67,15 @@ export function createAccounts({ env, table, auth, devices, sockets, log }) {
     const secret = env.ORIGIN_SECRET ?? '';
     const viaCdn = !!secret && compareDigest(headers.get('x-baton-origin') ?? '', secret);
     return viaCdn && hops.length > 1 ? hops.at(-2) : hops.at(-1);
+  }
+
+  // The mainland-China relay (docs/v2-cn-relay.md) hides its users' addresses: its own gets a larger allowance.
+  const relayed = (request) => (env.RELAY_IPS ?? '').split(',').includes(ip(request));
+  const perIp = (name, request, limit) => rate(`${name}#${ip(request)}`, relayed(request) ? limit * 100 : limit);
+  function edgeOf(request) {
+    let edge = {};
+    try { edge = JSON.parse(request.headers.get('x-baton-edge') || '{}'); } catch {}
+    return { ...edge, relay: relayed(request) };
   }
 
   async function rate(scope, limit) {
@@ -129,7 +148,8 @@ export function createAccounts({ env, table, auth, devices, sockets, log }) {
   async function register({ body, ...request }) {
     need(body, 'accountId', 'joinSecret', 'fp', 'deviceName');
     if (!open()) throw new HTTPError(404, 'Registration is closed on this server.');
-    await rate(`register#${ip(request)}`, 5);
+    await perIp('register', request, 5);
+    if (place) await placeAccount(body, request); // before anything reads the account: its first access places it
     if (await selfHosted(body.accountId) || (await devices.list(body.accountId)).length) throw new HTTPError(409, 'Account exists.');
     if (await conditional(async () => table.putItem({ Item: { pk: `ACCOUNT#${body.accountId}`, sk: 'META',
       joinSecretHash: await sha256(body.joinSecret), head: body.fp, createdAt: nowInt() },
@@ -139,9 +159,18 @@ export function createAccounts({ env, table, auth, devices, sockets, log }) {
     return { token: await issue(body.accountId, 'app', body.deviceName, body.install) };
   }
 
+  // The account's object goes near its first computer (the pairing code's), else this App. Through the relay it must be in
+  // Japan: elsewhere the App retries with a new key (a new account id), up to twice.
+  async function placeAccount(body, request) {
+    const bridge = body.code && (await table.getItem({ Key: await pairKey(body.code) })).Item?.edge;
+    const edge = bridge || edgeOf(request);
+    const colo = await place(body.accountId, locationHint(edge)).catch(() => ''); // unknown: kept
+    if (edge.relay && colo && !JAPAN.has(colo) && Number(body.retry || 0) < 2) throw new HTTPError(425, 'Placing the account; retry with a new key.');
+  }
+
   async function recover({ body, ...request }) {
     need(body, 'joinSecret', 'deviceName');
-    await rate(`recover#${ip(request)}`, 5);
+    await perIp('recover', request, 5);
     const digest = await sha256(body.joinSecret);
     const account = (await table.getItem({ Key: { pk: `JOIN#${digest}`, sk: '-' }, ConsistentRead: true })).Item?.accountId;
     if (!account || !compareDigest((await meta(account)).joinSecretHash ?? '', digest)) {
@@ -174,9 +203,9 @@ export function createAccounts({ env, table, auth, devices, sockets, log }) {
     if (length(body.deviceName) > 64) { // a computer connects by this name: it must fit its token row as it is
       throw new HTTPError(422, 'Device name is too long (64 characters at most).');
     }
-    await rate(`start#${ip(request)}`, 10);
+    await perIp('start', request, 10);
     const [code, poll] = [body.code || tokenUrlsafe(16), tokenUrlsafe(16)];
-    await newCode(code, { kind: 'bridge', pollHash: await sha256(poll), deviceName: body.deviceName });
+    await newCode(code, { kind: 'bridge', pollHash: await sha256(poll), deviceName: body.deviceName, edge: edgeOf(request) });
     return { code, poll, expiresIn: PAIR_SECONDS, web: env.WEB_URL ?? '', ...api() };
   }
 

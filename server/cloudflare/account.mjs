@@ -227,6 +227,11 @@ export class AccountObject extends DurableObject {
       ...(a.joined ? { rpcDataId: a.id, rpcPub: a.pub, rpcFp: a.fp } : {}) };
   }
 
+  // Where this object runs (register checks a new account's placement).
+  async colo() {
+    return (await (await fetch('https://cloudflare.com/cdn-cgi/trace')).text()).match(/colo=(\w+)/)?.[1] ?? '';
+  }
+
   async rpcInfo(account, bridges) {
     return { transport: 'relay', url: `${this.env.API_URL.replace('https://', 'wss://')}/ws`, maxFrameBytes: MAX_FRAME_BYTES,
       bridges: bridges.filter((b) => b.rpcDataId).map((b) => ({ device: b.deviceName ?? '', dataId: b.rpcDataId,
