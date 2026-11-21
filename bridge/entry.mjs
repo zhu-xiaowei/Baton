@@ -14,7 +14,7 @@ export async function pickEntry(server, fetchImpl = fetch) {
   };
   try {
     const { country, entries = [], ipToken } = await get(server);
-    if (ipToken) vouched.token = ipToken;
+    vouched.token = ipToken ?? ''; // none: this server signs no address
     for (const entry of country === 'CN' ? entries : []) {
       if ((await get(entry).catch(() => null))?.version) return entry;
     }

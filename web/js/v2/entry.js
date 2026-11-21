@@ -5,6 +5,7 @@ import { pickEntry, tokenFresh, viaEntry, vouched } from '../../../bridge/entry.
 
 const KEY = 'baton-entry';
 const started = new Map(); // server → this start's choice
+const done = new Set();    // servers whose choice of this start has finished
 let saved, choosing;
 
 // The entry for state.SERVER: '' is the API host itself, undefined not chosen yet.
@@ -23,7 +24,8 @@ try { vouched.token ||= localStorage.getItem(IP_KEY) || ''; } catch {}
 
 const pick = (server) => pickEntry(server).then((found) => {
   const entry = found === server ? '' : found;
-  try { if (vouched.token) localStorage.setItem(IP_KEY, vouched.token); } catch {}
+  done.add(server);
+  try { if (vouched.token) localStorage.setItem(IP_KEY, vouched.token); else localStorage.removeItem(IP_KEY); } catch {}
   if (server === state.SERVER) state.ENTRY = entry;
   saved = { server, entry }; // the next start (and the App after pairing) uses it at once
   started.set(server, Promise.resolve(entry)); // a later choice replaces this start's
@@ -35,7 +37,10 @@ const pick = (server) => pickEntry(server).then((found) => {
 export function startEntry(server = state.SERVER) {
   if (!server) return Promise.resolve('');
   // An App open for over a day: its signed address expired, so pairing (the only later caller) chooses anew.
-  if (!started.has(server) || (vouched.token && !tokenFresh())) started.set(server, pick(server));
+  if (!started.has(server) || (done.has(server) && vouched.token && !tokenFresh())) {
+    done.delete(server);
+    started.set(server, pick(server));
+  }
   return started.get(server);
 }
 
