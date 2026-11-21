@@ -5,9 +5,11 @@ import { initMacosTabs, setNativeTabTitle } from './macos-tabs.js';
 import { parseLink } from './v2/pairing.js';
 import { initPageZoomShortcuts } from './page-zoom.js';
 import { exchangeToken, isNativeApp, mountStartUrlForm, routeAfterLogin } from './v2/start-url-form.js';
+import { routeExternalLinks } from './native-shell.js';
 
 initMacosTabs();
 initPageZoomShortcuts();
+routeExternalLinks();
 setNativeTabTitle('Baton');
 
 (function () {

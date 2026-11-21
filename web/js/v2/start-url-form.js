@@ -21,6 +21,11 @@ const SCAN_ICON = '<svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/sv
   + '<path d="M832 544 192 544C172.8 544 160 531.2 160 512S172.8 480 192 480l640 0c19.2 0 32 12.8 32 32S851.2 544 832 544z"/>'
   + '</svg>';
 
+const HELP_LINK = '<a class="field-help" href="https://agentbaton.app" target="_blank" rel="noopener" data-external'
+  + ' aria-label="Where to get a Start URL" title="Where to get a Start URL"><svg viewBox="0 0 24 24" fill="none"'
+  + ' stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/>'
+  + '<path d="M12 11v5M12 8h.01"/></svg></a>';
+
 const MARKUP = '<div class="logo"><img src="assets/baton-logo.svg" alt=""></div>'
   + '<h1>Baton</h1><p class="tagline">Your agents, anywhere.</p>'
   + '<div class="input-group"><label>Start URL</label><div class="start-url-row">'
@@ -73,6 +78,7 @@ function errorMessage(e) {
 export function mountStartUrlForm(root, { adding = false, onAdded } = {}) {
   root.classList.add('start-url-form');
   root.innerHTML = MARKUP;
+  if (!adding) root.querySelector('label').insertAdjacentHTML('beforeend', HELP_LINK);
   var input = root.querySelector('input');
   var btn = root.querySelector('.btn');
   var errEl = root.querySelector('.error');

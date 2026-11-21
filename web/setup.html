@@ -101,6 +101,7 @@
   .app-remove { flex: 0 0 auto; padding: 4px 10px; border: 1px solid var(--border); border-radius: 6px; background: transparent; color: var(--danger); font-size: 12px; cursor: pointer; }
   .app-self { flex: 0 0 auto; color: var(--text-muted); font-size: 12px; }
   .version-value { color: var(--text-secondary); font-size: 13px; }
+  .website-value { display: flex; align-items: center; gap: 10px; }
   .setting-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px; cursor: pointer; }
   div.setting-row { cursor: default; }
   .setting-row strong { font-size: 15px; font-weight: 600; }
@@ -191,6 +192,7 @@
 <div class="section account-actions">
   <a class="setting-row hosted-only" hidden href="#" onclick="openAppsSheet(); return false"><strong>Phones &amp; browsers</strong><span class="chev" aria-hidden="true">›</span></a>
   <a class="setting-row hosted-only" hidden href="#" onclick="showRecoveryPhrase(); return false"><strong>Recovery phrase</strong><span class="chev" aria-hidden="true">›</span></a>
+  <a class="setting-row" href="https://agentbaton.app" target="_blank" rel="noopener" data-external><strong>Website</strong><span class="website-value"><span class="version-value">agentbaton.app</span><span class="chev" aria-hidden="true">›</span></span></a>
   <div class="setting-row"><strong>Version</strong><span id="appVersion" class="version-value"></span></div>
   <a class="setting-row hosted-only" hidden href="#" onclick="deleteAccount(); return false"><strong>Delete account</strong><span class="chev" aria-hidden="true">›</span></a>
   <a class="setting-row" href="#" onclick="logout(); return false"><strong>Log out</strong><span class="chev" aria-hidden="true">›</span></a>
