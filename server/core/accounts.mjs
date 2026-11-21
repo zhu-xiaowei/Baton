@@ -3,7 +3,7 @@
 import { tokenHash } from './auth.mjs';
 import { HTTPError, compareDigest, length, nowInt, pattern, sha256, tokenUrlsafe, truncate } from './util.mjs';
 
-const PAIR_SECONDS = 600;
+export const LINK_SECONDS = 900; // pairing codes and Setup's start token (Start URL, QR code, install command)
 const MAX_BRIDGES = 10;
 const MAX_ROTATIONS = 8;
 const GONE = 'This code is used or expired.';
@@ -215,7 +215,7 @@ export function createAccounts({ env, table, auth, devices, sockets, log, place 
 
   // The client picks the code (a hash of its link's secret; format checked by Body); older Bridges let pair/start pick one.
   async function newCode(code, item) {
-    if (await conditional(async () => table.putItem({ Item: { ...await pairKey(code), ...item, ttl: nowInt() + PAIR_SECONDS },
+    if (await conditional(async () => table.putItem({ Item: { ...await pairKey(code), ...item, ttl: nowInt() + LINK_SECONDS },
       ConditionExpression: 'attribute_not_exists(pk)' })) === false) throw new HTTPError(409, 'Code in use.');
   }
 
@@ -223,7 +223,7 @@ export function createAccounts({ env, table, auth, devices, sockets, log, place 
     need(body, 'code', 'sealed');
     await ensureMeta(caller);
     await newCode(body.code, { kind: 'app', accountId: caller.accountId, by: caller.tokenHash ?? '', sealed: body.sealed });
-    return { expiresIn: PAIR_SECONDS, web: env.WEB_URL ?? '', ...api() };
+    return { expiresIn: LINK_SECONDS, web: env.WEB_URL ?? '', ...api() };
   }
 
   async function pairClaim({ body }) {
@@ -239,7 +239,7 @@ export function createAccounts({ env, table, auth, devices, sockets, log, place 
     await perIp('start', request, 10);
     const [code, poll] = [body.code || tokenUrlsafe(16), tokenUrlsafe(16)];
     await newCode(code, { kind: 'bridge', pollHash: await sha256(poll), deviceName: body.deviceName, edge: edgeOf(request) });
-    return { code, poll, expiresIn: PAIR_SECONDS, web: env.WEB_URL ?? '', ...api() };
+    return { code, poll, expiresIn: LINK_SECONDS, web: env.WEB_URL ?? '', ...api() };
   }
 
   async function pairApprove({ body, auth: caller }) {

@@ -7,7 +7,7 @@ import { GONE, KEY, ORIGIN, api, approve, code, deleteAccount, devices, finish, 
 
 const appCode = async (token, k) => {
   const t = randomBytes(16), c = pairCode(t);
-  assert.equal((await api('/api/pair/create', { code: c, sealed: sealPair(t, k, c) }, { token })).expiresIn, 600);
+  assert.equal((await api('/api/pair/create', { code: c, sealed: sealPair(t, k, c) }, { token })).expiresIn, 900);
   return { c, t };
 };
 const recover = (joinSecret, status) => api('/api/account/recover', { joinSecret, deviceName: 'ct-recovered' }, { status });

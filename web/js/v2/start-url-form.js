@@ -1,6 +1,6 @@
 // The Start URL form: first sign-in (landing.html) and Add device (add-device.js).
 // A Start URL looks like one of:
-//   https://<server>/?t=<token>            (install.sh: 12h, Setup: 10 min; reusable until then)
+//   https://<server>/?t=<token>            (install.sh: 12h, Setup: 15 min; reusable until then)
 //   https://<server>/?key=<apiKey>         (older Setup pages)
 import { harmonyBridge, harmonyCall } from '../harmony.js';
 import { state } from '../state.js';

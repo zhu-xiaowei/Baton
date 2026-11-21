@@ -74,7 +74,7 @@ request) and requests; idle hibernated sockets and auto-answered pings cost noth
 | Data | Where | Key |
 |---|---|---|
 | Account META (current K fingerprint, flags), devices, tokens (hash → kind/role/device), push devices | AccountObject SQLite | per account |
-| Pairing codes (10 min, single use), JOIN#<hash(joinSecret)> → accountId, per-IP counters, open-registration counters | IndexObject SQLite, sharded `idFromName('index:' + key[0])` | per key |
+| Pairing codes (15 min, single use), JOIN#<hash(joinSecret)> → accountId, per-IP counters, open-registration counters | IndexObject SQLite, sharded `idFromName('index:' + key[0])` | per key |
 | Attachments, Bridge package | R2 | `t/<accountId>/…`, `install/bridge.tar.gz` |
 
 The "store" port of `server/core` is implemented by RPC calls from the Worker to these objects (one DO request

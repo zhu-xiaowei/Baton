@@ -41,7 +41,7 @@ function show(print, url) {
   print(`Start URL: ${url}`);
 }
 
-// Resolves with the config to save once an App approved this computer; a new code every 10 minutes.
+// Resolves with the config to save once an App approved this computer; a new code every 15 minutes.
 export async function join(config, { print = console.log, sleep = pause, fetchImpl = fetch } = {}) {
   config = { ...config, entry: await pickEntry(config.server, fetchImpl) }; // the account is placed near this computer's entry
   for (;;) {

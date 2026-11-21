@@ -55,7 +55,7 @@ connections (`apigatewaymanagementapi.delete_connection`), so renewal stops.
 | `ACCOUNT#<accountId>` | `TOKEN#<hash>` | `kind` (`app`/`bridge`), `deviceName`, `createdAt`, `lastSeen` | — |
 | `TOKEN#<hash>` | `-` | `accountId`, `kind`, `deviceName` | — |
 | `JOIN#<hash(joinSecret)>` | `-` | `accountId` (written at register, replaced at rotate, deleted with the account) | — |
-| `PAIR#<sha256(code)>` | `-` | `kind` (`app`/`bridge`), `accountId` (set when issued by a signed-in device or approved), `sealed` (K under `t`), `pollHash` (joining computer), `deviceName`, `token` (issued token for a waiting Bridge, deleted on read) | 10 min |
+| `PAIR#<sha256(code)>` | `-` | `kind` (`app`/`bridge`), `accountId` (set when issued by a signed-in device or approved), `sealed` (K under `t`), `pollHash` (joining computer), `deviceName`, `token` (issued token for a waiting Bridge, deleted on read) | 15 min |
 | `PUSH_DEVICE#<accountId>` | `<environment>:<token>` | (replaces the shared `PUSH_DEVICE` partition) | 30 days (as today) |
 | `RATE#<scope>` | `<window start>` | `n` (atomic `ADD`) | window + 1 h |
 
@@ -99,7 +99,7 @@ a phone (no empty accounts to expire), and every computer and phone of one perso
 1. **Any new computer.** The install command (hosted: public `curl -sL https://<server>/install | bash`, §6)
    starts Bridge with no credential and no `K`. Bridge calls `pair/start`, prints `…/#j=<p>` as a QR
    code (+ link) **only when stdout is a TTY** (the installer runs `node bridge.mjs pair --once` in the
-   foreground), and waits (`pair/wait`, a new code every 10 minutes while the terminal is open). As in RFC 8628 it
+   foreground), and waits (`pair/wait`, a new code every 15 minutes while the terminal is open). As in RFC 8628 it
    polls until the server calls the code expired, not by its own clock: an approval made before expiry is collected
    up to 60 s after it. A new account's `register` sends the code and needs 30 s left on it, so the approval that
    follows still finds it open and an expired link leaves no empty account.

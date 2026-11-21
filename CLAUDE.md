@@ -455,7 +455,7 @@ template. S3 bucket / ECR repo / AWS account id are derived automatically by
   in with the new Start URL. WebSockets opened with the old key are not closed (API Gateway ends
   them within 2h).
 - Sign-in / install tokens: Setup's Start URL, QR code and install command
-  (`/auth/install?t=…`) share one token from `/api/auth/start-token`, valid 10 minutes (deploy
+  (`/auth/install?t=…`) share one token from `/api/auth/start-token`, valid 15 minutes (deploy
   output: 12h) and reusable until then. Token rows name the key instead of holding it, so a rotated
   key retires them; `/auth/exchange-token` returns the current key.
 - The key lives only in the Bridge's `~/.baton-bridge/config.json` (0600); service definitions no
@@ -540,7 +540,7 @@ No Session or message data is stored server-side. DynamoDB holds only routing an
 GET  /api/bridge/devices                    — names, online, wsUrl, rpc routes + credentials + storage (counts come from each Bridge)
 GET  /api/bridge/device-name/validate       — install-time device name check
 GET  /api/install                           — bridge install script (sets up always-on service)
-POST /api/auth/start-token                  — 10-minute token for Setup's Start URL / QR / install command
+POST /api/auth/start-token                  — 15-minute token for Setup's Start URL / QR / install command
 GET  /auth/install?t=…                      — install script for a token (public; the token stands in for the key)
 POST /api/bridge/delete-device              — remove a device and make its Bridge uninstall itself
 GET  /api/version                           — app and Bridge release versions

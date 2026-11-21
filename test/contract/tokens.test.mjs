@@ -52,7 +52,7 @@ test('credential kinds', { skip }, async () => {
 // Expiry and API-key rotation cannot be reached by URL.
 test('start tokens are reusable sign-in and install credentials', { skip: skip || (!KEY && 'BATON_KEY is unset') }, async () => {
   const issued = await api('/api/auth/start-token', {}, { token: KEY });
-  assert.equal(issued.expiresIn, 600);
+  assert.equal(issued.expiresIn, 900);
   assert.match(issued.token, /^[0-9a-f]{32}$/);
   for (let i = 0; i < 2; i++) assert.deepEqual(await api('/auth/exchange-token', { token: issued.token }), { apiKey: KEY });
   assert.deepEqual(await api('/auth/exchange-token', { token: 'f'.repeat(32) }, { status: 401 }), { error: 'invalid or expired' });

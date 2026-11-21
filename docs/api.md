@@ -55,7 +55,7 @@ Returns independently deployable app and Bridge versions. Bridge auto-update com
 ### POST /auth/exchange-token
 
 Exchanges a setup token for the API key. This route is intentionally outside `/api/` and does not
-require the API key header. Tokens stay valid until they expire (install.sh: 12h, Setup: 10 min),
+require the API key header. Tokens stay valid until they expire (install.sh: 12h, Setup: 15 min),
 so a Start URL and its QR code can sign in several devices; an expired token, or one issued for a
 key that has since been rotated, returns 401.
 
