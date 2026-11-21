@@ -49,7 +49,8 @@ export async function join(config, { print = console.log, sleep = pause, fetchIm
     const { code, poll, expiresIn, web } = await call(config, '/api/pair/start', { deviceName: config.deviceName, code: pairCode(t) }, fetchImpl);
     print('\nScan with the Baton app on your phone to add this computer:');
     show(print, link('j', t, web, config.server));
-    for (const end = Date.now() + expiresIn * 1000; Date.now() < end; await sleep(2000)) {
+    // Polled until the server calls the code expired (RFC 8628), not by this clock: an approval made at the end is collected.
+    for (const end = Date.now() + (expiresIn + 120) * 1000; Date.now() < end; await sleep(2000)) {
       const reply = await call(config, '/api/pair/wait', { code, poll }, fetchImpl).catch((error) => (error.status === 404 ? null : { pending: true }));
       if (!reply) break;
       if (reply.pending) continue;

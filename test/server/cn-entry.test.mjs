@@ -25,7 +25,7 @@ test('a relayed caller names its own address with a token only the server can si
   assert.equal(await readIpToken('', token), null);
 });
 
-test('a computer code in its last 30 s opens no account (its Bridge may have stopped waiting)', async () => {
+test('a computer code in its last 30 s opens no account', async () => {
   let left;
   const table = { updateItem: async () => ({}), putItem: async () => ({}), query: async () => ({ Items: [] }),
     getItem: async () => ({ Item: { kind: 'bridge', ttl: Math.floor(Date.now() / 1000) + left } }) };

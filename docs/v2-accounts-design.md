@@ -99,7 +99,10 @@ a phone (no empty accounts to expire), and every computer and phone of one perso
 1. **Any new computer.** The install command (hosted: public `curl -sL https://<server>/install | bash`, §6)
    starts Bridge with no credential and no `K`. Bridge calls `pair/start`, prints `…/#j=<p>` as a QR
    code (+ link) **only when stdout is a TTY** (the installer runs `node bridge.mjs pair --once` in the
-   foreground), and waits (`pair/wait`, a new code every 10 minutes while the terminal is open).
+   foreground), and waits (`pair/wait`, a new code every 10 minutes while the terminal is open). As in RFC 8628 it
+   polls until the server calls the code expired, not by its own clock: an approval made before expiry is collected
+   up to 60 s after it. A new account's `register` sends the code and needs 30 s left on it, so the approval that
+   follows still finds it open and an expired link leaves no empty account.
 2. **An App scans a join code** (existing barcode-scanner plugin; web: paste the link):
    - signed in → seals its `K` under `t`, calls `approve`;
    - not signed in → creates `K`, derives `accountId`/`joinSecret`, calls `register` (App token), then
