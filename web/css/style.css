@@ -1312,7 +1312,7 @@ html.native-mobile .slash-description {
 .inapp-more { pointer-events: auto; padding: 3px 10px; border: 1px solid var(--banner-border); border-radius: 999px; background: var(--banner-bg); color: var(--text-secondary); font-size: 12px; -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px); cursor: pointer; }
 .inapp-actions { display: flex; gap: 6px; }
 .inapp-clear { position: relative; display: flex; align-items: center; justify-content: center; width: 25px; padding: 0; }
-.inapp-clear::before { content: ""; position: absolute; inset: -8px; } /* larger tap target */
+.inapp-clear::before { content: ""; position: absolute; inset: -3px; } /* larger tap target, short of the 6px gaps */
 @media (hover: hover) and (pointer: fine) { .inapp-close:hover { background: rgba(var(--text-secondary-rgb), 0.18); color: var(--text-primary); } }
 @media (min-width: 768px) {
   .inapp-stack { top: calc(var(--sat, env(safe-area-inset-top, 0px)) + 52px); align-items: flex-end; padding: 4px 20px 28px; }
