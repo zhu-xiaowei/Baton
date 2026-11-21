@@ -120,7 +120,7 @@ if os.environ.get('REPORT_URL'):
     except Exception as error: print('report failed:', error)
 PY
 if [ -n "${REPORT_URL:-}" ]; then # a rerun keeps the relay's name
-  RELAY_NAME=${RELAY_NAME:-$(sed -n 's/^RELAY_NAME=//p' /etc/relay-guard.env 2>/dev/null)}
+  RELAY_NAME=${RELAY_NAME:-$(sed -n 's/^RELAY_NAME=//p' /etc/relay-guard.env 2>/dev/null || true)}
   (umask 077; printf 'REPORT_URL=%s\nREPORT_KEY=%s\nRELAY_NAME=%s\n' "$REPORT_URL" "${REPORT_KEY:-}" "${RELAY_NAME:-$(hostname)}" >/etc/relay-guard.env)
 fi
 chmod 755 /usr/local/bin/relay-guard
