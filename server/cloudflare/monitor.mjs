@@ -303,6 +303,8 @@ export class MonitorStore extends DurableObject {
     // An unblock may have landed during the awaits above: keep it.
     state.lifted = (await this.ctx.storage.get('state'))?.lifted ?? state.lifted;
     for (const [name, m] of Object.entries(state.lifted ?? {})) if (m === month) delete state.blocked[name];
+    const relays = new Set([...(await this.ctx.storage.list({ prefix: 'relay:' })).keys()].map((k) => k.slice(6))); // a retire meanwhile
+    for (const name of Object.keys(state.relayStale ?? {})) if (!relays.has(name)) delete state.relayStale[name];
     await this.ctx.storage.put('state', state);
     const ok = probes.reduce((bits, p, i) => bits | (p.ok ? 1 << i : 0), 0);
     this.sql.exec('INSERT OR REPLACE INTO snaps VALUES (?, ?, ?, ?)', now, ok, used.online?.apps ?? null, JSON.stringify({ probes, ...used, accounts: used.accounts?.slice(0, 10) }));
