@@ -52,9 +52,14 @@ addEventListener('pageshow', (event) => {
   if (!added) return;
   if (event.persisted) { location.reload(); return; }
   sessionStorage.removeItem('baton-added');
+  window.__connecting = added; // home says so until the computer is online
   const home = () => (window.loadDevices ? window.loadDevices() : setTimeout(home, 100));
   home();
   showToast('Added ' + added);
   // Only while home is still shown: a user who moved on is not pulled back.
-  onDeviceOnline((device) => { if (device === added && !location.hash.replace(/^#\/?/, '')) window.loadDevices?.(); });
+  onDeviceOnline((device) => {
+    if (device !== added) return;
+    window.__connecting = '';
+    if (!location.hash.replace(/^#\/?/, '')) window.loadDevices?.();
+  });
 });

@@ -522,7 +522,7 @@
         + 'Recent Projects' + collapseIcon + '</button></h2>'
         + '<div class="recent-project-list" id="recent-project-list"' + (recentProjectsCollapsed ? ' hidden' : '') + '>';
       html += recentProjects.map(recentProjectHtml).join('');
-      if (!recentProjects.length) html += '<p class="recent-projects-empty">No recent sessions yet</p>';
+      if (!recentProjects.length) html += '<p class="recent-projects-empty">' + (window.__connecting ? 'Connecting ' + esc(window.__connecting) + '…' : 'No recent sessions yet') + '</p>';
       if (hasMoreProjects) html += '<div class="recent-projects-footer" id="recent-projects-footer">' + moreProjectsControl() + '</div>';
       html += '</div></section>';
     }
