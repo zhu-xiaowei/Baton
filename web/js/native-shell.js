@@ -15,3 +15,13 @@ export async function openExternalLink(url) {
   const { openUrl } = await import('@tauri-apps/plugin-opener');
   return openUrl(url);
 }
+
+// In the Apps, links marked data-external open in the system browser.
+export function routeExternalLinks() {
+  document.addEventListener('click', (event) => {
+    const link = event.target.closest?.('a[data-external]');
+    if (!link || !previewNativeAvailable()) return;
+    event.preventDefault();
+    openExternalLink(link.href).catch(() => {});
+  });
+}
