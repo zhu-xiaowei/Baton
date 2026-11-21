@@ -153,10 +153,10 @@ test('mobile readability styles are scoped to the native mobile class', () => {
     /html\.native-mobile \.breadcrumb-nav a \{[^}]*max-width:\s*140px;/s,
   );
 
-  const landing = readFileSync(new URL('../../web/landing.html', import.meta.url), 'utf8');
+  const startUrl = readFileSync(new URL('../../web/css/start-url.css', import.meta.url), 'utf8');
   assert.match(
-    landing,
-    /html\.native-mobile \.input-group label\s*\{[^}]*font-size:\s*15px;[^}]*font-weight:\s*500;/s,
+    startUrl,
+    /html\.native-mobile \.start-url-form \.input-group label\s*\{[^}]*font-size:\s*15px;[^}]*font-weight:\s*500;/s,
   );
 });
 

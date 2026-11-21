@@ -3,6 +3,16 @@ import path from 'node:path';
 import net from 'node:net';
 import { createHash } from 'node:crypto';
 
+const lockPort = (home) => 20000 + createHash('sha256').update(process.platform === 'win32' ? home.toLowerCase() : home).digest().readUInt32BE(0) % 20000;
+
+// The running Bridge's pid, or 0: its pid file is trusted only while the lock port also answers.
+export async function runningBridgePid(directory) {
+  const pid = Number(fs.readFileSync(path.join(directory, 'bridge.pid'), 'utf8').trim() || 0);
+  const held = await new Promise((resolve) => net.connect(lockPort(fs.realpathSync(directory)), '127.0.0.1')
+    .once('connect', function () { this.destroy(); resolve(true); }).once('error', () => resolve(false)));
+  return held ? pid : 0;
+}
+
 export async function acquireInstanceLock(directory) {
   fs.mkdirSync(directory, { recursive: true });
   const home = fs.realpathSync(directory);
@@ -16,8 +26,7 @@ export async function acquireInstanceLock(directory) {
     try { process.kill(owner, 0); return true; } catch (error) { return error.code !== 'ESRCH'; }
   };
   if (ownerAlive()) return null;
-  const identity = process.platform === 'win32' ? home.toLowerCase() : home;
-  const port = 20000 + createHash('sha256').update(identity).digest().readUInt32BE(0) % 20000;
+  const port = lockPort(home);
   const server = net.createServer(socket => socket.destroy());
   try {
     await new Promise((resolve, reject) => {

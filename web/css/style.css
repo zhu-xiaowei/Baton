@@ -218,6 +218,8 @@ body.browse-view #content { overflow-y: scroll; scrollbar-gutter: stable; }
 .runtime-picker-row:first-child { border-top-left-radius: 9px; border-top-right-radius: 9px; }
 .runtime-picker-row:last-child { border-bottom-left-radius: 9px; border-bottom-right-radius: 9px; }
 .runtime-picker-label { flex: 1; }
+.runtime-picker-row.unavailable { color: var(--text-secondary); }
+.runtime-picker-hint { display: block; font-size: 12px; }
 .runtime-picker-check { color: var(--text-primary); }
 .runtime-picker-check svg, .meta-sid-copy svg, .project-terminal-check svg, .code-btn svg { width: 1em; height: 1em; vertical-align: -0.125em; }
 .runtime-picker-row:active { background: var(--surface-raised); }
