@@ -215,7 +215,7 @@ setNativeTabTitle('Settings');
   mountBackButton(document.getElementById('setupBackButton'), leaveSetup);
   initSystemBack({ navigate: () => { leaveSetup(); return true; } });
 
-  // One 10-minute code serves the three tabs, requested only when one is shown: with the API key a start
+  // One 15-minute code serves the three tabs, requested only when one is shown: with the API key a start
   // token (the key never appears in them), for a paired App a one-use invite an online computer seals K into.
   var platform = /Win/.test(navigator.platform) ? 'windows' : 'unix';
   var tokenRequest = null;

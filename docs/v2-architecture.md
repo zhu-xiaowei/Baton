@@ -114,7 +114,7 @@ release.
 | Messages, tool details, Session/Project lists, status | Bridge machine (JSONL + Bridge index) | none |
 | Viewed sessions and lists | Phone (IndexedDB / existing localStorage list cache) | none |
 | Account: `accountId`, join-secret hash, device list, token hashes, push devices (no email) | DDB (both profiles) | while the account exists |
-| Pairing codes, start/install tokens | DDB with TTL | 10 minutes |
+| Pairing codes, start/install tokens | DDB with TTL | 15 minutes |
 | Connections / subscriptions | Profile A: DDB; profile B: process memory | while connected |
 | Session metadata Baton owns: archived, deleted/hidden, pinned | Bridge (`~/.baton-bridge/session-meta.json`; Codex archive uses the native thread state) | none |
 | Attachments (images sent from the phone, previews, videos) | S3, encrypted, behind CloudFront | 7-day lifecycle; after that the App loads the file Bridge saved locally when it received it |
@@ -217,7 +217,7 @@ pairing of t3code / Orca (scan a QR code shown by the computer). Section 16 comp
   `feat/device-credentials` branch (not on `main` at the time of writing).
 - **First run:**
   1. The install command starts Bridge, which creates the key, registers the account and receives its token.
-  2. Bridge prints a QR code with the server URL, a single-use pairing code (10 minutes) and the key, plus the
+  2. Bridge prints a QR code with the server URL, a single-use pairing code (15 minutes) and the key, plus the
      same content as a copyable pairing link for an App on the same computer or without a camera.
   3. The App opens on "Scan the QR code on your computer" (secondary entry: "Use my own server"). Scanning
      stores the key in the Keychain / Keystore, exchanges the pairing code for an App token and opens the

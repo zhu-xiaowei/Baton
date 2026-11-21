@@ -24,7 +24,7 @@ every frame itself.
 | Area | Today | File |
 |---|---|---|
 | Auth | One API key per stack; `accountId` = SHA-256(key)[:16], pinned as a stack parameter; Lambdas read the key from API Gateway | `server/src/api_key.py` |
-| Sign-in | Setup's Start URL / QR / install command share a 10-minute start token; `/auth/exchange-token` returns the API key | `server/src/main.py` (`start-token`, `exchange-token`, `/auth/install`) |
+| Sign-in | Setup's Start URL / QR / install command share a 15-minute start token; `/auth/exchange-token` returns the API key | `server/src/main.py` (`start-token`, `exchange-token`, `/auth/install`) |
 | Devices | `DEVICE#<account>/<device>` rows in SystemTable, written by WS `$connect`; `/devices`, `device-name/validate`, `delete-device` | `server/src/devices.py`, `bridge_ws.py` |
 | Direct channel | App and Bridge get STS credentials (`issue_credentials`) scoped to the data API (+ S3 `t/<account>/`); every frame is SigV4-signed and forwarded by API Gateway without Lambda | `server/src/direct_rpc_ws.py`, `bridge/direct-rpc*.mjs`, `web/js/v2/direct-transport.js` |
 | Frames | `rpc`, `rpc_result`, `push`, `stream` bodies; payloads deflated and chunked | `bridge/direct-rpc-protocol.mjs` |
@@ -61,7 +61,7 @@ Everything new lives in SystemTable (no new table):
 |---|---|---|
 | `ACCOUNT#<accountId>` | `joinSecretHash`, created, plan limits | — |
 | `TOKEN#<sha256(token)>` | `accountId`, `deviceName`, kind (`app`/`bridge`), created, lastSeen | — |
-| `PAIR#<sha256(code)>` | `accountId` (unset until approved for a joining computer), kind, sealed `K`, expires; deleted on use | 10 min |
+| `PAIR#<sha256(code)>` | `accountId` (unset until approved for a joining computer), kind, sealed `K`, expires; deleted on use | 15 min |
 | `PUSH_DEVICE#<accountId>` | replaces the shared `PUSH_DEVICE` partition (§12 item 3) | — |
 
 - **Auth middleware**: REST and WS `$connect` accept `Authorization: Bearer <token>` (hosted) or
@@ -85,7 +85,7 @@ Everything new lives in SystemTable (no new table):
 
 A QR code never contains `K`. It holds `https://<server>/pair#c=<code>&t=<t>`: a single-use pairing code and
 16 random bytes `t` in the URL fragment (never sent to a server). `K` travels as `AES-GCM(HKDF(t), K, AAD =
-code)`, kept by the server in the `PAIR#` row and deleted when the code is used or expires (10 min). The
+code)`, kept by the server in the `PAIR#` row and deleted when the code is used or expires (15 min). The
 server never has `t`, so it can neither read `K` nor forge a sealed key; a photo of a used or expired code is
 worthless. The scanner checks that `accountId` derived from `K` equals the one the server returned. Scanning
 is the consent: there is no confirmation dialog; the App shows "Added *name*" afterwards and the device

@@ -1,6 +1,6 @@
 // The REST API: version, sign-in / install tokens, devices, install scripts, accounts and notifications
 // behind one authentication middleware. Platform-free: everything outside goes through `ports`.
-import { Body, createAccounts, need } from './accounts.mjs';
+import { Body, LINK_SECONDS, createAccounts, need } from './accounts.mjs';
 import { KeyUnavailable, createAuth } from './auth.mjs';
 import { createDevices } from './devices.mjs';
 import { createHttp, json, text } from './http.mjs';
@@ -15,7 +15,6 @@ export const PUBLIC = new Set(['/api/version', '/api/account/register', '/api/ac
 const KINDS = { '/api/auth/start-token': ['key'], '/api/install': ['key', 'bridge'] };
 // Sign-in / install tokens. A token stays valid until its ttl and is tied to the key's name, so
 // rotating the key also retires every outstanding token.
-const TOKEN_SECONDS = 600;
 
 /**
  * ports: {
@@ -137,8 +136,8 @@ export function createServer(ports) {
     // Token for Setup's Start URL, QR code and install command.
     { method: 'POST', path: '/api/auth/start-token', handler: async () => {
       const token = randomHex(16);
-      await table.putItem({ Item: { pk: 'TOKEN', sk: token, keyName: auth.keyName(), ttl: nowInt() + TOKEN_SECONDS } });
-      return { token, expiresIn: TOKEN_SECONDS };
+      await table.putItem({ Item: { pk: 'TOKEN', sk: token, keyName: auth.keyName(), ttl: nowInt() + LINK_SECONDS } });
+      return { token, expiresIn: LINK_SECONDS };
     } },
     // Outside /api/, so API Gateway does not require the key; the token stands in for it.
     { method: 'POST', path: '/auth/exchange-token', body: [['token', { required: true }]], handler: async ({ body }) => {

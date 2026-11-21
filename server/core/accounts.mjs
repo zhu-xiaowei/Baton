@@ -3,10 +3,12 @@
 import { tokenHash } from './auth.mjs';
 import { HTTPError, compareDigest, length, nowInt, pattern, sha256, tokenUrlsafe, truncate } from './util.mjs';
 
-const PAIR_SECONDS = 600;
+export const LINK_SECONDS = 900; // pairing codes and Setup's start token (Start URL, QR code, install command)
 const MAX_BRIDGES = 10;
 const MAX_ROTATIONS = 8;
 const GONE = 'This code is used or expired.';
+const COLLECT_SECONDS = 60; // an approved computer code stays collectable this long past its expiry (RFC 8628 polling)
+const REGISTER_MARGIN = 30; // a new account needs this long left on its computer's code, for the approval that follows
 const required = { required: true };
 
 export const Rotation = [
@@ -140,11 +142,11 @@ export function createAccounts({ env, table, auth, devices, sockets, log, place 
   const pairKey = async (code) => ({ pk: `PAIR#${await sha256(code)}`, sk: '-' });
 
   // Deleted on use: a code works once. One made or approved by a device that has since left is void.
-  async function take(code, condition, values) {
+  async function take(code, condition, values, grace = 0) {
     const Key = await pairKey(code);
     const old = await conditional(() => table.deleteItem({ Key, ReturnValues: 'ALL_OLD',
       ConditionExpression: `attribute_exists(pk) AND #ttl > :now AND ${condition}`, ExpressionAttributeNames: { '#ttl': 'ttl' },
-      ExpressionAttributeValues: { ':now': nowInt(), ...values } }));
+      ExpressionAttributeValues: { ':now': nowInt() - grace, ...values } }));
     const by = old && old.Attributes.by;
     if (!old || (by && !(await table.getItem({ Key: { pk: `TOKEN#${by}`, sk: '-' } })).Item)) throw new HTTPError(404, GONE);
     return old.Attributes;
@@ -178,7 +180,10 @@ export function createAccounts({ env, table, auth, devices, sockets, log, place 
     need(body, 'accountId', 'joinSecret', 'fp', 'deviceName');
     if (!open()) throw new HTTPError(404, 'Registration is closed on this server.');
     await perIp('register', request, 5, 3); // through the relay a sign-in may take 3 (placement retries)
-    if (place) await placeAccount(body, request); // before anything reads the account: its first access places it
+    // The computer's code it comes with must stay open until the approval: no empty account is left behind.
+    const pair = body.code && (await table.getItem({ Key: await pairKey(body.code) })).Item;
+    if (body.code && !(pair?.kind === 'bridge' && !('accountId' in pair) && pair.ttl > nowInt() + REGISTER_MARGIN)) throw new HTTPError(404, GONE);
+    if (place) await placeAccount(body, request, pair); // before anything reads the account: its first access places it
     if (await selfHosted(body.accountId) || (await devices.list(body.accountId)).length) throw new HTTPError(409, 'Account exists.');
     if (await conditional(async () => table.putItem({ Item: { pk: `ACCOUNT#${body.accountId}`, sk: 'META',
       joinSecretHash: await sha256(body.joinSecret), head: body.fp, createdAt: nowInt() },
@@ -190,9 +195,8 @@ export function createAccounts({ env, table, auth, devices, sockets, log, place 
 
   // The account's object goes near its first computer (the pairing code's), else this App. Through the relay it must be in
   // Japan: elsewhere the App retries with a new key (a new account id), up to twice.
-  async function placeAccount(body, request) {
-    const bridge = body.code && (await table.getItem({ Key: await pairKey(body.code) })).Item?.edge;
-    const edge = bridge || edgeOf(request);
+  async function placeAccount(body, request, pair) {
+    const edge = pair?.edge || edgeOf(request);
     const colo = await place(body.accountId, locationHint(edge)).catch(() => ''); // unknown: kept
     if (edge.relay && colo && !JAPAN.has(colo) && Number(body.retry || 0) < 2) throw new HTTPError(425, 'Placing the account; retry with a new key.');
   }
@@ -211,7 +215,7 @@ export function createAccounts({ env, table, auth, devices, sockets, log, place 
 
   // The client picks the code (a hash of its link's secret; format checked by Body); older Bridges let pair/start pick one.
   async function newCode(code, item) {
-    if (await conditional(async () => table.putItem({ Item: { ...await pairKey(code), ...item, ttl: nowInt() + PAIR_SECONDS },
+    if (await conditional(async () => table.putItem({ Item: { ...await pairKey(code), ...item, ttl: nowInt() + LINK_SECONDS },
       ConditionExpression: 'attribute_not_exists(pk)' })) === false) throw new HTTPError(409, 'Code in use.');
   }
 
@@ -219,7 +223,7 @@ export function createAccounts({ env, table, auth, devices, sockets, log, place 
     need(body, 'code', 'sealed');
     await ensureMeta(caller);
     await newCode(body.code, { kind: 'app', accountId: caller.accountId, by: caller.tokenHash ?? '', sealed: body.sealed });
-    return { expiresIn: PAIR_SECONDS, web: env.WEB_URL ?? '', ...api() };
+    return { expiresIn: LINK_SECONDS, web: env.WEB_URL ?? '', ...api() };
   }
 
   async function pairClaim({ body }) {
@@ -235,7 +239,7 @@ export function createAccounts({ env, table, auth, devices, sockets, log, place 
     await perIp('start', request, 10);
     const [code, poll] = [body.code || tokenUrlsafe(16), tokenUrlsafe(16)];
     await newCode(code, { kind: 'bridge', pollHash: await sha256(poll), deviceName: body.deviceName, edge: edgeOf(request) });
-    return { code, poll, expiresIn: PAIR_SECONDS, web: env.WEB_URL ?? '', ...api() };
+    return { code, poll, expiresIn: LINK_SECONDS, web: env.WEB_URL ?? '', ...api() };
   }
 
   async function pairApprove({ body, auth: caller }) {
@@ -256,11 +260,11 @@ export function createAccounts({ env, table, auth, devices, sockets, log, place 
     // The computer's token is issued only here, so no row ever holds one.
     need(body, 'code', 'poll');
     let row = (await table.getItem({ Key: await pairKey(body.code), ConsistentRead: true })).Item || {};
-    if (row.kind !== 'bridge' || Math.trunc(row.ttl ?? 0) <= Date.now() / 1000 || !compareDigest(row.pollHash ?? '', await sha256(body.poll))) {
-      throw new HTTPError(404, GONE);
-    }
-    if (!('accountId' in row)) return { pending: true };
-    row = await take(body.code, 'pollHash = :poll AND attribute_exists(accountId)', { ':poll': await sha256(body.poll) });
+    const approved = 'accountId' in row; // an approval made in time is collected even just after the code expired
+    if (row.kind !== 'bridge' || Math.trunc(row.ttl ?? 0) + (approved ? COLLECT_SECONDS : 0) <= Date.now() / 1000
+      || !compareDigest(row.pollHash ?? '', await sha256(body.poll))) throw new HTTPError(404, GONE);
+    if (!approved) return { pending: true };
+    row = await take(body.code, 'pollHash = :poll AND attribute_exists(accountId)', { ':poll': await sha256(body.poll) }, COLLECT_SECONDS);
     await roomFor(row.accountId, row.deviceName); // again: other codes may have been approved meanwhile
     return joined(row, 'bridge', row.deviceName, '', { approvedBy: row.approvedBy });
   }
