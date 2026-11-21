@@ -15,7 +15,7 @@
 // Account Analytics Read + zone Analytics Read, stored as the secret ANALYTICS_TOKEN (optional: kept when unset, or added
 // later in the dashboard; without it the monitor only probes).
 import { execFileSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -109,6 +109,14 @@ async function installRoutes() {
     await cf('POST', `${zone}/dns_records`, { type: 'AAAA', name: INSTALL_HOST, content: '100::', proxied: true });
   }
   await routes([`${INSTALL_HOST}/install`, `${INSTALL_HOST}/install.ps1`]);
+}
+
+// The relay's address tokens are signed with IP_TOKEN_KEY: the file's, else the live one kept (inherit), else a new one.
+async function ipTokenKey() {
+  if (secrets.IP_TOKEN_KEY) return { type: 'secret_text', name: 'IP_TOKEN_KEY', text: secrets.IP_TOKEN_KEY };
+  const live = (await cf('GET', `/workers/scripts/${flags.name}/settings`, undefined, { ok404: true }))?.bindings ?? [];
+  return live.some((b) => b.name === 'IP_TOKEN_KEY') ? { type: 'inherit', name: 'IP_TOKEN_KEY' }
+    : { type: 'secret_text', name: 'IP_TOKEN_KEY', text: randomBytes(32).toString('base64url') };
 }
 
 async function routes(patterns) {
@@ -303,7 +311,8 @@ const bindings = [{ type: 'assets', name: 'ASSETS' }, { type: 'r2_bucket', name:
   ...(DATASET ? [{ type: 'analytics_engine', name: 'USAGE', dataset: DATASET }] : []),
   ...((await exists(RELAY)) ? [{ type: 'service', name: 'PUSH', service: RELAY }] : []),
   ...Object.entries(vars).filter(([, v]) => v).map(([name, text]) => ({ type: 'plain_text', name, text })),
-  ...['API_KEY', 'ORIGIN_SECRET', 'R2_API_TOKEN'].filter((n) => secrets[n]).map((name) => ({ type: 'secret_text', name, text: secrets[name] }))];
+  ...['API_KEY', 'ORIGIN_SECRET', 'R2_API_TOKEN'].filter((n) => secrets[n]).map((name) => ({ type: 'secret_text', name, text: secrets[name] })),
+  ...(RELAY_HOST ? [await ipTokenKey()] : [])];
 const modules = [...fs.readdirSync(path.join(ROOT, 'server/core')).filter((f) => f.endsWith('.mjs')).map((f) => `server/core/${f}`),
   ...['worker', 'account', 'store', 'ports', 'r2', 'usage'].map((f) => `server/cloudflare/${f}.mjs`)].map((f) => [f, f]);
 await upload(flags.name, { main_module: 'server/cloudflare/worker.mjs', compatibility_date: DATE, bindings, assets: await assets(flags.name),

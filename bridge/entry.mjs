@@ -4,6 +4,7 @@
 // The caller's address as the API host saw it, signed: requests through the relay send it (x-baton-ip / ipt), since there
 // Cloudflare sees only the relay's.
 export const vouched = { token: '' };
+export const tokenFresh = (token = vouched.token) => Number(token.slice(0, token.lastIndexOf('.')).split('|')[3]) * 1000 > Date.now() + 60_000;
 
 export async function pickEntry(server, fetchImpl = fetch) {
   const get = async (base) => {

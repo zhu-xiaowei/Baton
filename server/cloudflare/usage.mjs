@@ -48,7 +48,7 @@ export class Usage {
     else if (!s.apps?.length) {
       // Through the mainland-China relay Cloudflare sees only the relay (JP, Amazon): the App's signed address (`ipt`) if any.
       const relay = (this.env.RELAY_IPS ?? '').split(',').includes(request.headers.get('cf-connecting-ip'));
-      const own = relay && await readIpToken(this.env.API_KEY, query.get('ipt'));
+      const own = relay && await readIpToken(this.env.IP_TOKEN_KEY, query.get('ipt'), 7 * 86400); // the last start's, maybe expired
       const [country, network] = !relay ? [request.cf?.country ?? '', String(request.cf?.asOrganization ?? '').slice(0, 64)]
         : own ? [own.country, `AS${own.asn}`] : ['relay', 'relay'];
       await this.point(me.account, ['active', s.day, platformOf(request.headers.get('user-agent') ?? ''), country, network, isNew() ? 'new' : '']);

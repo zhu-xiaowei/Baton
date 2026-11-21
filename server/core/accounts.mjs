@@ -41,7 +41,7 @@ export function locationHint({ relay, continent, lon } = {}) {
 const JAPAN = new Set(['NRT', 'KIX']);
 
 // A caller's address as Cloudflare saw it on a direct /api/version, signed, so that requests through the relay (which
-// hides it) can still name it: `ip|country|asn|expiry.signature` (docs/v2-cn-relay.md).
+// hides it) can still name it: `ip|country|asn|expiry.signature`, keyed by IP_TOKEN_KEY (docs/v2-cn-relay.md).
 const IP_TOKEN_SECONDS = 86400;
 async function ipSignature(secret, payload) {
   const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(`ip-token|${secret}`), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
@@ -52,11 +52,11 @@ export async function issueIpToken(secret, { ip, country = '', asn = '' }) {
   const payload = [ip, country, asn, nowInt() + IP_TOKEN_SECONDS].join('|');
   return `${payload}.${await ipSignature(secret, payload)}`;
 }
-export async function readIpToken(secret, token) {
+export async function readIpToken(secret, token, grace = 0) {
   const at = String(token ?? '').lastIndexOf('.');
   if (!secret || at < 1 || !compareDigest(token.slice(at + 1), await ipSignature(secret, token.slice(0, at)))) return null;
   const [ip, country, asn, expiry] = token.slice(0, at).split('|');
-  return Number(expiry) > nowInt() ? { ip, country, asn } : null;
+  return Number(expiry) + grace > nowInt() ? { ip, country, asn } : null;
 }
 
 export function need(body, ...fields) {
@@ -91,15 +91,15 @@ export function createAccounts({ env, table, auth, devices, sockets, log, place 
 
   // The mainland-China relay (docs/v2-cn-relay.md) hides its users' addresses.
   const relayed = (request) => (env.RELAY_IPS ?? '').split(',').includes(ip(request));
-  // Through the relay the signed address (x-baton-ip) counts; a caller without one shares the relay's.
-  async function perIp(name, request, limit) {
-    const own = relayed(request) && await readIpToken(await auth.currentKey(), request.headers.get('x-baton-ip'));
-    return rate(`${name}#${own ? own.ip : ip(request)}`, limit);
+  // Through the relay the signed address (x-baton-ip) counts, `own` times the limit; a caller without one shares the relay's.
+  async function perIp(name, request, limit, own = 1) {
+    const signed = relayed(request) && await readIpToken(env.IP_TOKEN_KEY, request.headers.get('x-baton-ip'));
+    return rate(`${name}#${signed ? signed.ip : ip(request)}`, signed ? limit * own : limit);
   }
   // /api/version: the caller's address, signed (only where a relay is configured; through it the address is the relay's).
   async function ipToken(request) {
     const edge = edgeOf(request);
-    const secret = env.API_ENTRIES && !edge.relay && await auth.currentKey();
+    const secret = env.API_ENTRIES && !edge.relay && env.IP_TOKEN_KEY;
     return secret ? issueIpToken(secret, { ip: ip(request), country: edge.country, asn: edge.asn }) : undefined;
   }
   function edgeOf(request) {
@@ -178,7 +178,7 @@ export function createAccounts({ env, table, auth, devices, sockets, log, place 
   async function register({ body, ...request }) {
     need(body, 'accountId', 'joinSecret', 'fp', 'deviceName');
     if (!open()) throw new HTTPError(404, 'Registration is closed on this server.');
-    await perIp('register', request, 5);
+    await perIp('register', request, 5, 3); // through the relay a sign-in may take 3 (placement retries)
     if (place) await placeAccount(body, request); // before anything reads the account: its first access places it
     if (await selfHosted(body.accountId) || (await devices.list(body.accountId)).length) throw new HTTPError(409, 'Account exists.');
     if (await conditional(async () => table.putItem({ Item: { pk: `ACCOUNT#${body.accountId}`, sk: 'META',
