@@ -1320,8 +1320,11 @@ html.native-mobile .slash-description {
 .inapp-clear::before { content: ""; position: absolute; inset: -3px; } /* larger tap target, short of the 6px gaps */
 @media (hover: hover) and (pointer: fine) { .inapp-close:hover { background: rgba(var(--text-secondary-rgb), 0.18); color: var(--text-primary); } }
 @media (min-width: 768px) {
-  .inapp-stack { top: calc(var(--sat, env(safe-area-inset-top, 0px)) + 52px); left: auto; width: 380px; align-items: flex-end; padding: 4px 20px 28px; }
-  .inapp, .inapp-actions { max-width: 340px; }
+  /* Only as wide as the cards (plus a scrollbar), so an expanded list leaves the page clickable;
+     full width while a card moves, so a swiped card is not clipped. */
+  .inapp-stack { top: calc(var(--sat, env(safe-area-inset-top, 0px)) + 52px); left: auto; align-items: flex-end; padding: 4px 20px 28px; }
+  .inapp-stack:has(.dragging, .settle) { left: 0; }
+  .inapp, .inapp-actions { width: 340px; }
   .inapp { border-radius: 12px; }
 }
 @keyframes inapp-drop { from { transform: translateY(-120%); opacity: 0; } to { transform: none; opacity: 1; } }
