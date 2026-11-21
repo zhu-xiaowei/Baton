@@ -24,6 +24,7 @@ const PROBE_MS = 1000;
 // A request this long without any inbound frame pings the socket (rebuilt after the same wait
 // without an answer); a request that asked for a receipt and has none is sent again.
 const STALL_MS = 3000;
+const CONNECT_MS = 20000; // a socket not open by then is given up, like a dropped one
 const ACKED_DEADLINE_MS = 60000; // after a receipt or progress, the next sign of life may take this long
 const RENEW_MS = 5 * 60000;      // credentials with less than this left are renewed before signing
 const PING = '{"action":"realtime_ping"}';
@@ -315,7 +316,13 @@ let transportAsked = false, entryAsked = false;
 export function connect() {
   if (!state.KEY || !state.SERVER || refused || limited) return;
   // The entry first (once per start); a remembered one is used meanwhile.
-  if (!entryAsked) { entryAsked = true; const chosen = chooseEntry(); if (!entryKnown()) { chosen.finally(connect); return; } }
+  if (!entryAsked) {
+    entryAsked = true;
+    const chosen = chooseEntry();
+    if (!entryKnown()) { chosen.finally(connect); return; }
+    // The remembered entry is used meanwhile; a socket still opening through one no longer chosen starts over at once.
+    chosen.then(() => { if (socket?.readyState === WebSocket.CONNECTING && socket.__url !== socketUrl()) socket.close(); });
+  }
   // Nothing known yet (first start): the server names its transport (relay or the data API) before a socket opens.
   if (!rpc) restore();
   if (!rpc && (devicesInflight || !transportAsked)) { transportAsked = true; (devicesInflight || devices()).catch(() => {}).finally(connect); return; }
@@ -326,7 +333,13 @@ export function connect() {
   const ws = socket = new WebSocket(url);
   ws.__url = url;
   connectionId = '';
+  // Nothing answers when the relay is gone: through it, the entry is chosen anew first (bridge/entry.mjs).
+  const opening = setTimeout(() => {
+    if (socket !== ws || ws.readyState !== WebSocket.CONNECTING) return;
+    (hasEntry() ? chooseEntry() : Promise.resolve()).finally(() => { if (ws.readyState === WebSocket.CONNECTING) ws.close(); });
+  }, CONNECT_MS);
   ws.onopen = () => {
+    clearTimeout(opening);
     if (socket !== ws) return;
     timing('connect', performance.now() - started);
     const whoamiAt = performance.now();
@@ -652,7 +665,10 @@ function reconcile() {
 export function devices() {
   devicesAt = performance.now();
   devicesInflight ||= (async () => {
-    const response = await fetch(entryUrl(state.SERVER + '/api/bridge/devices'), { headers: { 'x-api-key': state.KEY } });
+    const abort = new AbortController(); // a relay gone answers nothing
+    const timer = setTimeout(() => abort.abort(), CONNECT_MS);
+    const response = await fetch(entryUrl(state.SERVER + '/api/bridge/devices'), { headers: { 'x-api-key': state.KEY }, signal: abort.signal })
+      .finally(() => clearTimeout(timer));
     if (response.status === 401 || response.status === 403) window.logout?.();
     if (!response.ok) throw new Error(response.status + ' ' + response.statusText);
     const body = await response.json();
