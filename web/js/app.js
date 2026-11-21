@@ -2325,7 +2325,7 @@ async function maybeLoadOlderAndPrepend() {
 async function loadOlderAndPrepend() {
   if (!state.appState.session || state.appState.session === '__new__') return;
   var content = document.getElementById('content');
-  var container = content.querySelector('.messages');
+  var container = content.querySelector('.messages:not(.skeleton-messages)');
   if (!container) return;
 
   if (state.wsLoadingOlder) return;
