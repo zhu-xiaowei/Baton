@@ -37,3 +37,14 @@ test('a computer code in its last 30 s opens no account', async () => {
   left = 20; assert.equal(await call(), 404);
   left = 100; assert.equal(await call(), 'ok');
 });
+
+test('a relay point once a day per App, also after a direct start', async () => {
+  const { Usage } = await import('../../server/cloudflare/usage.mjs');
+  const kinds = [], data = new Map();
+  const usage = new Usage({ storage: { get: async (k) => data.get(k), put: async (k, v) => data.set(k, v) } },
+    { RELAY_IPS: '9.9.9.9', USAGE: { writeDataPoint: (p) => kinds.push(p.blobs[0]) } });
+  const join = (ip) => usage.joined(new Request('https://x/ws', { headers: { 'cf-connecting-ip': ip } }),
+    { role: 'app', account: 'a', tokenHash: 'h'.repeat(16) }, () => false);
+  for (const ip of ['1.2.3.4', '9.9.9.9', '9.9.9.9']) await join(ip);
+  assert.deepEqual(kinds, ['active', 'relay']);
+});

@@ -249,6 +249,8 @@ These override the sections above where they differ.
 - **Monitor Worker** (`server/cloudflare/monitor.mjs` + `monitor.html`, `deploy.mjs --monitor <host> --admin-email <address>`):
   its own custom domain behind Cloudflare Access (email one-time PIN, only `--admin-email`). The Worker also checks the
   `Cf-Access-Jwt-Assertion` (audience + issuer + signature), so the page and `/api/data` are never served without Access.
+  The one exception is `<monitor>-report.<zone>`: only `POST /relay/report`, with the `RELAY_REPORT_KEY` bearer key, takes the
+  mainland-China relays' 5-minute traffic reports (docs/v2-cn-relay.md).
   The workers.dev route stays off. State lives in one SQLite object, `MonitorStore`: 35 days of 5-minute snapshots, alert
   state, blocked accounts.
 - **Every 5 minutes**:

@@ -13,7 +13,8 @@
 // --monitor <host> --admin-email <address> [--monitor-name] [--cost-cap 1] [--cost-alert 20] [--plan free|paid] deploys only the monitor of the
 // service <name> (server/cloudflare/monitor.mjs) behind Cloudflare Access; env MONITOR_API_TOKEN: a read-only token with
 // Account Analytics Read + zone Analytics Read, stored as the secret ANALYTICS_TOKEN (optional: kept when unset, or added
-// later in the dashboard; without it the monitor only probes).
+// later in the dashboard; without it the monitor only probes). env RELAY_REPORT_KEY: the key relays report with (setup.sh REPORT_KEY),
+// on <monitor>-report.<zone>, which is outside Access (kept when unset).
 import { execFileSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import fs from 'node:fs';
@@ -243,6 +244,8 @@ async function deployMonitor() {
   const secrets = {};
   if (process.env.MONITOR_API_TOKEN) secrets.ANALYTICS_TOKEN = process.env.MONITOR_API_TOKEN;
   else if (!('ANALYTICS_TOKEN' in old)) console.log(`${name}: no ANALYTICS_TOKEN yet; add it as a secret (read-only analytics token) to start usage, cost and the cap`);
+  if (process.env.RELAY_REPORT_KEY) secrets.RELAY_REPORT_KEY = process.env.RELAY_REPORT_KEY;
+  const reportHost = flags.monitor.replace(/^[^.]+/, (label) => `${label}-report`);
   let probe = old.PROBE_ACCOUNT;
   if (!probe || !('PROBE_TOKEN' in old)) {
     const { accountOf } = await import('../../bridge/e2ee-node.mjs');
@@ -274,7 +277,7 @@ async function deployMonitor() {
     SCRIPTS: flags.name, ACCOUNT_NS: accountNs, NAMESPACES: namespaces.map((n) => n.id).join(','), BUCKET: flags.bucket,
     HOSTS: domains.join(','), DATASET, PROBE_ACCOUNT: probe, PROBE_HASH: createHash('sha256').update(probe).digest('hex').slice(0, 16),
     COST_CAP: flags['cost-cap'], COST_ALERT: flags['cost-alert'], PLAN: flags.plan === 'paid' ? 'paid' : 'free', ADMIN_EMAIL: email, FROM_EMAIL: `monitor@${zoneName}`,
-    MONITOR_URL: `https://${flags.monitor}`, ACCESS_AUD: aud, ACCESS_TEAM: org.auth_domain };
+    MONITOR_URL: `https://${flags.monitor}`, ACCESS_AUD: aud, ACCESS_TEAM: org.auth_domain, REPORT_HOST: reportHost };
   await upload(name, { main_module: 'server/cloudflare/monitor.mjs', compatibility_date: DATE, observability: OBSERVABILITY, keep_bindings: ['secret_text'],
     bindings: [{ type: 'durable_object_namespace', name: 'ACCOUNT', class_name: 'AccountObject', script_name: flags.name },
       { type: 'durable_object_namespace', name: 'STORE', class_name: 'MonitorStore' }, { type: 'send_email', name: 'EMAIL', destination_address: email },
@@ -282,7 +285,7 @@ async function deployMonitor() {
   ['monitor.mjs', 'cost.mjs', 'monitor.html'].map((f) => [`server/cloudflare/${f}`, `server/cloudflare/${f}`]), { new_tag: 'v1', new_sqlite_classes: ['MonitorStore'] });
   for (const [n, text] of Object.entries(secrets)) await cf('PUT', `/workers/scripts/${name}/secrets`, { name: n, text, type: 'secret_text' });
   await cf('PUT', `/workers/scripts/${name}/schedules`, [{ cron: '*/5 * * * *' }]);
-  await cf('PUT', '/workers/domains', { hostname: flags.monitor, service: name, zone_id: flags.zone, environment: 'production' });
+  for (const hostname of [flags.monitor, reportHost]) await cf('PUT', '/workers/domains', { hostname, service: name, zone_id: flags.zone, environment: 'production' });
   console.log(`monitor ${name} on https://${flags.monitor} (Access: ${email}); alerts to ${email}: ${address.verified ? 'verified'
     : 'NOT verified yet: click the link Cloudflare mailed to it'}; ${address.verified ? `${support} forwards there` : `rerun after verifying to forward ${support}`}`);
 }

@@ -1,6 +1,7 @@
 // Usage points (Workers Analytics Engine, env.USAGE; absent on self-hosts) and the monthly cost cap of one AccountObject.
 // No content and no account id leave the object: accounts appear as a hash. Point layout (server/cloudflare/monitor.mjs):
 // blobs [kind, account, day, platform|os|role, country, network, new|version|reason], doubles [seconds, apps, code, weight].
+// `relay`: an App (token) or Bridge (device) through the mainland-China relay, once a day each: [relay, account, day, role].
 import { readIpToken } from '../core/accounts.mjs';
 import { refuse } from './ports.mjs';
 
@@ -38,16 +39,21 @@ export class Usage {
     const s = await this.state();
     if (s.day !== today()) {
       if (s.secs > (s.reported ?? 0)) await this.point(me.account, ['summary', s.day], [s.secs, s.apps?.length ?? 0]);
-      Object.assign(s, { day: today(), secs: 0, reported: 0, at: 0, apps: [], devs: [] });
+      Object.assign(s, { day: today(), secs: 0, reported: 0, at: 0, apps: [], devs: [], rel: [] });
     }
     const app = me.role === 'app' ? me.tokenHash.slice(0, 8) : me.device;
     const seen = me.role === 'app' ? s.apps : s.devs;
+    const relay = (this.env.RELAY_IPS ?? '').split(',').includes(request.headers.get('cf-connecting-ip'));
+    if (relay && !(s.rel ??= []).includes(`${me.role}:${app}`)) { // also when it came directly earlier today
+      await this.point(me.account, ['relay', s.day, me.role]);
+      s.rel.push(`${me.role}:${app}`);
+      await this.save();
+    }
     if (seen.includes(app)) return;
     const query = new URL(request.url).searchParams;
     if (me.role === 'bridge') await this.point(me.account, ['bridge', s.day, query.get('os') ?? '', '', '', query.get('version') ?? '']);
     else if (!s.apps?.length) {
       // Through the relay Cloudflare sees only the relay: the App's signed address (`ipt`) if any.
-      const relay = (this.env.RELAY_IPS ?? '').split(',').includes(request.headers.get('cf-connecting-ip'));
       const own = relay && await readIpToken(this.env.IP_TOKEN_KEY, query.get('ipt'));
       const [country, network] = !relay ? [request.cf?.country ?? '', String(request.cf?.asOrganization ?? '').slice(0, 64)]
         : own ? [own.country, `AS${own.asn}`] : ['relay', 'relay'];

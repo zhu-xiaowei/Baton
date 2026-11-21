@@ -50,13 +50,14 @@ Only REST and `/ws` go through it; R2 transfers, `dl.`, the homepage and the Web
 | Rate per connection | 1 MB/s each way |
 | Bytes per address (IPv6: per /64) per day | 1 GiB, then dropped for a day (`relay-guard`, every 5 min); clients time out and use `api.` |
 | Bytes per month, both directions | 1.8 TB, then relaying stops until the month ends; clients fall back to `api.` |
-| Alert | Lightsail alarm mail when NetworkOut stays above the pace of 1.2 TB a month for 2 hours (`ALERT_EMAIL`) |
+| Report and alerts | every 5 min `relay-guard` posts today's and this month's bytes, the cap, `stopped` and the 24 h address count (no addresses) to `https://monitor-report.<zone>/relay/report` (`REPORT_KEY` = the monitor's `RELAY_REPORT_KEY`). The monitor shows them with the accounts through the relay (usage `relay` points) and mails when a relay is silent for 20 min (and back), passes ⅔ of its cap, or stops |
 
 ## Deploy
 
 1. Create the relay in the relay AWS account (Lightsail micro, $7/month, 2 TB both ways):
-   `AWS_PROFILE=relay ALERT_EMAIL=<address> server/cloudflare/relay/create.sh baton-relay-1 api-jp.agentbaton.app <admin-ip>/32`
-   It prints the static IPv4 and the IPv6 address. Confirm the mail Lightsail sends for a new alert address.
+   `AWS_PROFILE=relay REPORT_URL=https://monitor-report.agentbaton.app/relay/report REPORT_KEY=<key> server/cloudflare/relay/create.sh baton-relay-1 api-jp.agentbaton.app <admin-ip>/32`
+   It prints the static IPv4 and the IPv6 address. The monitor needs the same key: `RELAY_REPORT_KEY=<key> deploy.mjs --monitor …`
+   (a relay already running gets it by running `REPORT_URL=… REPORT_KEY=… setup.sh <hosts>` again).
 2. Check that the static IP is reachable from mainland China (TCP 443 from several CN probes, e.g. Globalping): some
    AWS ranges are not (a Hong Kong `95.40.x` address was unreachable).
 3. Deploy with the entry: `deploy.mjs … --relay-domain api-jp.agentbaton.app --relay-ips <ipv4>,<ipv6> --zero-rtt`.
