@@ -6,6 +6,7 @@ import { parseLink } from './v2/pairing.js';
 import { initPageZoomShortcuts } from './page-zoom.js';
 import { exchangeToken, isNativeApp, mountStartUrlForm, routeAfterLogin } from './v2/start-url-form.js';
 import { routeExternalLinks } from './native-shell.js';
+import { startEntry } from './v2/entry.js';
 
 initMacosTabs();
 initPageZoomShortcuts();
@@ -23,6 +24,8 @@ setNativeTabTitle('Baton');
   }
 
   var form = mountStartUrlForm(document.querySelector('.start-url-form'));
+  // Signed out: the entry is chosen while the code is scanned (the App, knowing no server yet, chooses with the link's).
+  if (!state.KEY && /^https:/.test(state.SERVER)) startEntry();
   var urlParams = new URLSearchParams(location.search);
   var urlToken = urlParams.get('t');
   var urlKey = urlParams.get('key');
