@@ -50,7 +50,7 @@ También puedes [alojar tu propio relay en AWS](#alojamiento-propio-aws).
 - **Agentes populares** — Claude Code, Codex, Pi, Hermes, OpenCode, Kiro y DeepSeek Harness, en una sola lista.
 - **Relevo en ambos sentidos** — las Sessions de tu ordenador llegan en directo al móvil, con su estado (en curso, necesita respuesta, terminada); crea proyectos y Sessions en el móvil y continúa en el ordenador.
 - **Aprobaciones y preguntas** — aprueba o rechaza llamadas a herramientas, responde preguntas y revisa planes desde el móvil.
-- **Notificaciones** — recibe un aviso cuando una Session termina o te necesita; tócalo para abrirla (Android en el relay alojado llegará pronto).
+- **Notificaciones** — recibe un aviso cuando una Session termina o te necesita; tócalo para abrirla.
 - **Cifrado de extremo a extremo** — las conversaciones se quedan en tu ordenador; el relay solo las reenvía.
 
 ### Herramientas de desarrollo
@@ -61,7 +61,7 @@ También puedes [alojar tu propio relay en AWS](#alojamiento-propio-aws).
 
 - **Archivos del proyecto** — explora el código fuente con resaltado de líneas y descarga o comparte archivos mediante las funciones nativas del sistema.
 - **Git** — revisa cambios, añade o retira archivos del área de preparación, descarta cambios, crea commits, envía cambios o publica una rama y explora el gráfico de ramas con diferencias históricas.
-- **Terminales** — hasta cinco sesiones de shell por proyecto, compartidas en directo entre dispositivos y restauradas al volver, con una barra de teclas móvil, un control de dirección que repite las pulsaciones al mantenerlo presionado y acelera cuanto más lo arrastras, y desplazamiento suave con inercia (Bridge en macOS o Linux).
+- **Terminales** — hasta cinco sesiones de shell por proyecto, compartidas en directo entre dispositivos y restauradas al volver, con una barra de teclas móvil, un control de dirección que repite las pulsaciones al mantenerlo presionado y acelera cuanto más lo arrastras, y desplazamiento suave con inercia.
 - **Vista previa de localhost** — abre `http://localhost:3000` (o cualquier puerto local) del ordenador donde se ejecuta el Bridge dentro de la App nativa, tocando un enlace de la Session o introduciendo el puerto, sin SSH, reenvío de puertos ni exposición pública.
 
 ### Visualización de contenido

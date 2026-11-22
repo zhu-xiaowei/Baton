@@ -50,7 +50,7 @@ You can also [self-host the relay on AWS](#self-hosting-aws).
 - **Popular agents** — Claude Code, Codex, Pi, Hermes, OpenCode, Kiro and DeepSeek Harness, all in one list
 - **Two-way handoff** — sessions on your computer stream live to your phone, with running / needs input / done status; start projects and sessions on your phone and carry on at your computer
 - **Approvals and questions** — approve or deny tool calls, answer questions and review plans from your phone
-- **Notifications** — get an alert when a session finishes or needs you; tap to open it (Android on the hosted relay is coming)
+- **Notifications** — get an alert when a session finishes or needs you; tap to open it
 - **End-to-end encrypted** — conversations stay on your computer; the relay only forwards them
 
 ### Developer tools
@@ -61,7 +61,7 @@ You can also [self-host the relay on AWS](#self-hosting-aws).
 
 - **Project files** — browse source with line highlighting, and download or share files natively
 - **Git** — review changes, stage / unstage / discard files, commit, push or publish a branch, and browse a branch graph with historical diffs
-- **Terminals** — up to five shells per project, shared live across devices and restored when you return, with a mobile keybar, a long-press arrow joystick that auto-repeats faster the farther you drag, and smooth momentum scrolling (macOS / Linux Bridge)
+- **Terminals** — up to five shells per project, shared live across devices and restored when you return, with a mobile keybar, a long-press arrow joystick that auto-repeats faster the farther you drag, and smooth momentum scrolling
 - **Localhost previews** — open the Bridge machine's `http://localhost:3000` (or any local port) inside the native App by tapping a session link or entering the port, with no SSH, port forwarding, or public exposure
 
 ### Rich rendering
