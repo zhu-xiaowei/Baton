@@ -46,21 +46,25 @@ if (f.downloads) {
   process.exit(0);
 }
 
-// Assets: every .html file under this folder; / and /privacy/ resolve through auto-trailing-slash.
+// Assets: every .html, .txt and .avif file under this folder; / and /privacy/ resolve through auto-trailing-slash.
+const TYPES = { html: 'text/html; charset=utf-8', txt: 'text/plain; charset=utf-8', avif: 'image/avif' };
 const files = {};
 const manifest = {};
-for (const rel of fs.readdirSync(DIR, { recursive: true }).filter((p) => p.endsWith('.html'))) {
+const types = {};
+for (const rel of fs.readdirSync(DIR, { recursive: true }).filter((p) => TYPES[path.extname(p).slice(1)])) {
+  const ext = path.extname(rel).slice(1);
   const bytes = fs.readFileSync(path.join(DIR, rel));
   const b64 = bytes.toString('base64');
-  const hash = createHash('sha256').update(b64 + 'html').digest('hex').slice(0, 32);
+  const hash = createHash('sha256').update(b64 + ext).digest('hex').slice(0, 32);
   files[hash] = b64;
+  types[hash] = TYPES[ext];
   manifest[`/${rel.split(path.sep).join('/')}`] = { hash, size: bytes.length };
 }
 const session = await cf('POST', `${API}/accounts/${ACCOUNT}/workers/scripts/${f.name}/assets-upload-session`, { manifest });
 let jwt = session.jwt;
 for (const group of session.buckets ?? []) {
   const form = new FormData();
-  for (const hash of group) form.append(hash, new Blob([files[hash]], { type: 'text/html; charset=utf-8' }), hash);
+  for (const hash of group) form.append(hash, new Blob([files[hash]], { type: types[hash] }), hash);
   jwt = (await cf('POST', `${API}/accounts/${ACCOUNT}/workers/assets/upload?base64=true`, form, jwt))?.jwt ?? jwt;
 }
 const metadata = { compatibility_date: '2026-04-07', assets: { jwt, config: { html_handling: 'auto-trailing-slash', not_found_handling: 'none',

@@ -240,6 +240,11 @@ html[lang|=zh] h2{letter-spacing:0}
 .plat a:hover{border-color:var(--faint);color:var(--text)}
 .plat a:active{transform:scale(.94);opacity:.75}
 .plat a:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.plat .qr{display:none}
+@media (hover:hover) and (pointer:fine){.plat a{position:relative}
+.plat .qr{display:flex;flex-direction:column;align-items:center;gap:6px;position:absolute;bottom:calc(100% + 10px);left:50%;z-index:5;padding:10px;border:1px solid var(--border);border-radius:12px;background:#fff;color:#1f2328;font-size:12px;box-shadow:0 8px 24px rgba(0,0,0,.25);opacity:0;visibility:hidden;transform:translate(-50%,4px);transition:opacity .15s,transform .15s,visibility .15s;pointer-events:none}
+.plat .qr img{width:132px;height:132px}
+.plat a:hover .qr,.plat a:focus-visible .qr{opacity:1;visibility:visible;transform:translate(-50%,0)}}
 .plat svg{width:28px;height:28px;color:var(--text)}
 /* features */
 .feats{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:40px}
@@ -514,8 +519,8 @@ section{padding-top:76px}
 <div class="gs">
 <p class="gl"><i>2</i><span class="en">Get the App, scan the QR or paste the Start URL</span><span class="zh" lang="zh-CN">下载 App，扫码或粘贴 Start URL 连接</span></p>
 <div class="plat">
-<a href="https://testflight.apple.com/join/2HqQHD22" data-os="ios"><svg aria-hidden="true"><use href="#p-apple"/></svg>iOS</a>
-<a href="https://dl.agentbaton.app/Baton.apk" data-os="android"><svg aria-hidden="true"><use href="#p-android"/></svg>Android</a>
+<a href="https://testflight.apple.com/join/2HqQHD22" data-os="ios"><svg aria-hidden="true"><use href="#p-apple"/></svg>iOS<span class="qr" aria-hidden="true"><img src="/qr-ios.avif" alt="" loading="lazy" width="132" height="132"><span class="en">Scan to install</span><span class="zh" lang="zh-CN">扫码安装</span></span></a>
+<a href="https://dl.agentbaton.app/Baton.apk" data-os="android"><svg aria-hidden="true"><use href="#p-android"/></svg>Android<span class="qr" aria-hidden="true"><img src="/qr-android.avif" alt="" loading="lazy" width="132" height="132"><span class="en">Scan to install</span><span class="zh" lang="zh-CN">扫码安装</span></span></a>
 <a href="https://dl.agentbaton.app/Baton.dmg" data-os="mac"><svg aria-hidden="true"><use href="#p-mac"/></svg>macOS</a>
 <a href="https://dl.agentbaton.app/Baton.exe" data-os="win"><svg aria-hidden="true"><use href="#p-win"/></svg>Windows</a>
 <a href="https://dl.agentbaton.app/Baton.deb" data-os="linux"><svg aria-hidden="true"><use href="#p-linux"/></svg>Linux</a>
