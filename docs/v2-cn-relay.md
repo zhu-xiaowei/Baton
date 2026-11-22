@@ -50,7 +50,7 @@ Only REST and `/ws` go through it; R2 transfers, `dl.`, the homepage and the Web
 | Rate per connection | 1 MB/s each way |
 | Bytes per address (IPv6: per /64) per day | 1 GiB, then dropped for a day (`relay-guard`, every 5 min); clients time out and use `api.` |
 | Bytes per month, both directions | 1.8 TB, then relaying stops until the month ends; clients fall back to `api.` |
-| Security updates | installed daily (`unattended-upgrades`); one that needs a reboot (a kernel) reboots at 19:00 UTC (03:00 Beijing), about a minute in which clients use `api.` |
+| Security updates | installed daily (`unattended-upgrades`); one that needs a reboot (a kernel) reboots at 19:02 UTC (03:02 Beijing, between relay-guard runs), about a minute in which clients use `api.` |
 | Report and alerts | every 5 min `relay-guard` posts today's and this month's bytes, the cap, `stopped` and the 24 h address count (no addresses) to `https://monitor-report.<zone>/relay/report` (`REPORT_KEY` = the monitor's `RELAY_REPORT_KEY`). The monitor shows them with the accounts through the relay (usage `relay` points) and mails when a relay is silent for 20 min (and back), passes ⅔ of its cap, or stops. A relay taken down for good: post `{"name":…,"retire":true}` with the key (records silent a week also go) |
 
 ## Deploy
