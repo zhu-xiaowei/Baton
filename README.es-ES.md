@@ -103,25 +103,6 @@ También puedes [alojar tu propio relay en AWS](#alojamiento-propio-aws).
 
 ---
 
-## Arquitectura
-
-```
-┌────────────────┐               ┌──────────────────────┐               ┌──────────────────┐
-│     Bridge     │ ◀────WS─────▶ │        Relay         │ ◀────WS─────▶ │     App/Web      │
-│ (local hosts)  │               │                      │               │  (phone/desktop) │
-└────────────────┘               └──────────┬───────────┘               └──────────────────┘
-                                            │
-                                            ▼
-                                 ┌──────────────────────┐
-                                 │ accounts + devices,  │
-                                 │ 1-day file transfer  │
-                                 └──────────────────────┘
-```
-
-El **Bridge** descubre las Sessions de los agentes, normaliza sus eventos, conserva las relaciones entre agentes principales y subagentes y gestiona el control local de agentes, los archivos del proyecto, los comandos de Git y los procesos de terminal. El **Relay** autentica los dispositivos de una misma cuenta y retransmite sus mensajes cifrados de extremo a extremo; solo guarda los registros de cuentas, dispositivos y tokens (las Sessions permanecen en tu ordenador) y una zona de tránsito de archivos que se conserva 1 día. La **App/Web** carga el historial en caché, se suscribe a las actualizaciones de las Sessions y los agentes raíz, agrupa los hilos anidados bajo la Session principal y envía las acciones del usuario al entorno local correspondiente.
-
----
-
 ## Alojamiento propio (AWS)
 
 Ejecuta tu propio servidor en tu cuenta de AWS en lugar de usar el servicio alojado.
@@ -146,6 +127,27 @@ Tarda unos 6–8 minutos. Al finalizar, muestra una **Start URL** y un código Q
 En Windows, ejecuta el comando de instalación en PowerShell con la opción **Ejecutar como administrador**.
 
 Después, descarga la App indicada arriba y escanea el código QR o introduce la Start URL.
+
+---
+
+## Arquitectura
+
+```
+┌────────────────┐               ┌──────────────────────┐               ┌──────────────────┐
+│     Bridge     │ ◀────WS─────▶ │        Relay         │ ◀────WS─────▶ │     App/Web      │
+│ (local hosts)  │               │                      │               │  (phone/desktop) │
+└────────────────┘               └──────────┬───────────┘               └──────────────────┘
+                                            │
+                                            ▼
+                                 ┌──────────────────────┐
+                                 │ accounts + devices,  │
+                                 │ 1-day file transfer  │
+                                 └──────────────────────┘
+```
+
+- El **Bridge** descubre las Sessions de los agentes, normaliza sus eventos, conserva las relaciones entre agentes principales y subagentes y gestiona el control local de agentes, los archivos del proyecto, los comandos de Git y los procesos de terminal.
+- El **Relay** autentica los dispositivos de una misma cuenta y retransmite sus mensajes cifrados de extremo a extremo; solo guarda los registros de cuentas, dispositivos y tokens (las Sessions permanecen en tu ordenador) y una zona de tránsito de archivos que se conserva 1 día.
+- La **App/Web** carga el historial en caché, se suscribe a las actualizaciones de las Sessions y los agentes raíz, agrupa los hilos anidados bajo la Session principal y envía las acciones del usuario al entorno local correspondiente.
 
 ---
 

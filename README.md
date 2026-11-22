@@ -103,25 +103,6 @@ You can also [self-host the relay on AWS](#self-hosting-aws).
 
 ---
 
-## Architecture
-
-```
-┌────────────────┐               ┌──────────────────────┐               ┌──────────────────┐
-│     Bridge     │ ◀────WS─────▶ │        Relay         │ ◀────WS─────▶ │     App/Web      │
-│ (local hosts)  │               │                      │               │  (phone/desktop) │
-└────────────────┘               └──────────┬───────────┘               └──────────────────┘
-                                            │
-                                            ▼
-                                 ┌──────────────────────┐
-                                 │ accounts + devices,  │
-                                 │ 1-day file transfer  │
-                                 └──────────────────────┘
-```
-
-**Bridge** discovers agent sessions, normalizes their events, preserves main/subagent relationships, and handles local agent control, project files, Git commands, and terminal processes. **Relay** authenticates the devices of one account and forwards their end-to-end encrypted messages; it keeps only account, device and token records (sessions stay on your computer) and a 1-day transfer area for files. **App/Web** loads cached history, subscribes to session and root-agent updates, aggregates nested threads under the main session, and routes user actions back to the correct local runtime.
-
----
-
 ## Self-hosting (AWS)
 
 Run your own server in your AWS account instead of the hosted service.
@@ -146,6 +127,27 @@ Takes ~6-8 minutes. Prints a **Start URL** and QR code on success. Supports `--r
 On native Windows, run the install command in PowerShell using **Run as administrator**.
 
 Then get the App above and scan the QR code or input the Start URL.
+
+---
+
+## Architecture
+
+```
+┌────────────────┐               ┌──────────────────────┐               ┌──────────────────┐
+│     Bridge     │ ◀────WS─────▶ │        Relay         │ ◀────WS─────▶ │     App/Web      │
+│ (local hosts)  │               │                      │               │  (phone/desktop) │
+└────────────────┘               └──────────┬───────────┘               └──────────────────┘
+                                            │
+                                            ▼
+                                 ┌──────────────────────┐
+                                 │ accounts + devices,  │
+                                 │ 1-day file transfer  │
+                                 └──────────────────────┘
+```
+
+- **Bridge** discovers agent sessions, normalizes their events, preserves main/subagent relationships, and handles local agent control, project files, Git commands, and terminal processes.
+- **Relay** authenticates the devices of one account and forwards their end-to-end encrypted messages; it keeps only account, device and token records (sessions stay on your computer) and a 1-day transfer area for files.
+- **App/Web** loads cached history, subscribes to session and root-agent updates, aggregates nested threads under the main session, and routes user actions back to the correct local runtime.
 
 ---
 
