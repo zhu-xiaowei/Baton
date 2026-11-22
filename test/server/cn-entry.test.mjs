@@ -38,13 +38,21 @@ test('a computer code in its last 30 s opens no account', async () => {
   left = 100; assert.equal(await call(), 'ok');
 });
 
-test('a relay point once a day per App, also after a direct start', async () => {
-  const { Usage } = await import('../../server/cloudflare/usage.mjs');
+test('app and relay points once a day per App, a relay one also after a direct start', async () => {
+  const { Usage, describe } = await import('../../server/cloudflare/usage.mjs');
   const kinds = [], data = new Map();
   const usage = new Usage({ storage: { get: async (k) => data.get(k), put: async (k, v) => data.set(k, v) } },
     { RELAY_IPS: '9.9.9.9', USAGE: { writeDataPoint: (p) => kinds.push(p.blobs[0]) } });
-  const join = (ip) => usage.joined(new Request('https://x/ws', { headers: { 'cf-connecting-ip': ip } }),
+  const join = (ip) => usage.joined(describe(new Request('https://x/ws', { headers: { 'cf-connecting-ip': ip } })),
     { role: 'app', account: 'a', tokenHash: 'h'.repeat(16) }, () => false);
   for (const ip of ['1.2.3.4', '9.9.9.9', '9.9.9.9']) await join(ip);
-  assert.deepEqual(kinds, ['active', 'relay']);
+  assert.deepEqual(kinds, ['app', 'active', 'relay']); // an App's own point once a day, the account's first App's 'active'
+});
+
+test('a Bridge still connected on a new UTC day counts there, with what it connected with', async () => {
+  const { Usage, describe } = await import('../../server/cloudflare/usage.mjs');
+  const points = [], usage = new Usage({ storage: { get: async () => ({ day: '2000-01-01', apps: [], devs: ['mac'] }), put: async () => {} } },
+    { USAGE: { writeDataPoint: (p) => points.push(p.blobs) } });
+  await usage.joined(describe(new Request('https://x/ws?os=darwin&version=2.1')), { role: 'bridge', account: 'a', device: 'mac' }, () => false);
+  assert.deepEqual(points.map((b) => [b[0], b[3], b[6]]), [['bridge', 'darwin', '2.1']]);
 });

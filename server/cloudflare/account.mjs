@@ -6,7 +6,7 @@ import { nowInt, randomHex } from '../core/util.mjs';
 import { MAX_FRAME_BYTES, bridgesFull, leastActive, limits, refuse, server, toResponse } from './ports.mjs';
 import { createCredentials, storageInfo } from './r2.mjs';
 import { createItems, createTable, serve } from './store.mjs';
-import { Usage } from './usage.mjs';
+import { Usage, describe, today } from './usage.mjs';
 
 const SILENT_MS = 75_000; // three missed 25 s text pings
 const SWEEP_MS = 60_000;
@@ -73,11 +73,12 @@ export class AccountObject extends DurableObject {
     const id = randomHex(12);
     const tok = role === 'notify' && resolved.tokenHash ? [`tok:${resolved.tokenHash}`] : []; // one notify socket per App token
     this.ctx.acceptWebSocket(socket, [role, `id:${id}`, ...(role === 'bridge' && device ? [`dev:${device}`] : []), ...tok]);
-    const me = { role, id, account, device, tokenHash: resolved.tokenHash ?? '', connectedAt: Date.now() };
+    const me = { role, id, account, device, tokenHash: resolved.tokenHash ?? '', connectedAt: Date.now(),
+      ...(role !== 'notify' ? { info: describe(request), day: today() } : {}) };
     socket.serializeAttachment(me);
     // `hello=1`: the App's address at once, saving the round trip of asking (older Apps ask, and would count a second answer as a reconnect).
     if (role === 'app' && query.get('hello') === '1') send(socket, { action: 'whoami', connectionId: id });
-    if (role !== 'notify') await this.usage.joined(request, me, () => this.store('getItem', { Key: { pk: `ACCOUNT#${account}`, sk: 'META' } })
+    if (role !== 'notify') await this.usage.joined(me.info, me, () => this.store('getItem', { Key: { pk: `ACCOUNT#${account}`, sk: 'META' } })
       .result?.Item?.createdAt >= Date.parse(new Date().toISOString().slice(0, 10)) / 1000).catch((error) => console.log(`usage: ${error.message}`));
     if (role === 'bridge' && device) {
       for (const [old] of this.live(`dev:${device}`)) {
@@ -106,12 +107,16 @@ export class AccountObject extends DurableObject {
 
   async webSocketMessage(ws, message) {
     await this.sweep();
-    const me = ws.deserializeAttachment();
+    let me = ws.deserializeAttachment();
     if (!me || me.closing) return;
     const size = typeof message === 'string' ? (message.length * 3 <= MAX_FRAME_BYTES ? 0 : encoder.encode(message).length) : message.byteLength;
     if (size > MAX_FRAME_BYTES) return this.retire(ws, 1009, 'frame too large');
     // Any frame but the auto-answered ping is activity: the least recently active App goes first at the limit.
-    if (me.role === 'app' && Date.now() - (me.activeAt ?? me.connectedAt) > ACTIVE_MS) ws.serializeAttachment({ ...me, activeAt: Date.now() });
+    if (me.role === 'app' && Date.now() - (me.activeAt ?? me.connectedAt) > ACTIVE_MS) ws.serializeAttachment(me = { ...me, activeAt: Date.now() });
+    if (me.info && me.day !== today()) { // Bridges heartbeat every 4 minutes; an App's pings never wake the object
+      ws.serializeAttachment(me = { ...me, day: today() });
+      await this.usage.joined(me.info, me, () => false).catch((error) => console.log(`usage: ${error.message}`));
+    }
     if (typeof message !== 'string' || me.role === 'notify') return; // a notify socket only pings
     // {"to":"<id>",…}: forwarded unchanged to that socket of this account, between an App and a Bridge.
     if (message.startsWith('{"to":"')) {
