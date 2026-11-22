@@ -5,7 +5,7 @@ import { randomBytes } from 'crypto';
 import fs from 'fs';
 import { createInterface } from 'readline/promises';
 import qrcode from 'qrcode-terminal';
-import { BRIDGE_HOME, CONFIG_PATH, saveConfig } from './config.mjs';
+import { BRIDGE_HOME, CONFIG_PATH, bridgeCommand, saveConfig } from './config.mjs';
 import { fingerprint, openPair, openRotation, pairCode, sealPair } from './e2ee-node.mjs';
 import { pickEntry, vouched } from './entry.mjs';
 import { runningBridgePid } from './instance-lock.mjs';
@@ -117,7 +117,7 @@ export async function runPair() {
     return 0;
   }
   if (!process.stdout.isTTY) {
-    console.error('Run `node ~/.baton-bridge/bridge.mjs pair` in a terminal: its QR code is shown only there.');
+    console.error(`Run \`${bridgeCommand('pair')}\` in a terminal: its QR code is shown only there.`);
     return 1;
   }
   if (leaving && config.apiKey) {
@@ -146,6 +146,6 @@ export async function runPair() {
   const { link: invite, expiresIn } = await createInvite(config);
   console.log(`\nScan with the Baton app on a new phone, or open the link in a browser, to add it (valid ${Math.round(expiresIn / 60)} minutes):`);
   show(console.log, invite);
-  console.log('To move this computer to another account, run: node ~/.baton-bridge/bridge.mjs pair --leave');
+  console.log(`To move this computer to another account, run: ${bridgeCommand('pair --leave')}`);
   return 0;
 }

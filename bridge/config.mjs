@@ -27,6 +27,28 @@ export const WS_FRAME_LIMIT = 31_000;
 export const IS_WSL = !!process.env.WSL_DISTRO_NAME;
 export const NEEDS_POLLING = IS_WSL && CLAUDE_PROJECTS.startsWith('/mnt/');
 
+// `~/.baton-bridge/baton` (`baton.cmd` on Windows) runs bridge.mjs with the private Node.js the installer pins the
+// service to, else the user's. Resolved at run time: an install that changes the version deletes the old runtime.
+const CLI_LAUNCHERS = {
+  sh: ['#!/bin/sh', 'dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd) || exit 1', 'node=node',
+    'for n in "$dir"/node/*/bin/node; do [ -x "$n" ] && node=$n; done', 'exec "$node" "$dir/bridge.mjs" "$@"', ''].join('\n'),
+  cmd: ['@echo off', 'setlocal', 'set "BATON_NODE=node"',
+    'for /d %%d in ("%~dp0node\\*") do if exist "%%~fd\\node.exe" set "BATON_NODE=%%~fd\\node.exe"',
+    '"%BATON_NODE%" "%~dp0bridge.mjs" %*', 'exit /b %ERRORLEVEL%', ''].join('\r\n'),
+};
+
+export function bridgeCommand(args, platform = process.platform) {
+  return platform === 'win32' ? `~\\.baton-bridge\\baton.cmd ${args}` : `~/.baton-bridge/baton ${args}`;
+}
+
+// Written on every start, so updates deliver it too.
+export function writeCliLauncher(home = BRIDGE_HOME, platform = process.platform) {
+  const file = path.join(home, platform === 'win32' ? 'baton.cmd' : 'baton');
+  fs.writeFileSync(file, CLI_LAUNCHERS[platform === 'win32' ? 'cmd' : 'sh'], { mode: 0o755 });
+  if (platform !== 'win32') fs.chmodSync(file, 0o755);
+  return file;
+}
+
 function parseArgs() {
   const args = process.argv.slice(2);
   const parsed = {};
@@ -72,12 +94,12 @@ export function loadConfig() {
       saveConfig(config);
     }
   } else {
-    console.error('Usage: node bridge.mjs --server URL --key API_KEY [--name DEVICE_NAME] | node bridge.mjs pair');
+    console.error(`Usage: node bridge.mjs --server URL --key API_KEY [--name DEVICE_NAME] | ${bridgeCommand('pair')}`);
     process.exit(1);
   }
   if (!config.apiKey) {
     // Exit 0, so the service manager does not restart it until the computer has joined.
-    console.error('This computer has not joined an account yet: run `node ~/.baton-bridge/bridge.mjs pair`.');
+    console.error(`This computer has not joined an account yet: run \`${bridgeCommand('pair')}\`.`);
     process.exit(0);
   }
   if (!/^[a-f0-9]{32}$/.test(config.bridgeId || '')) {

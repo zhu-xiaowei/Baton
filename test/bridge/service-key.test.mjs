@@ -4,7 +4,8 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { removeServiceKeyArgs, uninstallBridge } from '../../bridge/config.mjs';
+import { execFileSync } from 'node:child_process';
+import { removeServiceKeyArgs, uninstallBridge, writeCliLauncher } from '../../bridge/config.mjs';
 
 test('old service definitions stop passing the key; config.json is the only source', () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'baton-service-'));
@@ -59,4 +60,14 @@ test('a removed device turns off autostart and drops its key', () => {
     assert.deepEqual(ran, commands);
     fs.rmSync(home, { recursive: true, force: true });
   }
+});
+
+test('the baton command runs bridge.mjs with the private Node.js and passes arguments', { skip: process.platform === 'win32' }, () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'baton-cli-'));
+  fs.writeFileSync(path.join(home, 'bridge.mjs'), 'console.log(JSON.stringify(process.argv.slice(2)))');
+  fs.mkdirSync(path.join(home, 'node', 'v0', 'bin'), { recursive: true });
+  const node = path.join(home, 'node', 'v0', 'bin', 'node');
+  fs.writeFileSync(node, `#!/bin/sh\necho private; exec ${JSON.stringify(process.execPath)} "$@"\n`, { mode: 0o755 });
+  const out = execFileSync(writeCliLauncher(home, 'linux'), ['pair', '--leave', 'a b'], { encoding: 'utf-8' });
+  assert.equal(out, 'private\n["pair","--leave","a b"]\n');
 });
