@@ -68,16 +68,6 @@ Scan the QR code shown by Bridge, or paste its **Start URL**.
 - **Terminals** — up to five shells per project, shared live across devices and restored when you return, with a mobile keybar, a long-press arrow joystick that auto-repeats faster the farther you drag, and smooth momentum scrolling (macOS / Linux Bridge)
 - **Localhost previews** — open the Bridge machine's `http://localhost:3000` (or any local port) inside the native App by tapping a session link or entering the port, with no SSH, port forwarding, or public exposure
 
-### Fast, stable, lightweight
-
-- **Native-like App** — the native splash hands off seamlessly to matching skeleton screens at every stage with no white flash, and edge-swipe back reveals the previous page underneath
-- **Light and dark themes** — choose System, Light, or Dark in Settings; the interface, code, diagrams, and native app appearance update together
-- **Adjustable page size** — change font size on mobile or use desktop zoom shortcuts; your choice persists across pages and app restarts
-- **Instant loading** — lists, history, and project data open from local page caches, then refresh in the background
-- **Stable delivery** — ordered streaming, automatic reconnect, and queued sends keep sessions intact on flaky mobile networks and after backgrounding the App
-- **Lightweight Apps** — small Tauri-based native packages, plus an ArkWeb shell for HarmonyOS NEXT
-- **Zero-maintenance Bridge** — runs always-on across macOS, Linux, and Windows, connects multiple computers to one account, and updates itself
-
 ### Rich rendering
 
 <p align="center">
@@ -88,6 +78,16 @@ Scan the QR code shown by Bridge, or paste its **Start URL**.
 - **Diffs, Mermaid, and LaTeX** — rendered inline while streaming; copy source and download as images
 - **Inline HTML in conversations** — interactive previews, expandable to full screen without losing their state
 - **File previews** — Markdown, HTML, PDF, Office, image, and video files from projects or messages; HTML pages load their relative CSS, scripts, and images, so they render fully without a local server; images in messages display inline and open full screen with pinch-to-zoom
+
+### Fast, stable, lightweight
+
+- **Native-like App** — the native splash hands off seamlessly to matching skeleton screens at every stage with no white flash, and edge-swipe back reveals the previous page underneath
+- **Light and dark themes** — choose System, Light, or Dark in Settings; the interface, code, diagrams, and native app appearance update together
+- **Adjustable page size** — change font size on mobile or use desktop zoom shortcuts; your choice persists across pages and app restarts
+- **Instant loading** — lists, history, and project data open from local page caches, then refresh in the background
+- **Stable delivery** — ordered streaming, automatic reconnect, and queued sends keep sessions intact on flaky mobile networks and after backgrounding the App
+- **Lightweight Apps** — small Tauri-based native packages, plus an ArkWeb shell for HarmonyOS NEXT
+- **Zero-maintenance Bridge** — runs always-on across macOS, Linux, and Windows, connects multiple computers to one account, and updates itself
 
 ### More
 
