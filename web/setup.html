@@ -91,8 +91,8 @@
   .account-actions .setting-row[hidden] { display: none; }
   .account-actions .setting-row:not([hidden]) ~ .setting-row { border-top: 1px solid var(--border); margin-top: 14px; padding-top: 14px; }
   .account-actions .chev { color: var(--text-muted); font-size: 22px; line-height: 1; }
-  #appsList .agent-thread-row { cursor: default; display: flex; align-items: center; gap: 10px; }
-  #appsList .agent-thread-copy { flex: 1; }
+  .apps-list .agent-thread-row { cursor: default; display: flex; align-items: center; gap: 10px; }
+  .apps-list .agent-thread-copy { flex: 1; }
   .phrase { position: relative; margin: 4px 0 16px; padding: 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--canvas); }
   .phrase[hidden] { display: none; }
   .phrase p { margin: 0; font-family: 'SF Mono', 'Fira Code', monospace; font-size: 13px; line-height: 1.7; color: var(--text-primary); word-spacing: 2px; user-select: all; }
@@ -105,7 +105,7 @@
   .setting-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px; cursor: pointer; }
   div.setting-row { cursor: default; }
   .setting-row strong { font-size: 15px; font-weight: 600; }
-  #notificationStatus:empty { display: none; }
+  .hint:empty { display: none; }
   .setting-row .platform-switch { margin: 0; }
   .switch { appearance: none; -webkit-appearance: none; flex: 0 0 auto; width: 44px; height: 26px; margin: 0; border-radius: 13px; background: var(--switch-track); position: relative; cursor: pointer; transition: background .15s; }
   .switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; border-radius: 50%; background: var(--switch-knob); transition: transform .15s; }
@@ -129,7 +129,7 @@
   html.native-mobile .code-block { padding: 14px 16px; font-size: 13px; line-height: 1.65; }
   html.native-mobile .code-btn { min-height: 30px; font-size: 12px; }
   html.native-mobile .hint { font-size: 14px; line-height: 1.55; }
-  html.native-mobile #appVersion { font-size: 12px !important; }
+  html.native-mobile .app-version { font-size: 12px !important; }
 </style>
 </head>
 <body>
@@ -193,7 +193,7 @@
   <a class="setting-row hosted-only" hidden href="#" onclick="openAppsSheet(); return false"><strong>Phones &amp; browsers</strong><span class="chev" aria-hidden="true">›</span></a>
   <a class="setting-row hosted-only" hidden href="#" onclick="showRecoveryPhrase(); return false"><strong>Recovery phrase</strong><span class="chev" aria-hidden="true">›</span></a>
   <a class="setting-row" href="https://agentbaton.app" target="_blank" rel="noopener" data-external><strong>Website</strong><span class="website-value"><span class="version-value">agentbaton.app</span><span class="chev" aria-hidden="true">›</span></span></a>
-  <div class="setting-row"><strong>Version</strong><span id="appVersion" class="version-value"></span></div>
+  <div class="setting-row"><strong>Version</strong><span id="appVersion" class="version-value app-version"></span></div>
   <a class="setting-row hosted-only" hidden href="#" onclick="deleteAccount(); return false"><strong>Delete account</strong><span class="chev" aria-hidden="true">›</span></a>
   <a class="setting-row" href="#" onclick="logout(); return false"><strong>Log out</strong><span class="chev" aria-hidden="true">›</span></a>
 </div>
@@ -202,7 +202,7 @@
 <div id="appsSheet" class="modal-overlay agent-threads-overlay" style="display:none" onclick="if(event.target===this)closeAppsSheet()">
   <div class="modal-box agent-threads-box" role="dialog" aria-modal="true" aria-label="Phones &amp; browsers">
     <div class="agent-threads-header"><div class="modal-title">Phones &amp; browsers</div></div>
-    <div id="appsList" class="agent-threads-list"></div>
+    <div id="appsList" class="agent-threads-list apps-list"></div>
   </div>
 </div>
 

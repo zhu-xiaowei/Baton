@@ -379,7 +379,7 @@ test('Show more appends unseen projects without replacing existing projects, ses
     assert.equal(h.doc.getElementById('devices-section'), devicesSection);
     assert.deepEqual([...h.doc.querySelectorAll('.recent-project-name')].map(el => el.textContent),
       ['Project 0', 'Project 1', 'Project 2', 'Project 3', 'Project 4', 'Project 7', 'Project 6', 'Project 5']);
-    assert.equal(h.doc.getElementById('recent-projects-footer'), null);
+    assert.equal(h.doc.getElementById('recent-projects-footer').textContent, 'Show less');
     const folded = [...h.doc.querySelectorAll('.recent-project-toggle')].find(el => el.dataset.homeToggle === foldKey);
     assert.equal(folded.getAttribute('aria-expanded'), 'false');
     const cached = JSON.parse(h.win.localStorage.getItem('apeek_home_cache')).active;
@@ -409,7 +409,7 @@ test('a failed Show more keeps the five projects and restores an unnumbered retr
     h.doc.querySelector('[data-show-more-projects]').click();
     await h.win.__homeLoadPromise;
     assert.equal(h.doc.querySelectorAll('.recent-project').length, 7);
-    assert.equal(h.doc.getElementById('recent-projects-footer'), null);
+    assert.equal(h.doc.getElementById('recent-projects-footer').textContent, 'Show less');
   } finally { h.win.close(); }
 });
 
@@ -493,7 +493,7 @@ test('a cached expanded snapshot still starts at five and appends from the visib
     h.doc.querySelector('[data-show-more-projects]').click();
     await h.win.__homeLoadPromise;
     assert.equal(h.doc.querySelectorAll('.recent-project').length, 15);
-    assert.equal(h.doc.getElementById('recent-projects-footer'), null);
+    assert.equal(h.doc.getElementById('recent-projects-footer').textContent, 'Show less');
   } finally { h.win.close(); }
 });
 
@@ -537,7 +537,7 @@ for (const outcome of ['success', 'failure']) {
       requests[1].resolve(projectPage(7, false));
       await retryRun;
       assert.equal(h.doc.querySelectorAll('.recent-project').length, 7);
-      assert.equal(h.doc.querySelector('[data-show-more-projects]'), null);
+      assert.equal(h.doc.querySelector('[data-show-more-projects]').textContent, 'Show less');
       assert.equal(JSON.parse(h.win.localStorage.getItem('apeek_home_cache')).active.recentProjects.length, 7);
     } finally { h.win.close(); }
   });
