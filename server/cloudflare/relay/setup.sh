@@ -126,7 +126,8 @@ if os.environ.get('REPORT_URL'):
     except Exception as error: print('report failed:', error)
 PY
 START=$(sed -n 's/^START=//p' /etc/relay-guard.env 2>/dev/null || true)
-START=${START:-$(date -u +%s)} # when relaying began (relay-guard prorates that month's cap); a rerun keeps it
+# When relaying began (relay-guard prorates that month's cap); a rerun keeps it, and a relay already counting is past it.
+START=${START:-$([ -e /var/lib/relay-guard.json ] && echo 0 || date -u +%s)}
 if [ -n "${REPORT_URL:-}" ]; then # a rerun keeps the relay's name
   RELAY_NAME=${RELAY_NAME:-$(sed -n 's/^RELAY_NAME=//p' /etc/relay-guard.env 2>/dev/null || true)}
   (umask 077; printf 'REPORT_URL=%s\nREPORT_KEY=%s\nRELAY_NAME=%s\nSTART=%s\n' "$REPORT_URL" "${REPORT_KEY:-}" "${RELAY_NAME:-$(hostname)}" "$START" >/etc/relay-guard.env)
