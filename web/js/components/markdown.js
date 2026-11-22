@@ -11,6 +11,7 @@
   var _documentSlots = null;
   var _chatCode = false;
   var _streaming = false;
+  var _nested = 0;
   function trusted(html) {
     if (!_documentSlots) return html;
     _documentSlots.push(html);
@@ -296,13 +297,16 @@
   // A `$$`/`\[` math line right under a **bold** line must not be swallowed as a setext heading underline.
   marked.use({
     tokenizer: {
+      // Only top-level ```html documents preview; inside quotes and lists they stay code.
+      blockquote: function (src) { _nested++; try { return Object.getPrototypeOf(this).blockquote.call(this, src); } finally { _nested--; } },
+      list: function (src) { _nested++; try { return Object.getPrototypeOf(this).list.call(this, src); } finally { _nested--; } },
       lheading: function (src) { return /^[^\n]+\n[ \t]*(?:\$\$|\\\[)/.test(src) ? undefined : false; },
       // A streaming math fence stays code until its closing fence arrives.
       fences: function (src) {
         var token = Object.getPrototypeOf(this).fences.call(this, src);
         if (token && _streaming && /^math\b/i.test(token.lang) && !fenceClosed(token.raw)) token.lang = '';
         // A closed ```html document (<= 1 MiB) previews like `visualize` (while streaming, via renderStream's segments).
-        if (token && !_documentSlots && !(_streaming && _chatCode) && /^html(?:\s|$)/i.test(token.lang)
+        if (token && !_documentSlots && !_nested && /^html(?:\s|$)/i.test(token.lang)
           && fenceClosed(token.raw) && new Blob([token.text]).size <= 1048576
           && /^\uFEFF?(?:\s|<!--[\s\S]*?-->)*<(?:!doctype\s+html|html)[\s>]/i.test(token.text)) {
           return { type: 'codexVisualization', raw: token.raw, text: token.text, inline: true };
