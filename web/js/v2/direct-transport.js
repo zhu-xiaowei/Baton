@@ -47,6 +47,7 @@ let connectionId = '';
 let lastId = '';                // the latest connection id, kept across a drop
 let dataUrl = '';
 let retryTimer = null;
+let lastReconcileAt = 0;
 let retries = 0;              // consecutive drops since the last whoami
 let refused = false;          // the relay closed with 4401/4403: no reconnects
 let limited = '';             // the relay closed with 4429: its reason; no reconnects until reconnect()
@@ -629,7 +630,11 @@ async function send(key, request, route, missing) {
 
 function reconcile() {
   const now = performance.now();
+  // Ticks come every 250 ms; a much later one means the App was suspended, which no request's clock counts.
+  const paused = lastReconcileAt && now - lastReconcileAt > 1000 ? now - lastReconcileAt : 0;
+  lastReconcileAt = now;
   for (const [key, request] of pending) {
+    if (paused) for (const clock of ['createdAt', 'deadlineFrom', 'aliveAt', 'sentAt', 'firstSentAt']) if (request[clock] && request[clock] < now - 1000) request[clock] += paused;
     const route = routes.get(request.device);
     if (routesKnown && (!route || !route.online)) { finish(key, request, { reason: 'offline' }); continue; }
     // Waiting for a socket or credentials does not count: DEADLINE_MS runs from the first send on the

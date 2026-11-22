@@ -96,6 +96,8 @@ async function run(options) {
     onSlow: () => { env.log.slowAt = performance.now() - started; },
     onAccepted: () => { env.log.acceptedAt = performance.now() - started; } });
   if (options.reconnectAt) setTimeout(env.reconnect, options.reconnectAt);
+  // A suspended App: the clock moves on while no timer runs.
+  if (options.suspendAt) setTimeout(() => { const now = performance.now.bind(performance); performance.now = () => now() + 120000; }, options.suspendAt);
   let outcome;
   try { outcome = { value: await promise }; } catch (error) { outcome = { error: error.message }; }
   return { ...outcome, ...env.log, ms: performance.now() - started };
