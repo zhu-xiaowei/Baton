@@ -148,5 +148,11 @@ stop_bridge_processes
 for dir in "${BRIDGE_DIRS[@]}"; do
   remove_path "$dir"
 done
+# The Pi status extension the Bridge installs (bridge/pi-runtime.mjs).
+remove_path "${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/extensions/baton-bridge-status.js"
 
-echo "Baton/AgentPeek Bridge has been removed."
+if $DRY_RUN; then
+  echo "Dry run: nothing was removed."
+else
+  echo "Baton/AgentPeek Bridge has been removed."
+fi
