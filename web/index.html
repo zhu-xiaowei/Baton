@@ -269,10 +269,10 @@
     }
   }
 
-  function moreProjectsControl() {
+  function moreProjectsControl(less) {
     return '<button class="recent-projects-show-more' + (loadingRecentProjects ? ' recent-projects-loading' : '')
       + '" type="button" data-show-more-projects' + (loadingRecentProjects ? ' disabled aria-busy="true"' : '') + '>'
-      + (loadingRecentProjects ? 'Loading…' : allRecentProjects ? 'Show less' : 'Show more') + '</button>';
+      + (loadingRecentProjects ? 'Loading…' : less ? 'Show less' : 'Show more') + '</button>';
   }
 
   function showMoreProjects() {
@@ -526,7 +526,7 @@
         + '<div class="recent-project-list" id="recent-project-list"' + (recentProjectsCollapsed ? ' hidden' : '') + '>';
       html += recentProjects.map(recentProjectHtml).join('');
       if (!recentProjects.length) html += '<p class="recent-projects-empty">' + (window.__connecting ? 'Connecting ' + esc(window.__connecting) + '…' : 'No recent sessions yet') + '</p>';
-      if (hasMoreProjects || recentProjects.length > 5) html += '<div class="recent-projects-footer" id="recent-projects-footer">' + moreProjectsControl() + '</div>';
+      if (hasMoreProjects || recentProjects.length > 5) html += '<div class="recent-projects-footer" id="recent-projects-footer">' + moreProjectsControl(!hasMoreProjects) + '</div>';
       html += '</div></section>';
     }
     if (devs.length) {
