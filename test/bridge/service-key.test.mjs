@@ -65,13 +65,9 @@ test('a removed device turns off autostart and drops its key', () => {
 test('the baton command runs bridge.mjs with the service\'s Node.js, else the user\'s', { skip: process.platform === 'win32' }, () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "baton cli's-"));
   fs.writeFileSync(path.join(home, 'bridge.mjs'), 'console.log(JSON.stringify(process.argv.slice(2)))');
-  const node = path.join(home, 'node');
-  fs.writeFileSync(node, `#!/bin/sh\necho service; exec ${JSON.stringify(process.execPath)} "$@"\n`, { mode: 0o755 });
-  const launcher = writeCliLauncher(home, 'linux', node);
-  assert.equal(execFileSync(launcher, ['pair', 'a b'], { encoding: 'utf-8' }), 'service\n["pair","a b"]\n');
-  writeCliLauncher(home, 'linux', '/old/node', true);
-  assert.ok(!fs.readFileSync(launcher, 'utf-8').includes('/old/node'));
-  fs.rmSync(node);
+  const launcher = writeCliLauncher(home, 'linux');
+  assert.equal(execFileSync(launcher, ['pair', 'a b'], { encoding: 'utf-8' }), '["pair","a b"]\n');
+  fs.writeFileSync(launcher, fs.readFileSync(launcher, 'utf-8').replace(/node='[^\n]*'/, "node='/gone/node'"));
   const env = { ...process.env, PATH: `${path.dirname(process.execPath)}:${process.env.PATH}` };
   assert.equal(execFileSync(launcher, ['pair'], { encoding: 'utf-8', env }), '["pair"]\n');
   fs.rmSync(home, { recursive: true, force: true });

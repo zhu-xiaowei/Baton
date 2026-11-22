@@ -31,7 +31,7 @@ import {
 } from './updater.mjs';
 import { extractTar, installProductionDependencies } from './platform.mjs';
 
-try { writeCliLauncher(undefined, undefined, undefined, process.argv[2] === 'pair'); } catch (error) { console.error(`[init] could not write the baton command: ${error.message}`); }
+if (process.argv[2] !== 'pair') try { writeCliLauncher(); } catch (error) { console.error(`[init] could not write the baton command: ${error.message}`); }
 // Not the service: shows a pairing QR code in this terminal, while the service keeps running.
 if (process.argv[2] === 'pair') process.exit(await (await import('./accounts.mjs')).runPair().catch((error) => { console.error(error.message); return 1; }));
 

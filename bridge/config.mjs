@@ -27,29 +27,23 @@ export const WS_FRAME_LIMIT = 31_000;
 export const IS_WSL = !!process.env.WSL_DISTRO_NAME;
 export const NEEDS_POLLING = IS_WSL && CLAUDE_PROJECTS.startsWith('/mnt/');
 
-// `~/.baton-bridge/baton` (`baton.cmd` on Windows) runs bridge.mjs with the Node.js the service runs on, rewritten
-// at every start; if an update has deleted that runtime it falls back to the user's `node`.
+// `~/.baton-bridge/baton` (`baton.cmd` on Windows) runs bridge.mjs with the Node.js the service runs on, written at
+// every service start; if an update deleted that runtime it uses the user's `node`. cmd: one line, so a rewrite during
+// the run leaves no tail; `call` expands ERRORLEVEL after node exits. The hint is the PowerShell form (cmd: %USERPROFILE%).
 const CLI_LAUNCHERS = {
   sh: (node) => ['#!/bin/sh', 'dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd) || exit 1',
     `node='${node.replaceAll("'", "'\\''")}'`, '[ -x "$node" ] || node=node', 'exec "$node" "$dir/bridge.mjs" "$@"', ''].join('\n'),
-  cmd: (node) => ['@echo off', 'setlocal', `set "BATON_NODE=${node.replaceAll('%', '%%')}"`,
-    // One line, so a rewrite during the run leaves cmd no tail; `call` expands ERRORLEVEL after node exits.
-    'if not exist "%BATON_NODE%" set "BATON_NODE=node"', '"%BATON_NODE%" "%~dp0bridge.mjs" %* & call exit /b %%ERRORLEVEL%%', ''].join('\r\n'),
+  cmd: (node) => ['@echo off', 'setlocal', `set "BATON_NODE=${node.replaceAll('%', '%%')}"`, 'if not exist "%BATON_NODE%" set "BATON_NODE=node"',
+    '"%BATON_NODE%" "%~dp0bridge.mjs" %* & call exit /b %%ERRORLEVEL%%', ''].join('\r\n'),
 };
 
 export function bridgeCommand(args, platform = process.platform) {
-  // PowerShell form: the installer and these hints run there; cmd needs %USERPROFILE% instead of ~.
   return platform === 'win32' ? `~\\.baton-bridge\\baton.cmd ${args}` : `~/.baton-bridge/baton ${args}`;
 }
 
-// The service writes it on every start, so updates deliver it; a CLI run only creates a missing one, so a
-// `node bridge.mjs pair` on another Node.js does not repoint it. Unchanged content is not rewritten.
-export function writeCliLauncher(home = BRIDGE_HOME, platform = process.platform, node = process.execPath, onlyIfMissing = false) {
+export function writeCliLauncher(home = BRIDGE_HOME, platform = process.platform) {
   const file = path.join(home, platform === 'win32' ? 'baton.cmd' : 'baton');
-  const text = CLI_LAUNCHERS[platform === 'win32' ? 'cmd' : 'sh'](node);
-  let current = null;
-  try { current = fs.readFileSync(file, 'utf-8'); } catch {}
-  if (current !== text && !(onlyIfMissing && current !== null)) fs.writeFileSync(file, text, { mode: 0o755 });
+  fs.writeFileSync(file, CLI_LAUNCHERS[platform === 'win32' ? 'cmd' : 'sh'](process.execPath), { mode: 0o755 });
   if (platform !== 'win32') fs.chmodSync(file, 0o755);
   return file;
 }
