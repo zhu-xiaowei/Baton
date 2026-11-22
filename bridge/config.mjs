@@ -28,7 +28,7 @@ export const IS_WSL = !!process.env.WSL_DISTRO_NAME;
 export const NEEDS_POLLING = IS_WSL && CLAUDE_PROJECTS.startsWith('/mnt/');
 
 // `~/.baton-bridge/baton` (`baton.cmd` on Windows) runs bridge.mjs with the Node.js the service runs on, written at
-// every service start; if an update deleted that runtime it uses the user's `node`. cmd: one line, so a rewrite during
+// every service start (a `pair` run only creates a missing one); if an update deleted that runtime it uses the user's `node`. cmd: one line, so a rewrite during
 // the run leaves no tail; `call` expands ERRORLEVEL after node exits. The hint is the PowerShell form (cmd: %USERPROFILE%).
 const CLI_LAUNCHERS = {
   sh: (node) => ['#!/bin/sh', 'dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd) || exit 1',
@@ -41,8 +41,9 @@ export function bridgeCommand(args, platform = process.platform) {
   return platform === 'win32' ? `~\\.baton-bridge\\baton.cmd ${args}` : `~/.baton-bridge/baton ${args}`;
 }
 
-export function writeCliLauncher(home = BRIDGE_HOME, platform = process.platform) {
+export function writeCliLauncher(home = BRIDGE_HOME, platform = process.platform, ifMissing = false) {
   const file = path.join(home, platform === 'win32' ? 'baton.cmd' : 'baton');
+  if (ifMissing && fs.existsSync(file)) return file;
   fs.writeFileSync(file, CLI_LAUNCHERS[platform === 'win32' ? 'cmd' : 'sh'](process.execPath), { mode: 0o755 });
   if (platform !== 'win32') fs.chmodSync(file, 0o755);
   return file;
