@@ -214,12 +214,21 @@ function render(d) {
   h.push('<div class="kpis">',
     kpi('服务状态', healthy ? '正常' : '异常', healthy ? `${probes.map((p) => p.ms).join(' / ')} ms` : `<span style="white-space:normal">${esc(problems.join('、') || '无快照')}</span>`, healthy ? 'ok' : 'bad'),
     kpi('当前在线', n(online.apps), `App ${n(online.apps)} · Bridge ${n(online.awake)}`),
-    kpi('今日日活', n(dau), u.error ? '— 数据不足' : `较昨日 ${dau - before >= 0 ? '+' : ''}${dau - before}`),
+    `<div class="card"><div class="big">${n(dau)}</div><div class="label">今日日活</div><div class="sub">${u.error ? '— 数据不足' : `较昨日 ${dau - before >= 0 ? '+' : ''}${dau - before}`}</div>`
+      + `<div class="sub">今日设备 App ${n(u.devices?.app ?? 0)} · Bridge ${n(u.devices?.bridge ?? 0)}</div>`
+      + `<div class="sub">累计设备 ${n((d.devices?.app ?? 0) + (d.devices?.bridge ?? 0))}</div></div>`,
     `<div class="card"><div class="big">${usd(paid ? c.bill : c.usage)}</div><div class="label">本月费用</div><div class="sub">月底预计 ${usd(paid ? c.projectedBill : c.projectedUsage)}</div>`
       + (quotas[0] ? `<div class="sub flex"><span style="white-space:normal">${paid ? '最接近免费包含量的项目' : '最接近上限的额度'}</span>${info(paid
         ? '付费版每月包含用量中，用量占比最高的一项；超出部分按量计费' : '免费套餐各项额度中（多数按天计），用量占比最高的一项')}</div>`
         + meter(quotas[0][3], `<span>${QUOTA[quotas[0][0]]?.[0] ?? quotas[0][0]}</span>`, pct(quotas[0][3])) : '') + '</div>',
     '</div>');
+
+  h.push('<div class="grid" style="margin-top:12px">', card(`大陆中转 ${info('流量为中转机入站加出站（Lightsail 的额度口径），达到上限即停止转发、客户端改为直连。账户数为经中转连接过的账户（按 App / Bridge）。日、月均按 UTC，北京时间 08:00 起算。')}`,
+      (relays.length ? relays.map((r) => meter(r.monthBytes / r.cap, `<span>${esc(r.name)} 本月${r.stopped ? ' · <span class="bad">已停止</span>' : ''}</span>`,
+        `${bytes(r.monthBytes)} / ${bytes(r.cap)}`) + kv('今日（UTC）', bytes(r.dayBytes)) + kv('近 24 小时地址', `${n(r.addrs)} 个`)
+        + kv('上次上报', `<span class="${age(r) > 15 ? 'warn' : ''}">${n(age(r))} 分钟前</span>`)).join('') : NA('尚无上报'))
+        + kv('经中转账户 · 今日（UTC）', `App ${n(ru.day?.app ?? 0)} · Bridge ${n(ru.day?.bridge ?? 0)}`)
+        + kv('经中转账户 · 本月', `App ${n(ru.month?.app ?? 0)} · Bridge ${n(ru.month?.bridge ?? 0)}`)), '</div>');
 
   h.push('<h2>用户</h2><div class="grid">',
     card('活跃用户', `<div class="trio"><div><div class="big">${n(u.dau)}</div><div class="label">日活</div></div><div><div class="big">${n(u.wau)}</div><div class="label">周活</div></div>`
@@ -248,13 +257,7 @@ function render(d) {
     card('推送', pushAll ? `<div class="big ${pushOk / pushAll < 0.95 ? 'warn' : 'ok'}">${pct(pushOk / pushAll)}</div><div class="label">成功率</div><div class="sub">成功 ${n(pushOk)} · 失败 ${n(pushAll - pushOk)}</div>`
       : NA('今日暂无推送'), '近 24 小时'),
     card('请求来源', bars(live.countries) + `<div class="sub">${(live.devices ?? []).map(([k, v]) => `${{ desktop: '桌面', mobile: '手机', tablet: '平板' }[k] ?? k} ${n(v)}`).join(' · ')}</div>`, '近 24 小时'),
-    card(`大陆中转 ${info('流量为中转机入站加出站（Lightsail 的额度口径），达到上限即停止转发、客户端改为直连。账户数为经中转连接过的账户（按 App / Bridge）。日、月均按 UTC，北京时间 08:00 起算。')}`,
-      (relays.length ? relays.map((r) => meter(r.monthBytes / r.cap, `<span>${esc(r.name)} 本月${r.stopped ? ' · <span class="bad">已停止</span>' : ''}</span>`,
-        `${bytes(r.monthBytes)} / ${bytes(r.cap)}`) + kv('今日（UTC）', bytes(r.dayBytes)) + kv('近 24 小时地址', `${n(r.addrs)} 个`)
-        + kv('上次上报', `<span class="${age(r) > 15 ? 'warn' : ''}">${n(age(r))} 分钟前</span>`)).join('') : NA('尚无上报'))
-        + kv('经中转账户 · 今日（UTC）', `App ${n(ru.day?.app ?? 0)} · Bridge ${n(ru.day?.bridge ?? 0)}`)
-        + kv('经中转账户 · 本月', `App ${n(ru.month?.app ?? 0)} · Bridge ${n(ru.month?.bridge ?? 0)}`)),
-    '</div>');
+'</div>');
 
   h.push('<h2>费用与额度</h2>');
   if (L0.error) h.push(`<div class="err">${noToken ? '未设置分析令牌 ANALYTICS_TOKEN：用量、费用和封禁上限暂停，探测照常。请在 Cloudflare 控制台添加。' : `用量读取失败：${esc(L0.error)}`}</div>`);

@@ -169,7 +169,7 @@ async function users(env) {
   const from = (days) => `FROM ${env.DATASET} WHERE timestamp > NOW() - INTERVAL '${days}' DAY AND blob2 != '${env.PROBE_HASH}'`;
   const day = iso(Date.now()).slice(0, 10);
   const relayed = (days, when) => `SELECT blob4 AS role, count(DISTINCT blob2) AS n ${from(days)} AND blob1 = 'relay' AND ${when} GROUP BY role`;
-  const [daily, wau, mau, dist, time, bridges, conns, relayDay, relayMonth] = await Promise.all([
+  const [daily, wau, mau, dist, time, bridges, conns, relayDay, relayMonth, devices] = await Promise.all([
     `SELECT blob3 AS day, count(DISTINCT blob2) AS dau, sum(if(blob7 = 'new', 1, 0)) AS new ${from(30)} AND blob1 = 'active' GROUP BY day ORDER BY day`,
     `SELECT count(DISTINCT blob2) AS n ${from(7)} AND blob1 = 'active'`,
     `SELECT count(DISTINCT blob2) AS n ${from(30)} AND blob1 = 'active'`,
@@ -178,6 +178,7 @@ async function users(env) {
     `SELECT blob7 AS version, blob4 AS os, count(DISTINCT blob2) AS n ${from(1)} AND blob1 = 'bridge' GROUP BY version, os`,
     `SELECT blob1 AS kind, blob4 AS role, double3 AS code, sum(_sample_interval * double4) AS n, sum(_sample_interval * double4 * double1) AS secs ${from(1)} AND blob1 IN ('conn', 'reject') GROUP BY kind, role, code`,
     relayed(1, `blob3 = '${day}'`), relayed(31, `blob3 >= '${day.slice(0, 8)}01'`), // accounts through the mainland-China relay
+    `SELECT blob1 AS role, sum(_sample_interval) AS n ${from(1)} AND blob1 IN ('app', 'bridge') AND blob3 = '${day}' GROUP BY role`, // one a day each
   ].map((sql) => ae(env, sql)));
   const roles = (rows) => Object.fromEntries(rows.map((r) => [r.role, Number(r.n)]));
   const by = (key) => Object.entries(dist.reduce((o, r) => ({ ...o, [r[key] || '?']: (o[r[key] || '?'] ?? 0) + Number(r.n) }), {}))
@@ -186,7 +187,7 @@ async function users(env) {
   return { daily, dau: Number(daily.at(-1)?.dau ?? 0), wau: Number(wau[0]?.n ?? 0), mau: Number(mau[0]?.n ?? 0),
     platforms: by('platform'), countries: by('country'), networks: by('network'),
     avgDailySecs: days.length ? sum(days, (r) => Number(r.secs)) / days.length : null, bridges, conns,
-    relay: { day: roles(relayDay), month: roles(relayMonth) } };
+    relay: { day: roles(relayDay), month: roles(relayMonth) }, devices: roles(devices) };
 }
 
 async function live(env) {
@@ -219,6 +220,7 @@ export class MonitorStore extends DurableObject {
     super(ctx, env);
     this.sql = ctx.storage.sql;
     this.sql.exec('CREATE TABLE IF NOT EXISTS snaps (t INTEGER PRIMARY KEY, ok INTEGER, online INTEGER, data TEXT)');
+    this.sql.exec('CREATE TABLE IF NOT EXISTS devices (id TEXT PRIMARY KEY, role TEXT, first INTEGER)'); // every App and computer seen
   }
 
   // Each keyed alert once; one email per run lists them all.
@@ -290,6 +292,17 @@ export class MonitorStore extends DurableObject {
       if (r.month === month && r.stopped) this.alert(state, `relay-stop:${name}:${month}`, `relay ${name} stopped at its monthly cap`,
         `It relays again next month; meanwhile mainland clients use the API host directly.`);
     }
+    // Devices seen since the last run (overlapping; up to AE's 90 days the first time) join the all-time list.
+    if (env.DATASET && env.ANALYTICS_TOKEN) {
+      const minutes = Math.min(90 * 1440, Math.ceil((now - (state.devicesAt ?? 0)) / MIN) + 15);
+      try {
+        for (const r of await ae(env, `SELECT blob8 AS id, blob1 AS role FROM ${env.DATASET} WHERE timestamp > NOW() - INTERVAL '${minutes}' MINUTE`
+          + ` AND blob1 IN ('app', 'bridge') AND blob8 != '' AND blob2 != '${env.PROBE_HASH}' GROUP BY id, role`)) {
+          this.sql.exec('INSERT OR IGNORE INTO devices VALUES (?, ?, ?)', r.id, r.role, now);
+        }
+        state.devicesAt = now;
+      } catch (error) { console.log(`devices: ${error.message}`); }
+    }
     // New alerts are logged once; an email that could not be sent is retried with the next run's (at most 20 kept).
     const fresh = this.pending ?? [];
     this.pending = null;
@@ -353,6 +366,7 @@ export class MonitorStore extends DurableObject {
     const value = { now, latest: latest && { t: latest.t, ...JSON.parse(latest.data) }, series, uptime: { today: uptime(midnight), week: uptime(now - 7 * 1440 * MIN) }, useToday: today?.secs ?? 0,
       blocked: state.blocked ?? {}, alerts: state.log ?? [], cap: Number(this.env.COST_CAP || 1),
       relays: Object.fromEntries([...(await this.ctx.storage.list({ prefix: 'relay:' }))].map(([k, r]) => [k.slice(6), r])),
+      devices: Object.fromEntries(this.sql.exec('SELECT role, count(*) AS n FROM devices GROUP BY role').toArray().map((r) => [r.role, r.n])),
       live: await live(this.env).catch((error) => ({ error: error.message })) };
     this.cached = { until: now + MIN, value };
     return value;

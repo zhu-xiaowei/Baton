@@ -1,6 +1,7 @@
 // Usage points (Workers Analytics Engine, env.USAGE; absent on self-hosts) and the monthly cost cap of one AccountObject.
 // No content and no account id leave the object: accounts appear as a hash. Point layout (server/cloudflare/monitor.mjs):
-// blobs [kind, account, day, platform|os|role, country, network, new|version|reason], doubles [seconds, apps, code, weight].
+// blobs [kind, account, day, platform|os|role, country, network, new|version|reason, device], doubles [seconds, apps, code, weight].
+// `app` / `bridge`: each App (token) / computer once a day; `device` is a hash of it (the monitor's device count).
 // `relay`: an App (token) or Bridge (device) through the mainland-China relay, once a day each: [relay, account, day, role].
 import { readIpToken } from '../core/accounts.mjs';
 import { refuse } from './ports.mjs';
@@ -51,13 +52,16 @@ export class Usage {
     }
     if (seen.includes(app)) return;
     const query = new URL(request.url).searchParams;
-    if (me.role === 'bridge') await this.point(me.account, ['bridge', s.day, query.get('os') ?? '', '', '', query.get('version') ?? '']);
-    else if (!s.apps?.length) {
+    const device = (await accountHash(`${me.account}|${me.role}|${app}`)).slice(0, 12);
+    const platform = platformOf(request.headers.get('user-agent') ?? '');
+    if (me.role === 'bridge') await this.point(me.account, ['bridge', s.day, query.get('os') ?? '', '', '', query.get('version') ?? '', device]);
+    else await this.point(me.account, ['app', s.day, platform, '', '', '', device]);
+    if (me.role === 'app' && !s.apps?.length) {
       // Through the relay Cloudflare sees only the relay: the App's signed address (`ipt`) if any.
       const own = relay && await readIpToken(this.env.IP_TOKEN_KEY, query.get('ipt'));
       const [country, network] = !relay ? [request.cf?.country ?? '', String(request.cf?.asOrganization ?? '').slice(0, 64)]
         : own ? [own.country, `AS${own.asn}`] : ['relay', 'relay'];
-      await this.point(me.account, ['active', s.day, platformOf(request.headers.get('user-agent') ?? ''), country, network, isNew() ? 'new' : '']);
+      await this.point(me.account, ['active', s.day, platform, country, network, isNew() ? 'new' : '']);
     }
     seen.push(app);
     await this.save();

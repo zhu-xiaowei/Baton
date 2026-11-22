@@ -38,7 +38,7 @@ test('a computer code in its last 30 s opens no account', async () => {
   left = 100; assert.equal(await call(), 'ok');
 });
 
-test('a relay point once a day per App, also after a direct start', async () => {
+test('app and relay points once a day per App, a relay one also after a direct start', async () => {
   const { Usage } = await import('../../server/cloudflare/usage.mjs');
   const kinds = [], data = new Map();
   const usage = new Usage({ storage: { get: async (k) => data.get(k), put: async (k, v) => data.set(k, v) } },
@@ -46,5 +46,5 @@ test('a relay point once a day per App, also after a direct start', async () => 
   const join = (ip) => usage.joined(new Request('https://x/ws', { headers: { 'cf-connecting-ip': ip } }),
     { role: 'app', account: 'a', tokenHash: 'h'.repeat(16) }, () => false);
   for (const ip of ['1.2.3.4', '9.9.9.9', '9.9.9.9']) await join(ip);
-  assert.deepEqual(kinds, ['active', 'relay']);
+  assert.deepEqual(kinds, ['app', 'active', 'relay']); // an App's own point once a day, the account's first App's 'active'
 });
