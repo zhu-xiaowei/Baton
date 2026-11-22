@@ -40,7 +40,6 @@ private func allowedPreviewURL(_ url: URL?) -> Bool {
   guard let url = url else { return false }
   switch url.scheme?.lowercased() {
   case "http", "https": return url.host != nil && url.user == nil && url.password == nil
-  // Subframes with `srcdoc` navigate to about:srcdoc; cancelling it leaves them blank.
   case "about": return ["about:blank", "about:srcdoc"].contains(url.absoluteString)
   case "blob", "data": return true
   default: return false

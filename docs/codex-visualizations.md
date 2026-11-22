@@ -84,22 +84,8 @@ connectivity returns or the page becomes visible again. The original device
 must be online for the first load; a small memory cache is scoped to
 device/project/thread/path.
 
-## HTML code fences (every agent)
-
-An assistant message's closed ```` ```html ```` fence whose content is a whole
-document (after leading whitespace and comments it starts with `<!doctype html`
-or `<html`, case-insensitive) uses the same preview surface: sandboxed iframe,
-theme defaults, auto height and the full-screen dialog. The document comes from
-the message text, so no Bridge request is made and the preview also works for
-Claude Code, Pi, Hermes, OpenCode, Kiro and DeepSeek Harness. It looks exactly
-like a `visualize` preview, without a header or source view.
-
-Fragments, unclosed fences and documents over 1 MiB stay ordinary code blocks.
-While streaming, a fence stays a code block until its closing fence arrives;
-then a top-level fence becomes a persistent segment, so later text does not
-reload the iframe. A fence nested in a list or quote stays code until the
-message is rendered again from history. Markdown file previews are unaffected.
-
-The macOS/iOS native Remote preview (`tauri-plugin-preview-webview`) allows
-`about:srcdoc` subframe navigations, so pages using `srcdoc` iframes, including
-these previews viewed through a forwarded port, are not left blank.
+Every agent's closed ```` ```html ```` fence holding a whole document (starting,
+after whitespace/comments, with `<!doctype html` or `<html`; at most 1 MiB) renders
+as the same preview, fed from the message text instead of a file. Fragments stay
+code; while streaming, the fence stays code until it closes. The macOS/iOS native
+Remote preview allows `about:srcdoc` subframes so such previews are not blank there.

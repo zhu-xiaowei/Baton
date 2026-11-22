@@ -287,15 +287,12 @@ export async function loadVisualization(block, reload = false) {
   status.hidden = false;
   status.removeAttribute('role');
   status.innerHTML = window.loadingSpinner?.({ label: 'Loading preview' }) || '';
-  // HTML fences carry their document instead of a file path.
-  const inline = block.hasAttribute('data-visualization-inline')
-    && block.querySelector('.visualization-source');
+  const inline = block.dataset.visualizationHtml;
   try {
-    if (!inline && (!current.device || !current.projectHash || !current.sessionId)) {
+    if (inline == null && (!current.device || !current.projectHash || !current.sessionId)) {
       throw new Error('Open the original session to load this preview.');
     }
-    const content = inline ? inline.textContent
-      : await fetchDocument(block.dataset.visualizationPath, current, reload);
+    const content = inline ?? await fetchDocument(block.dataset.visualizationPath, current, reload);
     const iconRuntime = /\b(?:data-lucide|lucide)\b/.test(content) ? await loadVisualizationIcons() : '';
     if (!block.isConnected || previews.get(block) !== preview || contextKey(context()) !== preview.context) return;
     preview.content = content;
@@ -303,7 +300,7 @@ export async function loadVisualization(block, reload = false) {
     const surface = document.createElement('dialog');
     surface.className = 'visualization-surface';
     surface.open = true;
-    const title = inline ? 'HTML preview' : block.dataset.visualizationPath.split(/[\\/]/).pop();
+    const title = inline != null ? 'HTML preview' : block.dataset.visualizationPath.split(/[\\/]/).pop();
     surface.setAttribute('aria-label', title);
     const expand = document.createElement('button');
     expand.type = 'button';

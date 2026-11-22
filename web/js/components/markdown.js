@@ -219,33 +219,12 @@
     } catch (error) {}
   }
 
-  window.visualizationHtml = function (filePath) {
+  window.visualizationHtml = function (filePath, inline) {
     var safePath = escHtml(filePath).replace(/"/g, '&quot;');
-    return '<span class="codex-visualization" data-visualization-path="' + safePath + '">'
+    return '<span class="codex-visualization" data-visualization-' + (inline ? 'html' : 'path') + '="' + safePath + '">'
       + '<span class="visualization-status">' + (window.loadingSpinner?.({ label: 'Loading preview' }) || '') + '</span>'
       + '</span>';
   };
-
-  // A closed ```html fence holding a whole document previews like a Codex visualization.
-  var htmlPreviewMaxBytes = 1024 * 1024; // visualization.js maxBytes
-  function htmlDocumentFence(token) {
-    return token.type === 'code' && /^html$/i.test((token.lang || '').trim().split(/\s+/)[0])
-      && /^ {0,3}(?:`{3,}|~{3,})/.test(token.raw) && fenceClosed(token.raw)
-      && /^\uFEFF?(?:\s|<!--[\s\S]*?-->)*<(?:!doctype\s+html|html)[\s>]/i.test(token.text)
-      && new TextEncoder().encode(token.text).length <= htmlPreviewMaxBytes;
-  }
-
-  // The document travels in a hidden source node; visualization.js loads it into the iframe.
-  window.htmlPreviewHtml = function (code) {
-    return '<span class="codex-visualization" data-visualization-inline="">'
-      + '<span class="visualization-status">' + (window.loadingSpinner?.({ label: 'Loading preview' }) || '') + '</span>'
-      + '<span class="visualization-source" hidden>' + escHtml(code) + '</span></span>';
-  };
-
-  marked.use({ extensions: [{
-    name: 'htmlPreview',
-    renderer: function (token) { return trusted(window.htmlPreviewHtml(token.text)); },
-  }] });
 
   marked.use({ extensions: ['block', 'inline'].map(function (level) {
     return {
@@ -256,7 +235,7 @@
         return index < 0 ? undefined : index + (level === 'block' ? 1 : 0);
       },
       tokenizer: visualizationToken,
-      renderer: function (token) { return trusted(window.visualizationHtml(token.text)); },
+      renderer: function (token) { return trusted(window.visualizationHtml(token.text, token.inline)); },
     };
   }) });
 
@@ -322,8 +301,12 @@
       fences: function (src) {
         var token = Object.getPrototypeOf(this).fences.call(this, src);
         if (token && _streaming && /^math\b/i.test(token.lang) && !fenceClosed(token.raw)) token.lang = '';
-        // While streaming, renderStream keeps top-level documents as persistent segments.
-        if (token && _chatCode && !_streaming && !_documentSlots && htmlDocumentFence(token)) token.type = 'htmlPreview';
+        // A closed ```html document (<= 1 MiB) previews like `visualize` (while streaming, via renderStream's segments).
+        if (token && !_documentSlots && !(_streaming && _chatCode) && /^html(?:\s|$)/i.test(token.lang)
+          && fenceClosed(token.raw) && new Blob([token.text]).size <= 1048576
+          && /^\uFEFF?(?:\s|<!--[\s\S]*?-->)*<(?:!doctype\s+html|html)[\s>]/i.test(token.text)) {
+          return { type: 'codexVisualization', raw: token.raw, text: token.text, inline: true };
+        }
         return token;
       },
     },
@@ -524,9 +507,7 @@
         var result = [];
         marked.lexer(segment.text).forEach(function (token) {
           if (token.type === 'codexVisualization') {
-            result.push({ type: 'visualization', text: token.text });
-          } else if (htmlDocumentFence(token)) {
-            result.push({ type: 'htmlPreview', text: token.text });
+            result.push({ type: 'visualization', text: token.text, inline: token.inline });
           } else if (result.length && result[result.length - 1].type === 'text') {
             result[result.length - 1].text += token.raw;
           } else {
@@ -554,18 +535,11 @@
           updateMarkdownHtml(node, html); node.dataset.h = html;
         }
       } else if (seg.type === 'visualization') {
-        if (!node || node.nodeType !== 1 || node.dataset.visualizationPath !== seg.text) {
+        if (!node || node.nodeType !== 1 || node.dataset[seg.inline ? 'visualizationHtml' : 'visualizationPath'] !== seg.text) {
           var template = document.createElement('template');
-          template.innerHTML = window.visualizationHtml(seg.text);
+          template.innerHTML = window.visualizationHtml(seg.text, seg.inline);
           var preview = template.content.firstChild;
           if (node) host.replaceChild(preview, node); else host.appendChild(preview);
-        }
-      } else if (seg.type === 'htmlPreview') {
-        if (!node || node.nodeType !== 1 || !node.hasAttribute('data-visualization-inline')
-          || node.querySelector('.visualization-source')?.textContent !== seg.text) {
-          var holder = document.createElement('template');
-          holder.innerHTML = window.htmlPreviewHtml(seg.text);
-          if (node) host.replaceChild(holder.content.firstChild, node); else host.appendChild(holder.content.firstChild);
         }
       } else {
         if (!node || node.nodeType !== 1 || !node.classList || !node.classList.contains('mermaid-block')) { // insert a fresh block
