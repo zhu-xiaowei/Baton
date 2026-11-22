@@ -217,7 +217,10 @@ function render(d) {
     `<div class="card"><div class="big">${n(dau)}</div><div class="label">今日日活</div><div class="sub">${u.error ? '— 数据不足' : `较昨日 ${dau - before >= 0 ? '+' : ''}${dau - before}`}</div>`
       + kv('今日 App', n(u.devices?.app ?? 0)) + kv('今日 Bridge', n(u.devices?.bridge ?? 0))
       + kv('累计设备', n((d.devices?.app ?? 0) + (d.devices?.bridge ?? 0))) + '</div>',
-    `<div class="card"><div class="big">${usd(paid ? c.bill : c.usage)}</div><div class="label">本月费用</div><div class="sub">月底预计 ${usd(paid ? c.projectedBill : c.projectedUsage)}</div></div>`,
+    `<div class="card"><div class="big">${usd(paid ? c.bill : c.usage)}</div><div class="label">本月费用</div><div class="sub">月底预计 ${usd(paid ? c.projectedBill : c.projectedUsage)}</div>`
+      + (quotas[0] ? `<div class="sub flex"><span style="white-space:normal">${paid ? '最接近免费包含量的项目' : '最接近上限的额度'}</span>${info(paid
+        ? '付费版每月包含用量中，用量占比最高的一项；超出部分按量计费' : '免费套餐各项额度中（多数按天计），用量占比最高的一项')}</div>`
+        + meter(quotas[0][3], `<span>${QUOTA[quotas[0][0]]?.[0] ?? quotas[0][0]}</span>`, pct(quotas[0][3])) : '') + '</div>',
     '</div>');
 
   h.push('<div class="grid" style="margin-top:12px">', card(`大陆中转 ${info('流量为中转机入站加出站（Lightsail 的额度口径），达到上限即停止转发、客户端改为直连。账户数为经中转连接过的账户（按 App / Bridge）。日、月均按 UTC，北京时间 08:00 起算。')}`,
