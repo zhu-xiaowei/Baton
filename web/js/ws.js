@@ -2002,18 +2002,21 @@ async function loadLatestMessages(sessionId, options = {}) {
 
 function fetchLatestMessages(sessionId) {
   var params = { session: sessionId, device: state.appState.device };
-  var timer;
+  var timer, waited = 0, last = performance.now();
   var timeout = new Promise(function (_, reject) {
-    timer = setTimeout(function () {
-      reject(new Error('history fetch timeout'));
-    }, HISTORY_FETCH_TIMEOUT_MS);
+    // Time the App spends suspended does not count: a late tick adds no more than one tick.
+    timer = setInterval(function () {
+      waited += Math.min(performance.now() - last, 250);
+      last = performance.now();
+      if (waited >= HISTORY_FETCH_TIMEOUT_MS) reject(new Error('history fetch timeout'));
+    }, 250);
   });
   return Promise.race([
     bridgeHistory(params, {
       onSlow: function (page) { showCachedHistory(sessionId, page); },
     }),
     timeout,
-  ]).finally(function () { clearTimeout(timer); });
+  ]).finally(function () { clearInterval(timer); });
 }
 
 // '' (in sync or loading normally), 'slow' (past 6 s), 'stale' (the last load failed), 'offline'.
@@ -2045,7 +2048,7 @@ function showHistoryFailure(error) {
   var offline = error?.message === 'offline';
   var timeout = /timeout/.test(error?.message || '');
   setHistoryPhase(offline ? 'offline' : 'stale');
-  if (!offline) showToast(timeout ? 'Request timeout' : error?.message || 'Unable to load this session');
+  if (!offline && !document.hidden) showToast(timeout ? 'Request timeout' : error?.message || 'Unable to load this session');
   var content = document.getElementById('content');
   // The skeleton's placeholders are not history.
   if (!content || content.querySelector('.messages:not(.skeleton-messages) :is(.assistant-turn, .msg-user)')) return;

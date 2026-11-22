@@ -102,3 +102,8 @@ test('pushes reach subscribers only, whole, and follow a reconnect', async () =>
   assert.deepEqual(result.oneWay, { handled: 1, replies: 0 }, 'a one-way request is handled and not answered');
 });
 
+
+test('time the App spends suspended does not time a request out', async () => {
+  const resumed = await run({ computeMs: 500, suspendAt: 100 }); // the clock jumps 120 s with no tick in between
+  assert.deepEqual(resumed.value, { ok: 1 });
+});
