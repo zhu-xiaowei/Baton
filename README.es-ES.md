@@ -35,7 +35,7 @@ irm https://agentbaton.app/install.ps1 | iex
 | iOS | Android | HarmonyOS | macOS | Windows | Linux |
 |:---:|:---:|:---:|:---:|:---:|:---:|
 | <img src="docs/assets/baton_ios.avif" width="88" alt="iOS"> | <img src="docs/assets/baton_android.avif" width="88" alt="Android"> | <img src="docs/assets/harmonyos.avif" width="88" alt="HarmonyOS"> | <img src="docs/assets/macOS.avif" width="88" alt="macOS"> | <img src="docs/assets/windows.avif" width="88" alt="Windows"> | <img src="docs/assets/linux.avif" width="88" alt="Linux"> |
-| [TestFlight](https://testflight.apple.com/join/UekStGCA) | [Baton.apk](https://dl.agentbaton.app/Baton.apk) | [Compilar e instalar](harmony/README.md) | [Baton.dmg](https://dl.agentbaton.app/Baton.dmg) | [Baton.exe](https://dl.agentbaton.app/Baton.exe) | [Baton.deb](https://dl.agentbaton.app/Baton.deb) |
+| [TestFlight](https://testflight.apple.com/join/2HqQHD22) | [Baton.apk](https://dl.agentbaton.app/Baton.apk) | [Compilar e instalar](harmony/README.md) | [Baton.dmg](https://dl.agentbaton.app/Baton.dmg) | [Baton.exe](https://dl.agentbaton.app/Baton.exe) | [Baton.deb](https://dl.agentbaton.app/Baton.deb) |
 
 Escanea el código QR que muestra el Bridge o pega su **Start URL**.
 
