@@ -114,7 +114,7 @@ a phone (no empty accounts to expire), and every computer and phone of one perso
    creates an App code (`pair/create`, QR `…/#c=<p>`). The new App scans or opens it; `claim` →
    token + sealed; opens `K`; stores token as `_ak`, server as `_as`, `K` (§7). It sees every computer of the
    account at once (`/devices` is per account).
-4. **Show a code again:** `~/.baton-bridge/baton pair` (Windows: `~\.baton-bridge\baton.cmd pair`) (Bridge with `K`: App code; without: join
+4. **Show a code again:** `~/.baton-bridge/baton pair` (Windows PowerShell: `~\.baton-bridge\baton.cmd pair`; cmd: `%USERPROFILE%\.baton-bridge\baton.cmd pair`) (Bridge with `K`: App code; without: join
    code; one code, then it exits). `pair --leave` asks for confirmation, then shows a join code and moves the
    computer to the account that approves it (the old config.json is kept as `config.json.bak-<time>` and changes
    only once joined; the running Bridge restarts). Every install run ends with `pair`.

@@ -69,6 +69,8 @@ test('the baton command runs bridge.mjs with the service\'s Node.js, else the us
   fs.writeFileSync(node, `#!/bin/sh\necho service; exec ${JSON.stringify(process.execPath)} "$@"\n`, { mode: 0o755 });
   const launcher = writeCliLauncher(home, 'linux', node);
   assert.equal(execFileSync(launcher, ['pair', 'a b'], { encoding: 'utf-8' }), 'service\n["pair","a b"]\n');
+  writeCliLauncher(home, 'linux', '/old/node', true);
+  assert.ok(!fs.readFileSync(launcher, 'utf-8').includes('/old/node'));
   fs.rmSync(node);
   const env = { ...process.env, PATH: `${path.dirname(process.execPath)}:${process.env.PATH}` };
   assert.equal(execFileSync(launcher, ['pair'], { encoding: 'utf-8', env }), '["pair"]\n');
