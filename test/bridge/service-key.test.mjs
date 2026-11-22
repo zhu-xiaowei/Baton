@@ -62,12 +62,15 @@ test('a removed device turns off autostart and drops its key', () => {
   }
 });
 
-test('the baton command runs bridge.mjs with the private Node.js and passes arguments', { skip: process.platform === 'win32' }, () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'baton-cli-'));
+test('the baton command runs bridge.mjs with the service\'s Node.js, else the user\'s', { skip: process.platform === 'win32' }, () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "baton cli's-"));
   fs.writeFileSync(path.join(home, 'bridge.mjs'), 'console.log(JSON.stringify(process.argv.slice(2)))');
-  fs.mkdirSync(path.join(home, 'node', 'v0', 'bin'), { recursive: true });
-  const node = path.join(home, 'node', 'v0', 'bin', 'node');
-  fs.writeFileSync(node, `#!/bin/sh\necho private; exec ${JSON.stringify(process.execPath)} "$@"\n`, { mode: 0o755 });
-  const out = execFileSync(writeCliLauncher(home, 'linux'), ['pair', '--leave', 'a b'], { encoding: 'utf-8' });
-  assert.equal(out, 'private\n["pair","--leave","a b"]\n');
+  const node = path.join(home, 'node');
+  fs.writeFileSync(node, `#!/bin/sh\necho service; exec ${JSON.stringify(process.execPath)} "$@"\n`, { mode: 0o755 });
+  const launcher = writeCliLauncher(home, 'linux', node);
+  assert.equal(execFileSync(launcher, ['pair', 'a b'], { encoding: 'utf-8' }), 'service\n["pair","a b"]\n');
+  fs.rmSync(node);
+  const env = { ...process.env, PATH: `${path.dirname(process.execPath)}:${process.env.PATH}` };
+  assert.equal(execFileSync(launcher, ['pair'], { encoding: 'utf-8', env }), '["pair"]\n');
+  fs.rmSync(home, { recursive: true, force: true });
 });

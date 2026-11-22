@@ -27,14 +27,13 @@ export const WS_FRAME_LIMIT = 31_000;
 export const IS_WSL = !!process.env.WSL_DISTRO_NAME;
 export const NEEDS_POLLING = IS_WSL && CLAUDE_PROJECTS.startsWith('/mnt/');
 
-// `~/.baton-bridge/baton` (`baton.cmd` on Windows) runs bridge.mjs with the private Node.js the installer pins the
-// service to, else the user's. Resolved at run time: an install that changes the version deletes the old runtime.
+// `~/.baton-bridge/baton` (`baton.cmd` on Windows) runs bridge.mjs with the Node.js the service runs on, rewritten
+// at every start; if an update has deleted that runtime it falls back to the user's `node`.
 const CLI_LAUNCHERS = {
-  sh: ['#!/bin/sh', 'dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd) || exit 1', 'node=node',
-    'for n in "$dir"/node/*/bin/node; do [ -x "$n" ] && node=$n; done', 'exec "$node" "$dir/bridge.mjs" "$@"', ''].join('\n'),
-  cmd: ['@echo off', 'setlocal', 'set "BATON_NODE=node"',
-    'for /d %%d in ("%~dp0node\\*") do if exist "%%~fd\\node.exe" set "BATON_NODE=%%~fd\\node.exe"',
-    '"%BATON_NODE%" "%~dp0bridge.mjs" %*', 'exit /b %ERRORLEVEL%', ''].join('\r\n'),
+  sh: (node) => ['#!/bin/sh', 'dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd) || exit 1',
+    `node='${node.replaceAll("'", "'\\''")}'`, '[ -x "$node" ] || node=node', 'exec "$node" "$dir/bridge.mjs" "$@"', ''].join('\n'),
+  cmd: (node) => ['@echo off', 'setlocal', `set "BATON_NODE=${node.replaceAll('%', '%%')}"`,
+    'if not exist "%BATON_NODE%" set "BATON_NODE=node"', '"%BATON_NODE%" "%~dp0bridge.mjs" %*', 'exit /b %ERRORLEVEL%', ''].join('\r\n'),
 };
 
 export function bridgeCommand(args, platform = process.platform) {
@@ -42,9 +41,9 @@ export function bridgeCommand(args, platform = process.platform) {
 }
 
 // Written on every start, so updates deliver it too.
-export function writeCliLauncher(home = BRIDGE_HOME, platform = process.platform) {
+export function writeCliLauncher(home = BRIDGE_HOME, platform = process.platform, node = process.execPath) {
   const file = path.join(home, platform === 'win32' ? 'baton.cmd' : 'baton');
-  fs.writeFileSync(file, CLI_LAUNCHERS[platform === 'win32' ? 'cmd' : 'sh'], { mode: 0o755 });
+  fs.writeFileSync(file, CLI_LAUNCHERS[platform === 'win32' ? 'cmd' : 'sh'](node), { mode: 0o755 });
   if (platform !== 'win32') fs.chmodSync(file, 0o755);
   return file;
 }
