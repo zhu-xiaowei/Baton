@@ -8,11 +8,19 @@ import { refuse } from './ports.mjs';
 
 const HOUR = 3_600_000;
 const SAMPLE = 10; // detail points: 1 in 10, weight 10
-const today = () => new Date().toISOString().slice(0, 10);
+export const today = () => new Date().toISOString().slice(0, 10);
 const platformOf = (ua = '') => (/iPhone|iPad/.test(ua) ? 'iOS' : /Android/.test(ua) ? 'Android' : /Macintosh/.test(ua) ? 'macOS'
   : /Windows/.test(ua) ? 'Windows' : /Linux|X11/.test(ua) ? 'Linux' : 'web');
 export const accountHash = async (account) => [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(account)))]
   .slice(0, 8).map((b) => b.toString(16).padStart(2, '0')).join('');
+
+// What a socket's daily points need, kept on it: one still open on a later UTC day counts there at its next frame.
+export function describe(request) {
+  const query = new URL(request.url).searchParams;
+  return { ip: request.headers.get('cf-connecting-ip'), platform: platformOf(request.headers.get('user-agent') ?? ''),
+    os: query.get('os') ?? '', version: query.get('version') ?? '', ipt: query.get('ipt') ?? '',
+    country: request.cf?.country ?? '', network: String(request.cf?.asOrganization ?? '').slice(0, 64) };
+}
 
 export class Usage {
   constructor(ctx, env) { this.ctx = ctx; this.env = env; }
@@ -36,7 +44,7 @@ export class Usage {
   }
 
   // An accepted socket: the account's first App of the day writes `active`, each Bridge device `bridge` once a day.
-  async joined(request, me, isNew) {
+  async joined(info, me, isNew) {
     const s = await this.state();
     if (s.day !== today()) {
       if (s.secs > (s.reported ?? 0)) await this.point(me.account, ['summary', s.day], [s.secs, s.apps?.length ?? 0]);
@@ -44,24 +52,22 @@ export class Usage {
     }
     const app = me.role === 'app' ? me.tokenHash.slice(0, 8) : me.device;
     const seen = me.role === 'app' ? s.apps : s.devs;
-    const relay = (this.env.RELAY_IPS ?? '').split(',').includes(request.headers.get('cf-connecting-ip'));
+    const relay = (this.env.RELAY_IPS ?? '').split(',').includes(info.ip);
     if (relay && !(s.rel ??= []).includes(`${me.role}:${app}`)) { // also when it came directly earlier today
       await this.point(me.account, ['relay', s.day, me.role]);
       s.rel.push(`${me.role}:${app}`);
       await this.save();
     }
     if (seen.includes(app)) return;
-    const query = new URL(request.url).searchParams;
     const device = (await accountHash(`${me.account}|${me.role}|${app}`)).slice(0, 12);
-    const platform = platformOf(request.headers.get('user-agent') ?? '');
-    if (me.role === 'bridge') await this.point(me.account, ['bridge', s.day, query.get('os') ?? '', '', '', query.get('version') ?? '', device]);
-    else await this.point(me.account, ['app', s.day, platform, '', '', '', device]);
+    if (me.role === 'bridge') await this.point(me.account, ['bridge', s.day, info.os, '', '', info.version, device]);
+    else await this.point(me.account, ['app', s.day, info.platform, '', '', '', device]);
     if (me.role === 'app' && !s.apps?.length) {
       // Through the relay Cloudflare sees only the relay: the App's signed address (`ipt`) if any.
-      const own = relay && await readIpToken(this.env.IP_TOKEN_KEY, query.get('ipt'));
-      const [country, network] = !relay ? [request.cf?.country ?? '', String(request.cf?.asOrganization ?? '').slice(0, 64)]
+      const own = relay && await readIpToken(this.env.IP_TOKEN_KEY, info.ipt);
+      const [country, network] = !relay ? [info.country, info.network]
         : own ? [own.country, `AS${own.asn}`] : ['relay', 'relay'];
-      await this.point(me.account, ['active', s.day, platform, country, network, isNew() ? 'new' : '']);
+      await this.point(me.account, ['active', s.day, info.platform, country, network, isNew() ? 'new' : '']);
     }
     seen.push(app);
     await this.save();
