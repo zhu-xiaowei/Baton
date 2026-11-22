@@ -7,7 +7,7 @@ import { transfer } from '../../../bridge/transfer-store.mjs';
 const previews = new WeakMap();
 const documents = new Map();
 const pending = new Map();
-const selector = '.codex-visualization[data-visualization-path]';
+const selector = '.codex-visualization';
 const maxDocuments = 12;
 const maxBytes = 1024 * 1024;
 const themeProperties = {
@@ -287,11 +287,15 @@ export async function loadVisualization(block, reload = false) {
   status.hidden = false;
   status.removeAttribute('role');
   status.innerHTML = window.loadingSpinner?.({ label: 'Loading preview' }) || '';
+  // HTML fences carry their document in the sibling source view.
+  const inline = block.hasAttribute('data-visualization-inline')
+    && block.parentElement.querySelector(':scope > pre > code');
   try {
-    if (!current.device || !current.projectHash || !current.sessionId) {
+    if (!inline && (!current.device || !current.projectHash || !current.sessionId)) {
       throw new Error('Open the original session to load this preview.');
     }
-    const content = await fetchDocument(block.dataset.visualizationPath, current, reload);
+    const content = inline ? inline.textContent
+      : await fetchDocument(block.dataset.visualizationPath, current, reload);
     const iconRuntime = /\b(?:data-lucide|lucide)\b/.test(content) ? await loadVisualizationIcons() : '';
     if (!block.isConnected || previews.get(block) !== preview || contextKey(context()) !== preview.context) return;
     preview.content = content;
@@ -299,7 +303,7 @@ export async function loadVisualization(block, reload = false) {
     const surface = document.createElement('dialog');
     surface.className = 'visualization-surface';
     surface.open = true;
-    const title = block.dataset.visualizationPath.split(/[\\/]/).pop();
+    const title = inline ? 'HTML preview' : block.dataset.visualizationPath.split(/[\\/]/).pop();
     surface.setAttribute('aria-label', title);
     const expand = document.createElement('button');
     expand.type = 'button';

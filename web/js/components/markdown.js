@@ -226,6 +226,38 @@
       + '</span>';
   };
 
+  // A closed ```html fence holding a whole document previews like a Codex visualization.
+  var htmlPreviewMaxBytes = 1024 * 1024; // visualization.js maxBytes
+  function htmlDocumentFence(token) {
+    return token.type === 'code' && /^html$/i.test((token.lang || '').trim().split(/\s+/)[0])
+      && /^ {0,3}(?:`{3,}|~{3,})/.test(token.raw) && fenceClosed(token.raw)
+      && /^\uFEFF?(?:\s|<!--[\s\S]*?-->)*<(?:!doctype\s+html|html)[\s>]/i.test(token.text)
+      && new TextEncoder().encode(token.text).length <= htmlPreviewMaxBytes;
+  }
+
+  window.htmlPreviewHtml = function (code) {
+    var source;
+    try { source = hljs.highlight(code, { language: 'html' }).value; } catch (e) { source = escHtml(code); }
+    return '<div class="code-block html-preview-block"><div class="html-preview-head">'
+      + '<button type="button" class="mermaid-tab active" onclick="toggleHtmlPreview(this,false)">preview</button>'
+      + '<button type="button" class="mermaid-tab" onclick="toggleHtmlPreview(this,true)">source</button>'
+      + (window.copyButtonHtml?.('code') || '') + '</div>'
+      + '<span class="codex-visualization" data-visualization-inline="">'
+      + '<span class="visualization-status">' + (window.loadingSpinner?.({ label: 'Loading preview' }) || '') + '</span>'
+      + '</span><pre><code class="hljs">' + source + '</code></pre></div>';
+  };
+
+  window.toggleHtmlPreview = function (button, source) {
+    var block = button.closest('.html-preview-block');
+    block.classList.toggle('show-source', source);
+    block.querySelectorAll('.mermaid-tab').forEach(function (tab) { tab.classList.toggle('active', tab === button); });
+  };
+
+  marked.use({ extensions: [{
+    name: 'htmlPreview',
+    renderer: function (token) { return trusted(window.htmlPreviewHtml(token.text)); },
+  }] });
+
   marked.use({ extensions: ['block', 'inline'].map(function (level) {
     return {
       name: 'codexVisualization',
@@ -301,6 +333,8 @@
       fences: function (src) {
         var token = Object.getPrototypeOf(this).fences.call(this, src);
         if (token && _streaming && /^math\b/i.test(token.lang) && !fenceClosed(token.raw)) token.lang = '';
+        // While streaming, renderStream keeps top-level documents as persistent segments.
+        if (token && _chatCode && !_streaming && !_documentSlots && htmlDocumentFence(token)) token.type = 'htmlPreview';
         return token;
       },
     },
@@ -495,13 +529,15 @@
   // Keep decoded images and pending loads alive while streamed text changes around them.
   function renderStream(host, text) {
     var segs = splitMermaid(text || '');
-    if ((text || '').includes('visualize')) {
+    if (/visualize|(?:```|~~~)[ \t]*html/i.test(text || '')) {
       segs = segs.flatMap(function (segment) {
         if (segment.type !== 'text') return [segment];
         var result = [];
         marked.lexer(segment.text).forEach(function (token) {
           if (token.type === 'codexVisualization') {
             result.push({ type: 'visualization', text: token.text });
+          } else if (htmlDocumentFence(token)) {
+            result.push({ type: 'htmlPreview', text: token.text });
           } else if (result.length && result[result.length - 1].type === 'text') {
             result[result.length - 1].text += token.raw;
           } else {
@@ -534,6 +570,13 @@
           template.innerHTML = window.visualizationHtml(seg.text);
           var preview = template.content.firstChild;
           if (node) host.replaceChild(preview, node); else host.appendChild(preview);
+        }
+      } else if (seg.type === 'htmlPreview') {
+        if (!node || node.nodeType !== 1 || !node.classList.contains('html-preview-block')
+          || node.querySelector(':scope > pre > code')?.textContent !== seg.text) {
+          var holder = document.createElement('template');
+          holder.innerHTML = window.htmlPreviewHtml(seg.text);
+          if (node) host.replaceChild(holder.content.firstChild, node); else host.appendChild(holder.content.firstChild);
         }
       } else {
         if (!node || node.nodeType !== 1 || !node.classList || !node.classList.contains('mermaid-block')) { // insert a fresh block

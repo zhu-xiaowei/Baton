@@ -83,3 +83,20 @@ Missing files/offline devices show an error. Failed previews retry when network
 connectivity returns or the page becomes visible again. The original device
 must be online for the first load; a small memory cache is scoped to
 device/project/thread/path.
+
+## HTML code fences (every agent)
+
+An assistant message's closed ```` ```html ```` fence whose content is a whole
+document (after leading whitespace and comments it starts with `<!doctype html`
+or `<html`, case-insensitive) uses the same preview surface: sandboxed iframe,
+theme defaults, auto height and the full-screen dialog. The document comes from
+the message text, so no Bridge request is made and the preview also works for
+Claude Code, Pi, Hermes, OpenCode, Kiro and DeepSeek Harness. A preview/source
+switch above it shows the highlighted source, where the usual copy-code button
+copies it.
+
+Fragments, unclosed fences and documents over 1 MiB stay ordinary code blocks.
+While streaming, a fence stays a code block until its closing fence arrives;
+then a top-level fence becomes a persistent segment, so later text does not
+reload the iframe. A fence nested in a list or quote stays code until the
+message is rendered again from history. Markdown file previews are unaffected.
