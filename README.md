@@ -47,17 +47,11 @@ You can also [self-host the relay on AWS](#self-hosting-aws).
 
 ### Core
 
-- **Seven agents** — Claude Code, Codex, Pi, Hermes, OpenCode, Kiro, and DeepSeek Harness in one Device → Project → Session catalog
-- **Real-time streaming** — responses, thinking, and tool calls appear as they are generated
-- **Follow existing sessions** — keep using Claude Code and Codex on your computer as usual; a lightweight local Bridge mirrors live progress and running / needs input / done status
-- **Interact with existing sessions** — send follow-ups, even mid-turn, interrupt running turns, and continue work from any connected device
-- **Create projects and sessions** — create a new project, start Claude Code, Codex, or Claude background-agent sessions remotely, and keep monitoring them after detaching
-- **Permissions and questions** — approve or deny tool calls, answer questions, and review plans, including Codex command, file, and MCP approvals
-- **Slash commands and Skills** — `/` autocomplete for each runtime's built-in and custom commands, Codex Skills, and saved prompts
-- **Codex Goals** — set, pause, resume, or clear thread goals with `/goal`, and follow autonomous continuation turns in real time
-- **Subagents** — nested Claude Code and Codex subagents grouped under their main session, with live status and a hierarchical thread list
-- **Mobile notifications** — receive iOS and Android alerts when a session finishes or needs input; tap an alert to open the session (Android alerts on the hosted service are coming)
-- **Private by design** — end-to-end encrypted; conversations stay on your computer and the server only relays them; use the hosted service or self-host on AWS
+- **Popular agents** — Claude Code, Codex, Pi, Hermes, OpenCode, Kiro and DeepSeek Harness, all in one list
+- **Two-way handoff** — sessions on your computer stream live to your phone, token by token; start projects and sessions on your phone and carry on at your computer
+- **Approvals and questions** — approve tool calls, answer questions and review plans from your phone
+- **Notifications** — get an alert when a session finishes or needs you; tap to open it (Android on the hosted relay is coming)
+- **End-to-end encrypted** — conversations stay on your computer; the relay only forwards them
 
 ### Developer tools
 
@@ -87,12 +81,17 @@ You can also [self-host the relay on AWS](#self-hosting-aws).
 - **Light and dark themes** — choose System, Light, or Dark in Settings; the interface, code, diagrams, and native app appearance update together
 - **Adjustable page size** — change font size on mobile or use desktop zoom shortcuts; your choice persists across pages and app restarts
 - **Instant loading** — lists, history, and project data open from local page caches, then refresh in the background
+- **Real-time streaming** — responses, thinking, and tool calls appear as they are generated
 - **Stable delivery** — ordered streaming, automatic reconnect, and queued sends keep sessions intact on flaky mobile networks and after backgrounding the App
 - **Lightweight Apps** — small Tauri-based native packages, plus an ArkWeb shell for HarmonyOS NEXT
 - **Zero-maintenance Bridge** — runs always-on across macOS, Linux, and Windows, connects multiple computers to one account, and updates itself
 
 ### More
 
+- **Steer running sessions** — send follow-ups mid-turn or interrupt a running turn
+- **Slash commands and Skills** — `/` autocomplete for each agent's built-in and custom commands, Skills, and saved prompts
+- **Subagents** — Claude Code and Codex subagents grouped under their main session, with live status
+- **Claude background agents** — start them remotely and keep following them after you detach
 - **File, image, and voice input** — attach files, drag and drop files or images on desktop, send compressed images, and dictate messages on iOS
 - **Session drafts** — keep text and uploaded attachments when switching sessions or reopening the App on the same device
 - **Session management** — rename sessions through their native runtime, and long-press to multi-select and delete sessions or projects, optionally removing their local files

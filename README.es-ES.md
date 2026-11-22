@@ -47,17 +47,11 @@ También puedes [alojar tu propio relay en AWS](#alojamiento-propio-aws).
 
 ### Funciones principales
 
-- **Siete agentes** — Claude Code, Codex, Pi, Hermes, OpenCode, Kiro y DeepSeek Harness en un único catálogo de Dispositivo → Proyecto → Session.
-- **Transmisión en tiempo real** — las respuestas, el razonamiento y las llamadas a herramientas aparecen a medida que se generan.
-- **Seguimiento de Sessions existentes** — sigue usando Claude Code y Codex en tu ordenador como siempre; un Bridge local ligero refleja el progreso en directo y los estados de ejecución, espera de entrada y finalización.
-- **Interacción con Sessions existentes** — envía mensajes de seguimiento, incluso durante la ejecución, interrumpe tareas en curso y continúa el trabajo desde cualquier dispositivo conectado.
-- **Creación de proyectos y Sessions** — crea un proyecto, inicia Sessions de Claude Code, Codex o agentes de Claude en segundo plano de forma remota y sigue supervisándolas tras desconectarte.
-- **Permisos y preguntas** — aprueba o rechaza llamadas a herramientas, responde preguntas y revisa planes, incluidas las aprobaciones de comandos, archivos y MCP de Codex.
-- **Comandos con barra y Skills** — autocompletado con `/` para los comandos integrados y personalizados de cada entorno, las Skills de Codex y los prompts guardados.
-- **Codex Goals** — establece, pausa, reanuda o elimina objetivos de una conversación con `/goal` y sigue sus turnos de continuación autónoma en tiempo real.
-- **Subagentes** — subagentes anidados de Claude Code y Codex agrupados bajo su Session principal, con estado en directo y una lista jerárquica de hilos.
-- **Notificaciones móviles** — recibe avisos en iOS y Android cuando una Session termina o necesita tu intervención; toca el aviso para abrir la Session (los avisos de Android en el servicio alojado llegarán pronto).
-- **Privacidad desde el diseño** — cifrado de extremo a extremo; las conversaciones permanecen en tu ordenador y el servidor solo las retransmite; usa el servicio alojado o despliégalo tú mismo en AWS.
+- **Agentes populares** — Claude Code, Codex, Pi, Hermes, OpenCode, Kiro y DeepSeek Harness, en una sola lista
+- **Relevo en ambos sentidos** — las Sessions de tu ordenador llegan en directo al móvil, token a token; crea proyectos y Sessions en el móvil y continúa en el ordenador
+- **Aprobaciones y preguntas** — aprueba llamadas a herramientas, responde preguntas y revisa planes desde el móvil
+- **Notificaciones** — recibe un aviso cuando una Session termina o te necesita; tócalo para abrirla (Android en el relay alojado llegará pronto)
+- **Cifrado de extremo a extremo** — las conversaciones se quedan en tu ordenador; el relay solo las reenvía
 
 ### Herramientas de desarrollo
 
@@ -87,12 +81,17 @@ También puedes [alojar tu propio relay en AWS](#alojamiento-propio-aws).
 - **Temas claro y oscuro** — elige Sistema, Claro u Oscuro en Ajustes; la interfaz, el código, los diagramas y la apariencia nativa cambian juntos.
 - **Tamaño de página ajustable** — cambia el tamaño de letra en el móvil o usa los atajos de zoom en el escritorio; la elección se conserva entre páginas y al reiniciar la App.
 - **Carga instantánea** — las listas, el historial y los datos del proyecto se abren desde la caché local y se actualizan en segundo plano.
+- **Transmisión en tiempo real** — las respuestas, el razonamiento y las llamadas a herramientas aparecen a medida que se generan
 - **Entrega estable** — la transmisión ordenada, la reconexión automática y la cola de envíos mantienen la continuidad de las Sessions con redes móviles inestables y después de pasar la App a segundo plano.
 - **Apps ligeras** — paquetes nativos pequeños basados en Tauri, además de una App contenedora con ArkWeb para HarmonyOS NEXT.
 - **Bridge sin mantenimiento** — funciona de forma permanente en macOS, Linux y Windows, conecta varios ordenadores a una cuenta y se actualiza automáticamente.
 
 ### Más funciones
 
+- **Interviene en cualquier momento** — envía mensajes mientras el agente trabaja o interrumpe un turno en curso
+- **Comandos con barra y Skills** — autocompletado con `/` de los comandos integrados y personalizados de cada agente, Skills y prompts guardados
+- **Subagentes** — los subagentes de Claude Code y Codex se agrupan bajo su Session principal, con estado en directo
+- **Agentes en segundo plano de Claude** — inícialos de forma remota y sigue su progreso después de desconectarte
 - **Entrada de archivos, imágenes y voz** — adjunta archivos, arrastra archivos o imágenes en el escritorio, envía imágenes comprimidas y dicta mensajes en iOS.
 - **Borradores de Session** — conserva el texto y los archivos adjuntos ya subidos al cambiar de Session o volver a abrir la App en el mismo dispositivo.
 - **Gestión de Sessions** — cambia el nombre de las Sessions mediante su entorno nativo y mantén pulsado para seleccionar y eliminar varias Sessions o proyectos, con la opción de eliminar también sus archivos locales.
