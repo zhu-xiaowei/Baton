@@ -39,7 +39,7 @@ irm https://agentbaton.app/install.ps1 | iex
 
 Scan the QR code shown by Bridge, or paste its **Start URL**.
 
-Want your own server? [Self-host on AWS](#self-hosting-aws).
+You can also [self-host the relay on AWS](#self-hosting-aws).
 
 ---
 
