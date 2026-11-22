@@ -325,8 +325,10 @@
     if (content.__homeNavBound) return;
     content.__homeNavBound = true;
     content.addEventListener('click', function (e) {
-      if (e.target.closest('[data-show-more-projects]')) {
-        if (allRecentProjects) { allRecentProjects = false; renderInline(homeActiveData, homeDeviceData); }
+      var moreButton = e.target.closest('[data-show-more-projects]');
+      if (moreButton) {
+        var cached = readCache() || {};
+        if (moreButton.textContent === 'Show less') { allRecentProjects = false; renderInline(homeActiveData || cached.active, homeDeviceData || cached.devices); }
         else if (typeof window.bridgeHome === 'function') showMoreProjects();
         else (window.__navQueue = window.__navQueue || []).push(showMoreProjects);
         return;
