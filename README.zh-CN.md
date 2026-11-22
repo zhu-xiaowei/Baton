@@ -39,6 +39,8 @@ irm https://agentbaton.app/install.ps1 | iex
 
 扫描 Bridge 显示的二维码，或粘贴 **Start URL** 连接。
 
+想用自己的服务器？[在 AWS 上自行部署](#自行部署aws)。
+
 ---
 
 ## 功能

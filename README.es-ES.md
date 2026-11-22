@@ -39,6 +39,8 @@ irm https://agentbaton.app/install.ps1 | iex
 
 Escanea el código QR que muestra el Bridge o pega su **Start URL**.
 
+¿Prefieres tu propio servidor? [Despliégalo en AWS](#alojamiento-propio-aws).
+
 ---
 
 ## Funcionalidades
