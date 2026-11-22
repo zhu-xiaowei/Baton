@@ -50,7 +50,7 @@ separate TestFlight workflow; HarmonyOS requires its own DevEco build.
 
 ## GitHub Actions setup
 
-The packaging workflow must be present on the GitHub repository's default branch before the first manual dispatch. The command requires a clean checkout on a branch pushed to `zhu-xiaowei/Baton` at the same commit. Set `PACKAGE_GITHUB_REPO=owner/repository` if the connected repository changes. `gh` must be authenticated with permission to run workflows and download artifacts.
+The packaging workflow must be present on the GitHub repository's default branch before the first manual dispatch. The command requires a clean checkout on a branch pushed to `agentbaton/baton` at the same commit. Set `PACKAGE_GITHUB_REPO=owner/repository` if the connected repository changes. `gh` must be authenticated with permission to run workflows and download artifacts.
 
 Release packages normally require successful production CI on `main` for the
 exact source commit. The `release/testflight` branch is exempt so candidates can
@@ -72,7 +72,7 @@ The Android keystore remains ignored by Git. Configure binary keys and passwords
 | `APPSTORE_KEY_ID` | Variable | ID of the App Store Connect key already used by the Linux TestFlight script. |
 | `APPSTORE_ISSUER_ID` | Variable | Issuer ID for the same key. |
 
-To set a base64 secret without creating another local copy, run `base64 < existing-file | tr -d '\n' | gh secret set SECRET_NAME --repo zhu-xiaowei/Baton` on the machine holding the file. Set password Secrets with `gh secret set SECRET_NAME --repo zhu-xiaowei/Baton` and identifiers with `gh variable set VARIABLE_NAME --repo zhu-xiaowei/Baton`. GitHub Actions passes the binary Secrets only to the steps that restore temporary signing files. The `.p8` permits notarization authentication but cannot sign a desktop app; export the Developer ID certificate and its private key as a `.p12` on the Mac where it was created. Never commit a keystore, `.p8`, `.p12`, or signing password.
+To set a base64 secret without creating another local copy, run `base64 < existing-file | tr -d '\n' | gh secret set SECRET_NAME --repo agentbaton/baton` on the machine holding the file. Set password Secrets with `gh secret set SECRET_NAME --repo agentbaton/baton` and identifiers with `gh variable set VARIABLE_NAME --repo agentbaton/baton`. GitHub Actions passes the binary Secrets only to the steps that restore temporary signing files. The `.p8` permits notarization authentication but cannot sign a desktop app; export the Developer ID certificate and its private key as a `.p12` on the Mac where it was created. Never commit a keystore, `.p8`, `.p12`, or signing password.
 
 Run `node scripts/package-cloud.mjs --dry-run` on Linux to check the source SHA, version, and secret names without starting a build. A real run reports every platform separately. GitHub stores workflow artifacts for seven days; the command copies them into the ignored local `release/` directory. A failed platform makes the command exit nonzero while retaining other downloaded installers.
 

@@ -19,7 +19,7 @@ Changing this pin is a toolchain change and needs native build validation.
 
 `.github/android-ndk-version` pins the NDK used by cloud Android builds. Version
 30.0.16248370 matches the actual compiler in the
-[pre-change production Package run](https://github.com/zhu-xiaowei/Baton/actions/runs/38520988251).
+[pre-change production Package run](https://github.com/agentbaton/baton/actions/runs/38520988251).
 That workflow requested NDK 27, but Tauri 2.11 selected the newest installed NDK
 instead of honoring `NDK_HOME`.
 

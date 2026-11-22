@@ -101,7 +101,7 @@ test/contract/      one suite, run by URL against any deployment
   the Vite build stage stays.
 - **Cloudflare: the same experience, one script.** Proposal:
   ```
-  curl -fsSL https://raw.githubusercontent.com/zhu-xiaowei/baton/main/server/cloudflare/install.sh | bash
+  curl -fsSL https://raw.githubusercontent.com/agentbaton/baton/main/server/cloudflare/install.sh | bash
   ```
   1. Self-bootstraps like `install.sh` (clones the repo when run outside it). Needs git and Node 22.15+,
      the same Node the Bridge already requires; no wrangler, no other tools.
