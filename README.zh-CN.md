@@ -135,7 +135,7 @@ curl -fsSL https://raw.githubusercontent.com/agentbaton/baton/main/server/instal
 ```
 ┌────────────────┐               ┌──────────────────────┐               ┌──────────────────┐
 │     Bridge     │ ◀────WS─────▶ │        Relay         │ ◀────WS─────▶ │     App/Web      │
-│ (local hosts)  │               │                      │               │  (phone/desktop) │
+│ (local hosts)  │               │ API Gateway + Lambda │               │  (phone/desktop) │
 └────────────────┘               └──────────┬───────────┘               └──────────────────┘
                                             │
                                             ▼

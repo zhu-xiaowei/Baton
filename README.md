@@ -135,7 +135,7 @@ Then get the App above and scan the QR code or input the Start URL.
 ```
 ┌────────────────┐               ┌──────────────────────┐               ┌──────────────────┐
 │     Bridge     │ ◀────WS─────▶ │        Relay         │ ◀────WS─────▶ │     App/Web      │
-│ (local hosts)  │               │                      │               │  (phone/desktop) │
+│ (local hosts)  │               │ API Gateway + Lambda │               │  (phone/desktop) │
 └────────────────┘               └──────────┬───────────┘               └──────────────────┘
                                             │
                                             ▼

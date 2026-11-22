@@ -135,7 +135,7 @@ Después, descarga la App indicada arriba y escanea el código QR o introduce la
 ```
 ┌────────────────┐               ┌──────────────────────┐               ┌──────────────────┐
 │     Bridge     │ ◀────WS─────▶ │        Relay         │ ◀────WS─────▶ │     App/Web      │
-│ (local hosts)  │               │                      │               │  (phone/desktop) │
+│ (local hosts)  │               │ API Gateway + Lambda │               │  (phone/desktop) │
 └────────────────┘               └──────────┬───────────┘               └──────────────────┘
                                             │
                                             ▼
