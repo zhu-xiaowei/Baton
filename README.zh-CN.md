@@ -141,12 +141,12 @@ curl -fsSL https://raw.githubusercontent.com/agentbaton/baton/main/server/instal
                                             ▼
                                  ┌──────────────────────┐
                                  │ accounts + devices,  │
-                                 │ 1-day file transfer  │
+                                 │ file transfer area   │
                                  └──────────────────────┘
 ```
 
 - **Bridge** 在本地电脑上发现代理 Session，统一事件格式，保留主代理与子代理的关系，并处理本地代理控制、项目文件、Git 命令和终端进程。
-- **Relay** 对同一账户下的设备进行身份验证，并转发它们之间端到端加密的消息；它只保存账户、设备和令牌记录（Session 留在你的电脑上），以及保留 1 天的文件中转区。
+- **Relay** 对同一账户下的设备进行身份验证，并转发它们之间端到端加密的消息；它只保存账户、设备和令牌记录（Session 留在你的电脑上），以及临时的文件中转区。
 - **App/Web** 加载缓存的历史记录，订阅 Session 和根代理更新，将嵌套线程归入主 Session，并把用户操作发送给对应的本地运行环境。
 
 ---
@@ -159,7 +159,17 @@ Baton 既是接力棒，也是指挥棒：你可以在另一台设备上接着�
 
 ## 卸载
 
-参见[卸载指南](scripts/uninstall/README.md)。
+### 托管中继
+
+- **把电脑换到另一个账户**：在这台电脑上运行 `node ~/.baton-bridge/bridge.mjs pair --leave`。
+- **移除一台电脑**：在 App 首页长按这台电脑，选择 **Remove**；它的 Bridge 会停止运行并关闭开机自启。
+- **删除账户**：**Settings** → **Delete account**。
+
+### 自建中继
+
+先移除所有电脑，再删除 CloudFormation 堆栈。
+
+如需同时删除 Bridge 的文件，参见[卸载指南](scripts/uninstall/README.md)。
 
 ---
 

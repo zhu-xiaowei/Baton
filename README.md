@@ -141,12 +141,12 @@ Then get the App above and scan the QR code or input the Start URL.
                                             ▼
                                  ┌──────────────────────┐
                                  │ accounts + devices,  │
-                                 │ 1-day file transfer  │
+                                 │ file transfer area   │
                                  └──────────────────────┘
 ```
 
 - **Bridge** discovers agent sessions, normalizes their events, preserves main/subagent relationships, and handles local agent control, project files, Git commands, and terminal processes.
-- **Relay** authenticates the devices of one account and forwards their end-to-end encrypted messages; it keeps only account, device and token records (sessions stay on your computer) and a 1-day transfer area for files.
+- **Relay** authenticates the devices of one account and forwards their end-to-end encrypted messages; it keeps only account, device and token records (sessions stay on your computer) and a temporary transfer area for files.
 - **App/Web** loads cached history, subscribes to session and root-agent updates, aggregates nested threads under the main session, and routes user actions back to the correct local runtime.
 
 ---
@@ -159,7 +159,17 @@ Named after both a relay baton and a conductor's baton, Baton lets you pick up w
 
 ## Uninstall
 
-See the [uninstall guide](scripts/uninstall/README.md).
+### Hosted relay
+
+- **Move a computer to another account**: run `node ~/.baton-bridge/bridge.mjs pair --leave` on it.
+- **Remove a computer**: long-press it on the App's home page and choose **Remove**; its Bridge stops and turns off autostart.
+- **Delete the account**: **Settings** → **Delete account**.
+
+### Self-hosted relay
+
+Remove every computer, then delete the CloudFormation stack.
+
+To delete Bridge's files as well, see the [uninstall guide](scripts/uninstall/README.md).
 
 ---
 
