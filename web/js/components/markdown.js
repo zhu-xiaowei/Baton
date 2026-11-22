@@ -235,22 +235,11 @@
       && new TextEncoder().encode(token.text).length <= htmlPreviewMaxBytes;
   }
 
+  // The document travels in a hidden source node; visualization.js loads it into the iframe.
   window.htmlPreviewHtml = function (code) {
-    var source;
-    try { source = hljs.highlight(code, { language: 'html' }).value; } catch (e) { source = escHtml(code); }
-    return '<div class="code-block html-preview-block"><div class="html-preview-head">'
-      + '<button type="button" class="mermaid-tab active" onclick="toggleHtmlPreview(this,false)">preview</button>'
-      + '<button type="button" class="mermaid-tab" onclick="toggleHtmlPreview(this,true)">source</button>'
-      + (window.copyButtonHtml?.('code') || '') + '</div>'
-      + '<span class="codex-visualization" data-visualization-inline="">'
+    return '<span class="codex-visualization" data-visualization-inline="">'
       + '<span class="visualization-status">' + (window.loadingSpinner?.({ label: 'Loading preview' }) || '') + '</span>'
-      + '</span><pre><code class="hljs">' + source + '</code></pre></div>';
-  };
-
-  window.toggleHtmlPreview = function (button, source) {
-    var block = button.closest('.html-preview-block');
-    block.classList.toggle('show-source', source);
-    block.querySelectorAll('.mermaid-tab').forEach(function (tab) { tab.classList.toggle('active', tab === button); });
+      + '<span class="visualization-source" hidden>' + escHtml(code) + '</span></span>';
   };
 
   marked.use({ extensions: [{
@@ -572,8 +561,8 @@
           if (node) host.replaceChild(preview, node); else host.appendChild(preview);
         }
       } else if (seg.type === 'htmlPreview') {
-        if (!node || node.nodeType !== 1 || !node.classList.contains('html-preview-block')
-          || node.querySelector(':scope > pre > code')?.textContent !== seg.text) {
+        if (!node || node.nodeType !== 1 || !node.hasAttribute('data-visualization-inline')
+          || node.querySelector('.visualization-source')?.textContent !== seg.text) {
           var holder = document.createElement('template');
           holder.innerHTML = window.htmlPreviewHtml(seg.text);
           if (node) host.replaceChild(holder.content.firstChild, node); else host.appendChild(holder.content.firstChild);

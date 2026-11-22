@@ -64,11 +64,3 @@
 .visualization-surface.is-fullscreen .visualization-close { display: flex; top: calc(var(--sat, env(safe-area-inset-top, 0px)) + 8px); right: calc(var(--sar, env(safe-area-inset-right, 0px)) + 8px); }
 .visualization-surface::backdrop { background: var(--canvas); }
 .codex-visualization [hidden] { display: none !important; }
-.html-preview-head { display: flex; align-items: center; gap: 2px; padding: 4px; background: var(--canvas); border-bottom: 1px solid var(--border); }
-.html-preview-head .code-copy { width: 26px; height: 24px; margin-left: auto; }
-.html-preview-block .codex-visualization { margin: 0; }
-.html-preview-block .visualization-status { padding: 12px; }
-.html-preview-block .visualization-surface:not(.is-fullscreen),
-.html-preview-block .visualization-snapshot { border-radius: 0; }
-.html-preview-block:not(.show-source) > pre,
-.html-preview-block.show-source > .codex-visualization { display: none; }

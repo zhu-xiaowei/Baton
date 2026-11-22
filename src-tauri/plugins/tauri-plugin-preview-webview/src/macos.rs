@@ -106,7 +106,8 @@ fn allowed_preview_url(url: &str) -> bool {
   };
   match url.scheme() {
     "http" | "https" => url.host_str().is_some() && url.username().is_empty() && url.password().is_none(),
-    "about" => url.as_str() == "about:blank",
+    // Subframes with `srcdoc` navigate to about:srcdoc; cancelling it leaves them blank.
+    "about" => matches!(url.as_str(), "about:blank" | "about:srcdoc"),
     "blob" | "data" => true,
     _ => false,
   }

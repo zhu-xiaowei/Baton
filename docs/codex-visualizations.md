@@ -91,12 +91,15 @@ document (after leading whitespace and comments it starts with `<!doctype html`
 or `<html`, case-insensitive) uses the same preview surface: sandboxed iframe,
 theme defaults, auto height and the full-screen dialog. The document comes from
 the message text, so no Bridge request is made and the preview also works for
-Claude Code, Pi, Hermes, OpenCode, Kiro and DeepSeek Harness. A preview/source
-switch above it shows the highlighted source, where the usual copy-code button
-copies it.
+Claude Code, Pi, Hermes, OpenCode, Kiro and DeepSeek Harness. It looks exactly
+like a `visualize` preview, without a header or source view.
 
 Fragments, unclosed fences and documents over 1 MiB stay ordinary code blocks.
 While streaming, a fence stays a code block until its closing fence arrives;
 then a top-level fence becomes a persistent segment, so later text does not
 reload the iframe. A fence nested in a list or quote stays code until the
 message is rendered again from history. Markdown file previews are unaffected.
+
+The macOS/iOS native Remote preview (`tauri-plugin-preview-webview`) allows
+`about:srcdoc` subframe navigations, so pages using `srcdoc` iframes, including
+these previews viewed through a forwarded port, are not left blank.

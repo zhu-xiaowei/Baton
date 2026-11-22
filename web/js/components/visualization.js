@@ -287,9 +287,9 @@ export async function loadVisualization(block, reload = false) {
   status.hidden = false;
   status.removeAttribute('role');
   status.innerHTML = window.loadingSpinner?.({ label: 'Loading preview' }) || '';
-  // HTML fences carry their document in the sibling source view.
+  // HTML fences carry their document instead of a file path.
   const inline = block.hasAttribute('data-visualization-inline')
-    && block.parentElement.querySelector(':scope > pre > code');
+    && block.querySelector('.visualization-source');
   try {
     if (!inline && (!current.device || !current.projectHash || !current.sessionId)) {
       throw new Error('Open the original session to load this preview.');
