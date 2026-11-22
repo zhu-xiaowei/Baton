@@ -76,7 +76,7 @@ NFT
 # Lightsail counts its allowance) relaying stops until the next month. Clients then use the API host directly.
 cat >/usr/local/bin/relay-guard <<'PY'
 #!/usr/bin/python3
-import glob, json, os, subprocess, time
+import calendar, glob, json, os, subprocess, time
 DAILY, CAP = int(os.environ.get('DAILY', 1 << 30)), int(os.environ.get('CAP', 1_800_000_000_000))
 STATE = '/var/lib/relay-guard.json'
 nft = lambda *a: subprocess.run(['nft', *a], check=True, capture_output=True, text=True).stdout
@@ -93,6 +93,11 @@ for name, block, prefix in (('use4', 'block4', ''), ('use6', 'block6', '/64')):
 raw = sum(int(open(f).read()) for d in glob.glob('/sys/class/net/*') if not d.endswith('/lo')
           for f in (d + '/statistics/rx_bytes', d + '/statistics/tx_bytes'))
 month = time.strftime('%Y-%m', time.gmtime())
+start = time.gmtime(int(os.environ.get('START', 0)))
+if time.strftime('%Y-%m', start) == month:  # the first month's allowance may be prorated: so is the cap
+    begin = calendar.timegm((start.tm_year, start.tm_mon, 1, 0, 0, 0))
+    end = calendar.timegm((start.tm_year + start.tm_mon // 12, start.tm_mon % 12 + 1, 1, 0, 0, 0))
+    CAP = CAP * (end - calendar.timegm(start)) // (end - begin)
 try: state = json.load(open(STATE))
 except (OSError, ValueError): state = {}
 if state.get('month') != month:
@@ -120,9 +125,13 @@ if os.environ.get('REPORT_URL'):
     try: urllib.request.urlopen(urllib.request.Request(os.environ['REPORT_URL'], body, headers), timeout=10)
     except Exception as error: print('report failed:', error)
 PY
+START=$(sed -n 's/^START=//p' /etc/relay-guard.env 2>/dev/null || true)
+START=${START:-$(date -u +%s)} # when relaying began (relay-guard prorates that month's cap); a rerun keeps it
 if [ -n "${REPORT_URL:-}" ]; then # a rerun keeps the relay's name
   RELAY_NAME=${RELAY_NAME:-$(sed -n 's/^RELAY_NAME=//p' /etc/relay-guard.env 2>/dev/null || true)}
-  (umask 077; printf 'REPORT_URL=%s\nREPORT_KEY=%s\nRELAY_NAME=%s\n' "$REPORT_URL" "${REPORT_KEY:-}" "${RELAY_NAME:-$(hostname)}" >/etc/relay-guard.env)
+  (umask 077; printf 'REPORT_URL=%s\nREPORT_KEY=%s\nRELAY_NAME=%s\nSTART=%s\n' "$REPORT_URL" "${REPORT_KEY:-}" "${RELAY_NAME:-$(hostname)}" "$START" >/etc/relay-guard.env)
+elif ! grep -q '^START=' /etc/relay-guard.env 2>/dev/null; then
+  (umask 077; echo "START=$START" >>/etc/relay-guard.env)
 fi
 chmod 755 /usr/local/bin/relay-guard
 printf '[Service]\nType=oneshot\nEnvironmentFile=-/etc/relay-guard.env\nExecStart=/usr/local/bin/relay-guard\n' >/etc/systemd/system/relay-guard.service
