@@ -39,19 +39,7 @@ irm https://agentbaton.app/install.ps1 | iex
 
 Scan the QR code shown by Bridge, or paste its **Start URL**.
 
----
-
-### Developer tools
-
-<p align="center">
-  <picture><source media="(max-width: 600px)" srcset="docs/assets/showcase/project-files.avif" width="48%"><img src="docs/assets/showcase/project-files.avif" alt="Project files" width="24%"></picture><picture><source media="(max-width: 600px)" srcset="docs/assets/showcase/empty.svg" width="2%" height="0"><img src="docs/assets/showcase/empty.svg" alt="" width="1%" height="0"></picture><picture><source media="(max-width: 600px)" srcset="docs/assets/showcase/git.avif" width="48%"><img src="docs/assets/showcase/git.avif" alt="Git changes" width="24%"></picture><picture><source media="(max-width: 600px)" srcset="docs/assets/showcase/tools-mobile.svg" width="100%"><img src="docs/assets/showcase/empty.svg" alt="" width="1%"></picture><picture><source media="(max-width: 600px)" srcset="docs/assets/showcase/terminal.avif" width="48%"><img src="docs/assets/showcase/terminal.avif" alt="Mobile terminal" width="24%"></picture><picture><source media="(max-width: 600px)" srcset="docs/assets/showcase/empty.svg" width="2%" height="0"><img src="docs/assets/showcase/empty.svg" alt="" width="1%" height="0"></picture><picture><source media="(max-width: 600px)" srcset="docs/assets/showcase/remote-preview.avif" width="48%"><img src="docs/assets/showcase/remote-preview.avif" alt="Remote preview" width="24%"></picture><picture><source media="(max-width: 600px)" srcset="docs/assets/showcase/tools-mobile-second.svg"><img src="docs/assets/showcase/tools-desktop.svg" alt="" width="100%"></picture>
-</p>
-
-### Rich rendering
-
-<p align="center">
-  <picture><source media="(max-width: 600px)" srcset="docs/assets/showcase/permissions.avif" width="48%"><img src="docs/assets/showcase/permissions.avif" alt="Permission approvals" width="24%"></picture><picture><source media="(max-width: 600px)" srcset="docs/assets/showcase/empty.svg" width="2%" height="0"><img src="docs/assets/showcase/empty.svg" alt="" width="1%" height="0"></picture><picture><source media="(max-width: 600px)" srcset="docs/assets/showcase/mermaid.avif" width="48%"><img src="docs/assets/showcase/mermaid.avif" alt="Mermaid diagrams" width="24%"></picture><picture><source media="(max-width: 600px)" srcset="docs/assets/showcase/rendering-mobile.svg" width="100%"><img src="docs/assets/showcase/empty.svg" alt="" width="1%"></picture><picture><source media="(max-width: 600px)" srcset="docs/assets/showcase/inline-html.avif" width="48%"><img src="docs/assets/showcase/inline-html.avif" alt="Inline HTML preview" width="24%"></picture><picture><source media="(max-width: 600px)" srcset="docs/assets/showcase/empty.svg" width="2%" height="0"><img src="docs/assets/showcase/empty.svg" alt="" width="1%" height="0"></picture><picture><source media="(max-width: 600px)" srcset="docs/assets/showcase/file-preview.avif" width="48%"><img src="docs/assets/showcase/file-preview.avif" alt="File preview" width="24%"></picture><picture><source media="(max-width: 600px)" srcset="docs/assets/showcase/rendering-mobile-second.svg"><img src="docs/assets/showcase/rendering-desktop.svg" alt="" width="100%"></picture>
-</p>
+You can also [self-host the relay on AWS](#self-hosting-aws).
 
 ---
 
@@ -59,24 +47,33 @@ Scan the QR code shown by Bridge, or paste its **Start URL**.
 
 ### Core
 
-- **Seven agents** — Claude Code, Codex, Pi, Hermes, OpenCode, Kiro, and DeepSeek Harness in one Device → Project → Session catalog
-- **Real-time streaming** — responses, thinking, and tool calls appear as they are generated
-- **Follow existing sessions** — keep using Claude Code and Codex on your computer as usual; a lightweight local Bridge mirrors live progress and running / needs input / done status
-- **Interact with existing sessions** — send follow-ups, even mid-turn, interrupt running turns, and continue work from any connected device
-- **Create projects and sessions** — create a new project, start Claude Code, Codex, or Claude background-agent sessions remotely, and keep monitoring them after detaching
-- **Permissions and questions** — approve or deny tool calls, answer questions, and review plans, including Codex command, file, and MCP approvals
-- **Slash commands and Skills** — `/` autocomplete for each runtime's built-in and custom commands, Codex Skills, and saved prompts
-- **Codex Goals** — set, pause, resume, or clear thread goals with `/goal`, and follow autonomous continuation turns in real time
-- **Subagents** — nested Claude Code and Codex subagents grouped under their main session, with live status and a hierarchical thread list
-- **Mobile notifications** — receive iOS and Android alerts when a session finishes or needs input; tap an alert to open the session (Android alerts on the hosted service are coming)
-- **Private by design** — end-to-end encrypted; conversations stay on your computer and the server only relays them; use the hosted service or self-host on AWS
+- **Popular agents** — Claude Code, Codex, Pi, Hermes, OpenCode, Kiro and DeepSeek Harness, all in one list
+- **Two-way handoff** — sessions on your computer stream live to your phone, with running / needs input / done status; start projects and sessions on your phone and carry on at your computer
+- **Approvals and questions** — approve or deny tool calls, answer questions and review plans from your phone
+- **Notifications** — get an alert when a session finishes or needs you; tap to open it (Android on the hosted relay is coming)
+- **End-to-end encrypted** — conversations stay on your computer; the relay only forwards them
 
 ### Developer tools
+
+<p align="center">
+  <picture><source media="(max-width: 600px)" srcset="docs/assets/showcase/project-files.avif" width="48%"><img src="docs/assets/showcase/project-files.avif" alt="Project files" width="24%"></picture><picture><source media="(max-width: 600px)" srcset="docs/assets/showcase/empty.svg" width="2%" height="0"><img src="docs/assets/showcase/empty.svg" alt="" width="1%" height="0"></picture><picture><source media="(max-width: 600px)" srcset="docs/assets/showcase/git.avif" width="48%"><img src="docs/assets/showcase/git.avif" alt="Git changes" width="24%"></picture><picture><source media="(max-width: 600px)" srcset="docs/assets/showcase/tools-mobile.svg" width="100%"><img src="docs/assets/showcase/empty.svg" alt="" width="1%"></picture><picture><source media="(max-width: 600px)" srcset="docs/assets/showcase/terminal.avif" width="48%"><img src="docs/assets/showcase/terminal.avif" alt="Mobile terminal" width="24%"></picture><picture><source media="(max-width: 600px)" srcset="docs/assets/showcase/empty.svg" width="2%" height="0"><img src="docs/assets/showcase/empty.svg" alt="" width="1%" height="0"></picture><picture><source media="(max-width: 600px)" srcset="docs/assets/showcase/remote-preview.avif" width="48%"><img src="docs/assets/showcase/remote-preview.avif" alt="Remote preview" width="24%"></picture><picture><source media="(max-width: 600px)" srcset="docs/assets/showcase/tools-mobile-second.svg"><img src="docs/assets/showcase/tools-desktop.svg" alt="" width="100%"></picture>
+</p>
 
 - **Project files** — browse source with line highlighting, and download or share files natively
 - **Git** — review changes, stage / unstage / discard files, commit, push or publish a branch, and browse a branch graph with historical diffs
 - **Terminals** — up to five shells per project, shared live across devices and restored when you return, with a mobile keybar, a long-press arrow joystick that auto-repeats faster the farther you drag, and smooth momentum scrolling (macOS / Linux Bridge)
 - **Localhost previews** — open the Bridge machine's `http://localhost:3000` (or any local port) inside the native App by tapping a session link or entering the port, with no SSH, port forwarding, or public exposure
+
+### Rich rendering
+
+<p align="center">
+  <picture><source media="(max-width: 600px)" srcset="docs/assets/showcase/permissions.avif" width="48%"><img src="docs/assets/showcase/permissions.avif" alt="Permission approvals" width="24%"></picture><picture><source media="(max-width: 600px)" srcset="docs/assets/showcase/empty.svg" width="2%" height="0"><img src="docs/assets/showcase/empty.svg" alt="" width="1%" height="0"></picture><picture><source media="(max-width: 600px)" srcset="docs/assets/showcase/mermaid.avif" width="48%"><img src="docs/assets/showcase/mermaid.avif" alt="Mermaid diagrams" width="24%"></picture><picture><source media="(max-width: 600px)" srcset="docs/assets/showcase/rendering-mobile.svg" width="100%"><img src="docs/assets/showcase/empty.svg" alt="" width="1%"></picture><picture><source media="(max-width: 600px)" srcset="docs/assets/showcase/inline-html.avif" width="48%"><img src="docs/assets/showcase/inline-html.avif" alt="Inline HTML preview" width="24%"></picture><picture><source media="(max-width: 600px)" srcset="docs/assets/showcase/empty.svg" width="2%" height="0"><img src="docs/assets/showcase/empty.svg" alt="" width="1%" height="0"></picture><picture><source media="(max-width: 600px)" srcset="docs/assets/showcase/file-preview.avif" width="48%"><img src="docs/assets/showcase/file-preview.avif" alt="File preview" width="24%"></picture><picture><source media="(max-width: 600px)" srcset="docs/assets/showcase/rendering-mobile-second.svg"><img src="docs/assets/showcase/rendering-desktop.svg" alt="" width="100%"></picture>
+</p>
+
+- **Execution timeline** — collapsible tool calls and results, with full output loaded on demand
+- **Diffs, Mermaid, and LaTeX** — rendered inline while streaming; copy source and download as images
+- **Inline HTML in conversations** — interactive previews, expandable to full screen without losing their state
+- **File previews** — Markdown, HTML, PDF, Office, image, and video files from projects or messages; HTML pages load their relative CSS, scripts, and images, so they render fully without a local server; images in messages display inline and open full screen with pinch-to-zoom
 
 ### Fast, stable, lightweight
 
@@ -84,19 +81,17 @@ Scan the QR code shown by Bridge, or paste its **Start URL**.
 - **Light and dark themes** — choose System, Light, or Dark in Settings; the interface, code, diagrams, and native app appearance update together
 - **Adjustable page size** — change font size on mobile or use desktop zoom shortcuts; your choice persists across pages and app restarts
 - **Instant loading** — lists, history, and project data open from local page caches, then refresh in the background
+- **Real-time streaming** — responses, thinking, and tool calls appear as they are generated
 - **Stable delivery** — ordered streaming, automatic reconnect, and queued sends keep sessions intact on flaky mobile networks and after backgrounding the App
 - **Lightweight Apps** — small Tauri-based native packages, plus an ArkWeb shell for HarmonyOS NEXT
 - **Zero-maintenance Bridge** — runs always-on across macOS, Linux, and Windows, connects multiple computers to one account, and updates itself
 
-### Rich rendering
-
-- **Execution timeline** — collapsible tool calls and results, with full output loaded on demand
-- **Diffs, Mermaid, and LaTeX** — rendered inline while streaming; copy source and download as images
-- **Inline HTML in conversations** — interactive previews, expandable to full screen without losing their state
-- **File previews** — Markdown, HTML, PDF, Office, image, and video files from projects or messages; HTML pages load their relative CSS, scripts, and images, so they render fully without a local server; images in messages display inline and open full screen with pinch-to-zoom
-
 ### More
 
+- **Steer running sessions** — send follow-ups mid-turn or interrupt a running turn
+- **Slash commands and Skills** — `/` autocomplete for each agent's built-in and custom commands, Skills, and saved prompts
+- **Subagents** — subagents grouped under their main session, with live status
+- **Claude background agents** — start them remotely and keep following them after you detach
 - **File, image, and voice input** — attach files, drag and drop files or images on desktop, send compressed images, and dictate messages on iOS
 - **Session drafts** — keep text and uploaded attachments when switching sessions or reopening the App on the same device
 - **Session management** — rename sessions through their native runtime, and long-press to multi-select and delete sessions or projects, optionally removing their local files
@@ -104,25 +99,6 @@ Scan the QR code shown by Bridge, or paste its **Start URL**.
 - **API key rotation** — rotate the API key with `--rotate-key` while preserving existing data
 - **macOS tabs** — work on multiple sessions in independent tabs
 - **Claude usage insights** — status, settings, rate limits, token history, and model usage charts
-
----
-
-## Architecture
-
-```
-┌────────────────┐               ┌──────────────────────┐               ┌──────────────────┐
-│     Bridge     │ ◀────WS─────▶ │        Relay         │ ◀────WS─────▶ │     App/Web      │
-│ (local hosts)  │               │                      │               │  (phone/desktop) │
-└────────────────┘               └──────────┬───────────┘               └──────────────────┘
-                                            │
-                                            ▼
-                                 ┌──────────────────────┐
-                                 │ accounts + devices,  │
-                                 │ 1-day file transfer  │
-                                 └──────────────────────┘
-```
-
-**Bridge** discovers agent sessions, normalizes their events, preserves main/subagent relationships, and handles local agent control, project files, Git commands, and terminal processes. **Relay** authenticates the devices of one account and forwards their end-to-end encrypted messages; it keeps only account, device and token records (sessions stay on your computer) and a 1-day transfer area for files. **App/Web** loads cached history, subscribes to session and root-agent updates, aggregates nested threads under the main session, and routes user actions back to the correct local runtime.
 
 ---
 
@@ -153,6 +129,27 @@ Then get the App above and scan the QR code or input the Start URL.
 
 ---
 
+## Architecture
+
+```
+┌────────────────┐               ┌──────────────────────┐               ┌──────────────────┐
+│     Bridge     │ ◀────WS─────▶ │        Relay         │ ◀────WS─────▶ │     App/Web      │
+│ (local hosts)  │               │ API Gateway + Lambda │               │  (phone/desktop) │
+└────────────────┘               └──────────┬───────────┘               └──────────────────┘
+                                            │
+                                            ▼
+                                 ┌──────────────────────┐
+                                 │ accounts + devices,  │
+                                 │ file transfer area   │
+                                 └──────────────────────┘
+```
+
+- **Bridge** discovers agent sessions, normalizes their events, preserves main/subagent relationships, and handles local agent control, project files, Git commands, and terminal processes.
+- **Relay** authenticates the devices of one account and forwards their end-to-end encrypted messages; it keeps only account, device and token records (sessions stay on your computer) and a temporary transfer area for files.
+- **App/Web** loads cached history, subscribes to session and root-agent updates, aggregates nested threads under the main session, and routes user actions back to the correct local runtime.
+
+---
+
 ## Why Baton?
 
 Named after both a relay baton and a conductor's baton, Baton lets you pick up work on another device and direct your agents remotely.
@@ -161,7 +158,17 @@ Named after both a relay baton and a conductor's baton, Baton lets you pick up w
 
 ## Uninstall
 
-See the [uninstall guide](scripts/uninstall/README.md).
+### Hosted relay
+
+- **Move a computer to another account**: run `node ~/.baton-bridge/bridge.mjs pair --leave` on it.
+- **Remove a computer**: long-press it on the App's home page and choose **Remove**; its Bridge stops and turns off autostart.
+- **Delete the account**: **Settings** → **Delete account**.
+
+### Self-hosted relay
+
+Remove every computer, then delete the CloudFormation stack.
+
+To delete Bridge's files as well, see the [uninstall guide](scripts/uninstall/README.md).
 
 ---
 
