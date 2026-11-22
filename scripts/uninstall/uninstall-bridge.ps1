@@ -6,6 +6,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $taskNames = @(
   'Baton Bridge',
+  'Baton Presence',
   'AgentPeek Bridge',
   'AgentPeek Bridge Service',
   'Claude Bridge'
@@ -23,6 +24,9 @@ $bridgeDirs = @(
   (Join-Path $UserHome '.agentpeek-bridge'),
   (Join-Path $UserHome '.claude-bridge')
 )
+# The Pi status extension the Bridge installs (bridge/pi-runtime.mjs).
+$piAgentDir = if ($env:PI_CODING_AGENT_DIR) { $env:PI_CODING_AGENT_DIR } else { Join-Path $UserHome '.pi\agent' }
+$piExtension = Join-Path $piAgentDir 'extensions\baton-bridge-status.js'
 
 function Invoke-Step {
   param(
@@ -73,4 +77,14 @@ foreach ($dir in $bridgeDirs) {
   }
 }
 
-Write-Output 'Baton/AgentPeek Bridge has been removed.'
+if (Test-Path -LiteralPath $piExtension) {
+  Invoke-Step {
+    Remove-Item -LiteralPath $piExtension -Force
+  } "Remove '$piExtension'"
+}
+
+if ($DryRun) {
+  Write-Output 'Dry run: nothing was removed.'
+} else {
+  Write-Output 'Baton/AgentPeek Bridge has been removed.'
+}
