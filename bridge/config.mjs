@@ -33,8 +33,8 @@ const CLI_LAUNCHERS = {
   sh: (node) => ['#!/bin/sh', 'dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd) || exit 1',
     `node='${node.replaceAll("'", "'\\''")}'`, '[ -x "$node" ] || node=node', 'exec "$node" "$dir/bridge.mjs" "$@"', ''].join('\n'),
   cmd: (node) => ['@echo off', 'setlocal', `set "BATON_NODE=${node.replaceAll('%', '%%')}"`,
-    // One line: cmd re-reads a batch file after each command, so a rewrite during the run must not leave a tail.
-    'if not exist "%BATON_NODE%" set "BATON_NODE=node"', '"%BATON_NODE%" "%~dp0bridge.mjs" %* & exit /b', ''].join('\r\n'),
+    // One line, so a rewrite during the run leaves cmd no tail; `call` expands ERRORLEVEL after node exits.
+    'if not exist "%BATON_NODE%" set "BATON_NODE=node"', '"%BATON_NODE%" "%~dp0bridge.mjs" %* & call exit /b %%ERRORLEVEL%%', ''].join('\r\n'),
 };
 
 export function bridgeCommand(args, platform = process.platform) {
