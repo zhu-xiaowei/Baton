@@ -27,6 +27,28 @@ export const WS_FRAME_LIMIT = 31_000;
 export const IS_WSL = !!process.env.WSL_DISTRO_NAME;
 export const NEEDS_POLLING = IS_WSL && CLAUDE_PROJECTS.startsWith('/mnt/');
 
+// `~/.baton-bridge/baton` (`baton.cmd` on Windows) runs bridge.mjs with the Node.js the service runs on, written at
+// every service start (a `pair` run only creates a missing one); if an update deleted that runtime it uses the user's `node`. cmd: one line, so a rewrite during
+// the run leaves no tail; `call` expands ERRORLEVEL after node exits. The hint is the PowerShell form (cmd: %USERPROFILE%).
+const CLI_LAUNCHERS = {
+  sh: (node) => ['#!/bin/sh', 'dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd) || exit 1',
+    `node='${node.replaceAll("'", "'\\''")}'`, '[ -x "$node" ] || node=node', 'exec "$node" "$dir/bridge.mjs" "$@"', ''].join('\n'),
+  cmd: (node) => ['@echo off', 'setlocal', `set "BATON_NODE=${node.replaceAll('%', '%%')}"`, 'if not exist "%BATON_NODE%" set "BATON_NODE=node"',
+    '"%BATON_NODE%" "%~dp0bridge.mjs" %* & call exit /b %%ERRORLEVEL%%', ''].join('\r\n'),
+};
+
+export function bridgeCommand(args, platform = process.platform) {
+  return platform === 'win32' ? `~\\.baton-bridge\\baton.cmd ${args}` : `~/.baton-bridge/baton ${args}`;
+}
+
+export function writeCliLauncher(home = BRIDGE_HOME, platform = process.platform, ifMissing = false) {
+  const file = path.join(home, platform === 'win32' ? 'baton.cmd' : 'baton');
+  if (ifMissing && fs.existsSync(file)) return file;
+  fs.writeFileSync(file, CLI_LAUNCHERS[platform === 'win32' ? 'cmd' : 'sh'](process.execPath), { mode: 0o755 });
+  if (platform !== 'win32') fs.chmodSync(file, 0o755);
+  return file;
+}
+
 function parseArgs() {
   const args = process.argv.slice(2);
   const parsed = {};
@@ -72,12 +94,12 @@ export function loadConfig() {
       saveConfig(config);
     }
   } else {
-    console.error('Usage: node bridge.mjs --server URL --key API_KEY [--name DEVICE_NAME] | node bridge.mjs pair');
+    console.error(`Usage: node bridge.mjs --server URL --key API_KEY [--name DEVICE_NAME] | ${bridgeCommand('pair')}`);
     process.exit(1);
   }
   if (!config.apiKey) {
     // Exit 0, so the service manager does not restart it until the computer has joined.
-    console.error('This computer has not joined an account yet: run `node ~/.baton-bridge/bridge.mjs pair`.');
+    console.error(`This computer has not joined an account yet: run \`${bridgeCommand('pair')}\`.`);
     process.exit(0);
   }
   if (!/^[a-f0-9]{32}$/.test(config.bridgeId || '')) {

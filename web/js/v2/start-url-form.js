@@ -136,7 +136,7 @@ export function mountStartUrlForm(root, { adding = false, onAdded } = {}) {
   // Signed in, only a computer's code is accepted: an online computer of the account adds it.
   async function applyLink(link, signedIn) {
     if (signedIn) {
-      if (link.kind !== 'j') throw new Error('This code adds a new phone. To move that computer to your account, run `node ~/.baton-bridge/bridge.mjs pair --leave` on it and scan the new code.');
+      if (link.kind !== 'j') throw new Error('This code adds a new phone. To move that computer to your account, run `~/.baton-bridge/baton pair --leave` on it (Windows PowerShell: `~\\.baton-bridge\\baton.cmd pair --leave`; cmd: `%USERPROFILE%\\.baton-bridge\\baton.cmd pair --leave`) and scan the new code.');
       var reply = await viaComputer('pair_approve', { link: link.text });
       return finishAdd(reply.deviceName);
     }
