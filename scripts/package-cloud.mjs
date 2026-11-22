@@ -9,7 +9,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const repo = process.env.PACKAGE_GITHUB_REPO || 'zhu-xiaowei/Baton';
+const repo = process.env.PACKAGE_GITHUB_REPO || 'agentbaton/baton';
 const workflow = 'package.yml';
 const releaseTargets = [
   { platform: 'android', label: 'Android', artifact: 'Baton-Android', file: 'Baton.apk', job: 'Android APK' },

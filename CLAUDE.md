@@ -799,7 +799,7 @@ The local macOS release script reads signing values from `.env.local`
 (gitignored). See `docs/package.md` for GitHub Actions secrets, the
 pushed-commit requirement, and platform-specific outputs.
 
-Xcode Cloud (iOS from Linux): product "Baton" is connected to `github.com/zhu-xiaowei/Baton`;
+Xcode Cloud (iOS from Linux): product "Baton" is connected to `github.com/agentbaton/baton`;
 workflow "Default" is manual-start only, pinned to Xcode 26.6 (Xcode 27 rejects the iOS 14.0
 deployment target), and archives `baton_iOS` for TestFlight. `src-tauri/gen/apple/ci_scripts/ci_post_clone.sh`
 installs Node + Rust, builds `dist/`, and patches the Rust build phase PATH in the CI checkout.

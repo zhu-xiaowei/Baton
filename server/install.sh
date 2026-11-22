@@ -2,7 +2,7 @@
 # Baton Server — one-command deploy
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/zhu-xiaowei/baton/main/server/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/agentbaton/baton/main/server/install.sh | bash
 #   curl ... | bash -s -- --region us-west-2
 #   ./install.sh                                 # from cloned repo
 #   ./install.sh --region us-west-2
@@ -27,7 +27,7 @@ LINE="=================================================================="
 trap 'rc=$?; echo ""; echo "${C_RED}ERROR: install.sh failed at line $LINENO (exit $rc): $BASH_COMMAND${C_RESET}" >&2; exit $rc' ERR
 
 # ===== Self-bootstrap: if not inside the repo, clone it first =====
-REPO_URL="https://github.com/zhu-xiaowei/baton.git"
+REPO_URL="https://github.com/agentbaton/baton.git"
 SELF_MARKER="server/template/Baton.template"
 
 if [ ! -f "$(dirname "${BASH_SOURCE[0]:-$0}")/../$SELF_MARKER" ] 2>/dev/null; then

@@ -22,7 +22,7 @@ async function cf(method, route, body, headers = { 'content-type': 'application/
 }
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'baton-dl-'));
-execFileSync('gh', ['release', 'download', tag, '-R', 'zhu-xiaowei/Baton', '-D', dir, ...Object.keys(TYPES).flatMap((e) => ['-p', `Baton.${e}`])], { stdio: 'inherit' });
+execFileSync('gh', ['release', 'download', tag, '-R', 'agentbaton/baton', '-D', dir, ...Object.keys(TYPES).flatMap((e) => ['-p', `Baton.${e}`])], { stdio: 'inherit' });
 // All four are read before anything is written, so a missing asset never leaves a half-updated "latest".
 const files = Object.entries(TYPES).map(([ext, type]) => [`Baton.${ext}`, type, fs.readFileSync(path.join(dir, `Baton.${ext}`))]);
 // The whole host is purged, also after a failed upload, so no URL (with any query string) keeps an old package.
