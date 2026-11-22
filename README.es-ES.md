@@ -47,11 +47,11 @@ También puedes [alojar tu propio relay en AWS](#alojamiento-propio-aws).
 
 ### Funciones principales
 
-- **Agentes populares** — Claude Code, Codex, Pi, Hermes, OpenCode, Kiro y DeepSeek Harness, en una sola lista
-- **Relevo en ambos sentidos** — las Sessions de tu ordenador llegan en directo al móvil, token a token; crea proyectos y Sessions en el móvil y continúa en el ordenador
-- **Aprobaciones y preguntas** — aprueba llamadas a herramientas, responde preguntas y revisa planes desde el móvil
-- **Notificaciones** — recibe un aviso cuando una Session termina o te necesita; tócalo para abrirla (Android en el relay alojado llegará pronto)
-- **Cifrado de extremo a extremo** — las conversaciones se quedan en tu ordenador; el relay solo las reenvía
+- **Agentes populares** — Claude Code, Codex, Pi, Hermes, OpenCode, Kiro y DeepSeek Harness, en una sola lista.
+- **Relevo en ambos sentidos** — las Sessions de tu ordenador llegan en directo al móvil, con su estado (en curso, necesita respuesta, terminada); crea proyectos y Sessions en el móvil y continúa en el ordenador.
+- **Aprobaciones y preguntas** — aprueba o rechaza llamadas a herramientas, responde preguntas y revisa planes desde el móvil.
+- **Notificaciones** — recibe un aviso cuando una Session termina o te necesita; tócalo para abrirla (Android en el relay alojado llegará pronto).
+- **Cifrado de extremo a extremo** — las conversaciones se quedan en tu ordenador; el relay solo las reenvía.
 
 ### Herramientas de desarrollo
 
@@ -81,17 +81,17 @@ También puedes [alojar tu propio relay en AWS](#alojamiento-propio-aws).
 - **Temas claro y oscuro** — elige Sistema, Claro u Oscuro en Ajustes; la interfaz, el código, los diagramas y la apariencia nativa cambian juntos.
 - **Tamaño de página ajustable** — cambia el tamaño de letra en el móvil o usa los atajos de zoom en el escritorio; la elección se conserva entre páginas y al reiniciar la App.
 - **Carga instantánea** — las listas, el historial y los datos del proyecto se abren desde la caché local y se actualizan en segundo plano.
-- **Transmisión en tiempo real** — las respuestas, el razonamiento y las llamadas a herramientas aparecen a medida que se generan
+- **Transmisión en tiempo real** — las respuestas, el razonamiento y las llamadas a herramientas aparecen a medida que se generan.
 - **Entrega estable** — la transmisión ordenada, la reconexión automática y la cola de envíos mantienen la continuidad de las Sessions con redes móviles inestables y después de pasar la App a segundo plano.
 - **Apps ligeras** — paquetes nativos pequeños basados en Tauri, además de una App contenedora con ArkWeb para HarmonyOS NEXT.
 - **Bridge sin mantenimiento** — funciona de forma permanente en macOS, Linux y Windows, conecta varios ordenadores a una cuenta y se actualiza automáticamente.
 
 ### Más funciones
 
-- **Interviene en cualquier momento** — envía mensajes mientras el agente trabaja o interrumpe un turno en curso
-- **Comandos con barra y Skills** — autocompletado con `/` de los comandos integrados y personalizados de cada agente, Skills y prompts guardados
-- **Subagentes** — los subagentes de Claude Code y Codex se agrupan bajo su Session principal, con estado en directo
-- **Agentes en segundo plano de Claude** — inícialos de forma remota y sigue su progreso después de desconectarte
+- **Interviene en cualquier momento** — envía mensajes mientras el agente trabaja o interrumpe un turno en curso.
+- **Comandos con barra y Skills** — autocompletado con `/` de los comandos integrados y personalizados de cada agente, Skills y prompts guardados.
+- **Subagentes** — los subagentes se agrupan bajo su Session principal, con estado en directo.
+- **Agentes en segundo plano de Claude** — inícialos de forma remota y sigue su progreso después de desconectarte.
 - **Entrada de archivos, imágenes y voz** — adjunta archivos, arrastra archivos o imágenes en el escritorio, envía imágenes comprimidas y dicta mensajes en iOS.
 - **Borradores de Session** — conserva el texto y los archivos adjuntos ya subidos al cambiar de Session o volver a abrir la App en el mismo dispositivo.
 - **Gestión de Sessions** — cambia el nombre de las Sessions mediante su entorno nativo y mantén pulsado para seleccionar y eliminar varias Sessions o proyectos, con la opción de eliminar también sus archivos locales.

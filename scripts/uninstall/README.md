@@ -1,7 +1,8 @@
 # Uninstall Baton
 
-Hosted relay: step 1 only. Self-hosted relay: step 1 on every computer, then
-step 2; cloud data is permanently deleted.
+Hosted relay: remove the computer in the App first (long-press it on the home
+page → **Remove**), then step 1. Self-hosted relay: step 1 on every computer,
+then step 2; cloud data is permanently deleted.
 
 ## 1. Uninstall Bridge
 

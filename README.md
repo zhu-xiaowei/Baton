@@ -48,8 +48,8 @@ You can also [self-host the relay on AWS](#self-hosting-aws).
 ### Core
 
 - **Popular agents** — Claude Code, Codex, Pi, Hermes, OpenCode, Kiro and DeepSeek Harness, all in one list
-- **Two-way handoff** — sessions on your computer stream live to your phone, token by token; start projects and sessions on your phone and carry on at your computer
-- **Approvals and questions** — approve tool calls, answer questions and review plans from your phone
+- **Two-way handoff** — sessions on your computer stream live to your phone, with running / needs input / done status; start projects and sessions on your phone and carry on at your computer
+- **Approvals and questions** — approve or deny tool calls, answer questions and review plans from your phone
 - **Notifications** — get an alert when a session finishes or needs you; tap to open it (Android on the hosted relay is coming)
 - **End-to-end encrypted** — conversations stay on your computer; the relay only forwards them
 
@@ -90,7 +90,7 @@ You can also [self-host the relay on AWS](#self-hosting-aws).
 
 - **Steer running sessions** — send follow-ups mid-turn or interrupt a running turn
 - **Slash commands and Skills** — `/` autocomplete for each agent's built-in and custom commands, Skills, and saved prompts
-- **Subagents** — Claude Code and Codex subagents grouped under their main session, with live status
+- **Subagents** — subagents grouped under their main session, with live status
 - **Claude background agents** — start them remotely and keep following them after you detach
 - **File, image, and voice input** — attach files, drag and drop files or images on desktop, send compressed images, and dictate messages on iOS
 - **Session drafts** — keep text and uploaded attachments when switching sessions or reopening the App on the same device
