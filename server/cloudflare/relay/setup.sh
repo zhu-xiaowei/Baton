@@ -128,6 +128,8 @@ chmod 755 /usr/local/bin/relay-guard
 printf '[Service]\nType=oneshot\nEnvironmentFile=-/etc/relay-guard.env\nExecStart=/usr/local/bin/relay-guard\n' >/etc/systemd/system/relay-guard.service
 printf '[Timer]\nOnCalendar=*:0/5\nPersistent=true\n[Install]\nWantedBy=timers.target\n' >/etc/systemd/system/relay-guard.timer
 
+# Security updates install daily; one that needs a reboot (a kernel) takes effect at 03:02 Beijing (between relay-guard runs); clients use the API host meanwhile.
+printf 'Unattended-Upgrade::Automatic-Reboot "true";\nUnattended-Upgrade::Automatic-Reboot-Time "19:02";\n' >/etc/apt/apt.conf.d/52relay-reboot
 mkdir -p /etc/systemd/system/nginx.service.d
 printf '[Service]\nLimitNOFILE=65536\n' >/etc/systemd/system/nginx.service.d/limits.conf
 printf 'net.core.somaxconn = 4096\nnet.ipv4.tcp_fastopen = 3\n' >/etc/sysctl.d/90-relay.conf
