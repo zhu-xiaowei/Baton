@@ -182,7 +182,8 @@ async function users(env) {
   const by = (key) => Object.entries(dist.reduce((o, r) => ({ ...o, [r[key] || '?']: (o[r[key] || '?'] ?? 0) + Number(r.n) }), {}))
     .sort((a, b) => b[1] - a[1]);
   // App seconds of the finished days (sampled closes) over their active accounts.
-  const days = time.filter((r) => r.day !== day), active = sum(daily.filter((r) => days.some((d) => d.day === r.day)), (r) => Number(r.dau));
+  const first = iso(Date.now() - 7 * 1440 * MIN).slice(0, 10); // the 8-day window's oldest day is partial
+  const days = time.filter((r) => r.day !== day && r.day >= first), active = sum(daily.filter((r) => days.some((d) => d.day === r.day)), (r) => Number(r.dau));
   return { daily, dau: Number(daily.at(-1)?.dau ?? 0), wau: Number(wau[0]?.n ?? 0), mau: Number(mau[0]?.n ?? 0),
     platforms: by('platform'), countries: by('country'), networks: by('network'),
     avgDailySecs: active ? sum(days, (r) => Number(r.secs)) / active : null, bridges, conns,

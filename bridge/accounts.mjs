@@ -45,8 +45,8 @@ function show(print, url) {
 // Resolves with the config to save once an App approved this computer; a new code every 15 minutes.
 export async function join(config, { print = console.log, sleep = pause, fetchImpl = fetch } = {}) {
   // The account is placed near this computer's entry. The host name stays the display name, sealed (ws.mjs).
-  config = { ...config, entry: await pickEntry(config.server, fetchImpl), deviceDisplayName: config.deviceDisplayName || config.deviceName,
-    deviceName: `pc-${randomBytes(4).toString('hex')}` };
+  config = { ...config, entry: await pickEntry(config.server, fetchImpl),
+    deviceDisplayName: [...(config.deviceDisplayName || config.deviceName || '')].slice(0, 64).join(''), deviceName: `pc-${randomBytes(4).toString('hex')}` };
   for (;;) {
     const t = randomBytes(16);
     const { code, poll, expiresIn, web } = await call(config, '/api/pair/start', { deviceName: config.deviceName, code: pairCode(t) }, fetchImpl);
@@ -60,7 +60,8 @@ export async function join(config, { print = console.log, sleep = pause, fetchIm
       const k = openPair(t, reply.sealed, code);
       // The server names the account's current key (`head`, a fingerprint): K must be that key.
       if (k?.length !== 32 || (reply.head && fingerprint(k) !== reply.head)) throw new Error('the key received is not the account\'s; not joining');
-      print(`Joined, approved by ${reply.approvedBy}`);
+      // An App names itself; a computer that approved for one is known by its random ID only.
+      print(/^pc-[0-9a-f]{8}$/.test(reply.approvedBy ?? '') ? 'Joined' : `Joined, approved by ${reply.approvedBy}`);
       return { ...config, apiKey: reply.token, accountKey: k.toString('base64'), accountKeyAt: Date.now(), accounts: true };
     }
   }

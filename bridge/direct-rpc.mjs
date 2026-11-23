@@ -209,9 +209,13 @@ export class DirectRpcBridge {
     clearTimeout(this.tokenTimer);
     this.tokenTimer = setTimeout(() => { if (this.pending) this.retry(); }, 10_000);
     this.tokenTimer.unref?.();
+    if (!this.sendControl({ action: 'direct_rpc', op: 'bridge_join', ...this.joinFields() })) this.retry();
+  }
+
+  // The session key, and a hosted computer's display name sealed under K (both servers store it with the device row).
+  joinFields() {
     const keys = this.keys ? { pub: this.keys.pub, fp: this.keys.fp } : {};
-    const name = this.accounts && this.accountKey && this.label ? sealDeviceName(this.accountKey, this.device, this.label) : {};
-    if (!this.sendControl({ action: 'direct_rpc', op: 'bridge_join', ...keys, ...name })) this.retry();
+    return { ...keys, ...(this.accounts && this.accountKey && this.label ? sealDeviceName(this.accountKey, this.device, this.label) : {}) };
   }
 
   // A closed App connection (relay): nothing is kept for it.
@@ -228,8 +232,7 @@ export class DirectRpcBridge {
     url.protocol = 'wss:';
     url.search = new URLSearchParams({ apiKey: this.key, role: 'bridge_data' }).toString();
     const socket = this.socket = this.socketFactory(url.href);
-    const keys = this.keys ? { pub: this.keys.pub, fp: this.keys.fp } : {};
-    socket.on('open', () => socket.send(JSON.stringify({ action: 'direct_rpc', op: 'bridge_join', token, ...keys })));
+    socket.on('open', () => socket.send(JSON.stringify({ action: 'direct_rpc', op: 'bridge_join', token, ...this.joinFields() })));
     socket.on('message', (data) => this.receive(socket, data.toString()));
     socket.on('close', () => this.closed(socket));
     socket.on('error', () => {});

@@ -681,12 +681,18 @@ export function devices() {
     const body = await response.json();
     if (body.protocol === 2) updateRoutes(body);
     if (body.rotations?.length) await followRotations(body.rotations);
-    // A hosted computer's display name is sealed under K (bridge/e2ee-node.mjs sealDeviceName); its ID until it opens.
+    // A hosted computer's display name is sealed under K (bridge/e2ee-node.mjs sealDeviceName). One sealed under a K
+    // replaced while it was offline keeps the name last opened here until it seals it again; else its ID.
     if (body.devices?.some((device) => device.nameSealed)) {
       await accountKeys();
+      const store = 'baton-device-names:' + state.SERVER, known = JSON.parse(localStorage.getItem(store) || '{}');
       if (keys) await Promise.all(body.devices.map(async (device) => {
-        if (device.nameSealed) device.deviceDisplayName = await keys.openName(device.nameSealed, device.deviceName) || device.deviceDisplayName;
+        if (!device.nameSealed) return;
+        const name = await keys.openName(device.nameSealed, device.deviceName);
+        if (name) known[device.deviceName] = name;
+        device.deviceDisplayName = name || known[device.deviceName] || device.deviceDisplayName;
       }));
+      localStorage.setItem(store, JSON.stringify(known));
     }
     return body;
   })().finally(() => { devicesInflight = null; });

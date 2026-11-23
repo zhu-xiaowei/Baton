@@ -64,8 +64,8 @@ async function connect(event, context, connectionId, connectedEndpoint, sockets,
   await sockets.table.putItem({ Item: item });
   if (item.bridgeOwner) {
     if (!await sockets.claimBridgeConnection(item, connectedEndpoint)) return { statusCode: 409 };
-    try { // display only: the connection does not depend on it
-      await sockets.devices.put(accountId, device, qs.name ?? '');
+    try { // display only: the connection does not depend on it; a paired computer names itself sealed, with bridge_join
+      if (qs.name !== undefined) await sockets.devices.put(accountId, device, qs.name);
     } catch (error) {
       console.log(`device row not written: ${error.message}`);
     }
