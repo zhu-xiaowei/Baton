@@ -8,7 +8,6 @@ import { cachedOnlineDevices, connect, devices, request } from './direct-transpo
 const CACHE_KEY = 'apeek_v2_home_devices';
 const PROJECT_LIMIT = 15;
 let inflight = null;
-let latest = null;
 let generation = 0; // only the newest load writes the cache and the page
 
 function readJson(key) {
@@ -26,11 +25,6 @@ function saveCache(devices, list) {
 }
 
 let outdated = null; // the server-update dialog, shown once
-
-// "Show more" only reveals projects the last answer already holds (15), so it sends nothing.
-export function expandedHome() {
-  return latest ? Promise.resolve(latest) : loadHomeV2();
-}
 
 export function loadHomeV2() {
   if (inflight && performance.now() - inflight.at < 1500) return inflight.promise;
@@ -70,8 +64,8 @@ async function load(publish) {
       settle();
       if (finished && current() && !answer.notModified) {
         saveCache(cache, finished.list);
-        latest = merge(finished.list, finished.reachable);
-        window.__applyHome?.(latest.active, latest.devices);
+        const home = merge(finished.list, finished.reachable);
+        window.__applyHome?.(home.active, home.devices);
       }
     }, (error) => {
       if (error.message === 'timeout') timedOut.add(device);
@@ -103,7 +97,7 @@ async function load(publish) {
   if (saved.list && asked.size && !listed) {
     // Only devices that answered just now are live; one that answered is online whatever the cache said.
     const answered = new Set(fresh.keys());
-    early = latest = merge(saved.list.map((d) => (answered.has(d.deviceName) ? { ...d, online: true } : d)), answered);
+    early = merge(saved.list.map((d) => (answered.has(d.deviceName) ? { ...d, online: true } : d)), answered);
     window.__v2Timings.total = Math.round(performance.now() - started);
     publish(early);
   }
@@ -127,7 +121,6 @@ async function load(publish) {
   finished = { list: response.devices, reachable };
   reportSilent();
   const result = merge(response.devices, reachable);
-  if (current()) latest = result;
   window.__v2Timings.fresh = [...fresh.keys()];
   if (!early) window.__v2Timings.total = Math.round(performance.now() - started);
   else if (current() && JSON.stringify(result) !== JSON.stringify(early)) window.__applyHome?.(result.active, result.devices);

@@ -1407,7 +1407,8 @@ async function loadDevices() {
   deactivateList();
   var wasHome = !state.appState.device && !state.appState.project && !state.appState.session;
   var homePreview = prepareNavigation({ device: null, project: null, session: null });
-  var myNav = ++_navVersion;
+  // Reusing the in-flight home run keeps its generation, so that run still renders and stops the spinner.
+  var myNav = wasHome && window.__homeLoadPromise ? _navVersion : ++_navVersion;
   if (state.selectMode) { state.selectMode = false; state.selectType = null; state.selected = new Set(); }
   state.appState = { device: null, project: null, session: null, sessionPreview: '' };
   markCurrentRoute(state.appState);
