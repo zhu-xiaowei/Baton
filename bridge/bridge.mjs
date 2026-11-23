@@ -105,6 +105,7 @@ async function checkUpdate(force = false) {
     if (!res.ok) return;
     const info = await res.json();
     const version = info.bridgeVersion || info.version;
+    if (version === BRIDGE_VERSION) sessionIndex.updatePending = null;
     if (!version || version === 'dev' || version === BRIDGE_VERSION || version === skippedVersion) return;
     const busy = busySessions();
     const since = sessionIndex.updatePending?.version === version ? sessionIndex.updatePending.since : Date.now();

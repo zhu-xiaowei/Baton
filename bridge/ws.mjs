@@ -1028,6 +1028,7 @@ async function handleMessage(msg) {
       _alertAcks.get(msg.eventId)?.(true);
       break;
     case 'heartbeat':
+      if (msg.bridgeVersion === BRIDGE_VERSION) sessionIndex.updatePending = null; // the server went back to this version
       if (typeof msg.bridgeVersion === 'string' && msg.bridgeVersion
         && msg.bridgeVersion !== 'dev' && msg.bridgeVersion !== BRIDGE_VERSION) {
         await _checkUpdate?.();
