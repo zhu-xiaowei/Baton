@@ -30,6 +30,7 @@ export const Body = [
   ['id', pattern('^([0-9a-f]{12})?$')],
   ['rotation', { model: Rotation, nullable: true, default: null }],
   ['retry', pattern('^[0-9]?$')], // register: attempts so far at placing the account (Cloudflare)
+  ['nameTag', pattern('^([0-9a-f]{32})?$')], // a hosted computer's display-name tag (bridge/e2ee-node.mjs)
 ];
 
 // A Durable Object region near where an endpoint enters Cloudflare (the Worker's x-baton-edge); through the relay that is Tokyo.
@@ -132,7 +133,8 @@ export function createAccounts({ env, table, auth, devices, sockets, log, place 
     const [index, listed] = tokenKeys(account, await tokenHash(token));
     // Listed first: a token whose index write failed is visible and removable, never a hidden credential.
     await table.putItem({ Item: { ...listed, kind, deviceName: name, install, createdAt: nowInt() } });
-    await table.putItem({ Item: { ...index, kind, deviceName: name, accountId: account } });
+    // Cloudflare resolves tokens from the listed row (the token names its account): no index.
+    if (!env.TOKENS_BY_ACCOUNT) await table.putItem({ Item: { ...index, kind, deviceName: name, accountId: account } });
     return token;
   }
 
@@ -148,7 +150,8 @@ export function createAccounts({ env, table, auth, devices, sockets, log, place 
       ConditionExpression: `attribute_exists(pk) AND #ttl > :now AND ${condition}`, ExpressionAttributeNames: { '#ttl': 'ttl' },
       ExpressionAttributeValues: { ':now': nowInt() - grace, ...values } }));
     const by = old && old.Attributes.by;
-    if (!old || (by && !(await table.getItem({ Key: { pk: `TOKEN#${by}`, sk: '-' } })).Item)) throw new HTTPError(404, GONE);
+    const byKey = by && tokenKeys(old.Attributes.accountId, by)[env.TOKENS_BY_ACCOUNT ? 1 : 0];
+    if (!old || (by && !(await table.getItem({ Key: byKey })).Item)) throw new HTTPError(404, GONE);
     return old.Attributes;
   }
 
@@ -163,11 +166,15 @@ export function createAccounts({ env, table, auth, devices, sockets, log, place 
   const joined = async (row, kind, name, install = '', extra = {}) => ({ token: await issue(row.accountId, kind, name, install),
     accountId: row.accountId, sealed: row.sealed, head: (await meta(row.accountId)).head ?? '', ...extra });
 
-  // A name is the computer's identity: a second one with it would take the first one's place.
-  async function roomFor(account, name) {
+  // A name is the computer's identity: a second one with it would take the first one's place. A hosted computer's
+  // display name is sealed: its tag stands in for it.
+  async function roomFor(account, name, tag = '') {
     const computers = (await tokenRows(account)).filter((row) => row.kind === 'bridge').map((row) => row.deviceName);
     if (open() && computers.length >= MAX_BRIDGES) throw new HTTPError(409, `This account already has ${MAX_BRIDGES} computers.`);
     if (computers.includes(name)) throw new HTTPError(409, `A computer named ${name} is already in this account; reinstall with another name.`);
+    if (tag && (await devices.list(account)).some((item) => item.nameTag === tag)) {
+      throw new HTTPError(409, 'A computer with this name is already in this account; reinstall with another name.');
+    }
   }
 
   async function selfHosted(account) {
@@ -246,12 +253,12 @@ export function createAccounts({ env, table, auth, devices, sockets, log, place 
     need(body, 'code', 'sealed');
     await ensureMeta(caller);
     const Key = await pairKey(body.code);
-    await roomFor(caller.accountId, (await table.getItem({ Key, ConsistentRead: true })).Item?.deviceName);
+    await roomFor(caller.accountId, (await table.getItem({ Key, ConsistentRead: true })).Item?.deviceName, body.nameTag);
     const row = await conditional(() => table.updateItem({ Key, ReturnValues: 'ALL_NEW',
-      UpdateExpression: 'SET accountId = :account, sealed = :sealed, approvedBy = :by, #by = :token',
+      UpdateExpression: 'SET accountId = :account, sealed = :sealed, approvedBy = :by, #by = :token, nameTag = :tag',
       ConditionExpression: 'attribute_exists(pk) AND kind = :bridge AND #ttl > :now AND attribute_not_exists(accountId)',
       ExpressionAttributeNames: { '#ttl': 'ttl', '#by': 'by' }, ExpressionAttributeValues: { ':account': caller.accountId,
-        ':sealed': body.sealed, ':bridge': 'bridge', ':by': caller.deviceName || 'Baton', ':token': caller.tokenHash ?? '', ':now': nowInt() } }));
+        ':sealed': body.sealed, ':bridge': 'bridge', ':by': caller.deviceName || 'Baton', ':token': caller.tokenHash ?? '', ':tag': body.nameTag ?? '', ':now': nowInt() } }));
     if (!row) throw new HTTPError(404, GONE);
     return { deviceName: row.Attributes.deviceName };
   }
@@ -265,7 +272,7 @@ export function createAccounts({ env, table, auth, devices, sockets, log, place 
       || !compareDigest(row.pollHash ?? '', await sha256(body.poll))) throw new HTTPError(404, GONE);
     if (!approved) return { pending: true };
     row = await take(body.code, 'pollHash = :poll AND attribute_exists(accountId)', { ':poll': await sha256(body.poll) }, COLLECT_SECONDS);
-    await roomFor(row.accountId, row.deviceName); // again: other codes may have been approved meanwhile
+    await roomFor(row.accountId, row.deviceName, row.nameTag); // again: other codes may have been approved meanwhile
     return joined(row, 'bridge', row.deviceName, '', { approvedBy: row.approvedBy });
   }
 

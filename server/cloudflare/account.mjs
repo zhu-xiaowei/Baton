@@ -9,7 +9,6 @@ import { createItems, createTable, serve } from './store.mjs';
 import { Usage, describe, today } from './usage.mjs';
 
 const SILENT_MS = 75_000; // three missed 25 s text pings
-const SWEEP_MS = 60_000;
 const ACTIVE_MS = 60_000; // an App's last activity is written at most this often
 const encoder = new TextEncoder();
 const send = (ws, data) => { try { ws.send(typeof data === 'string' ? data : JSON.stringify(data)); return true; } catch { return false; } };
@@ -83,17 +82,13 @@ export class AccountObject extends DurableObject {
         send(old, { action: 'bridge_replaced' });
         await this.retire(old, 1000, 'replaced');
       }
-      try { // display only
-        await core.devices.put(account, device, query.get('name') ?? '', query.get('os') ?? '');
-      } catch (error) {
-        console.log(`device row not written: ${error.message}`);
-      }
+      // A hosted computer names itself sealed, with bridge_join; others in clear here.
+      if (query.has('name')) await core.devices.put(account, device, query.get('name')).catch((error) => console.log(`device row not written: ${error.message}`));
     }
     if (role === 'app') {
       for (const [old] of leastActive(this.live('app').filter(([ws]) => ws !== socket), max.apps - 1)) await this.retire(old, 4429, 'too_many_apps');
     }
     for (const [old] of tok.length ? this.live(tok[0]) : []) if (old !== socket) await this.retire(old, 4409, 'replaced');
-    if (role === 'app' && await this.ctx.storage.getAlarm() === null) await this.ctx.storage.setAlarm(Date.now() + SWEEP_MS);
     return new Response(null, { status: 101, webSocket: client });
   }
 
@@ -142,6 +137,10 @@ export class AccountObject extends DurableObject {
       const valid = typeof body.pub === 'string' && PUB.test(body.pub) && typeof body.fp === 'string' && /^[0-9a-f]{16}$/.test(body.fp);
       ws.serializeAttachment({ ...me, joined: true, pub: valid ? body.pub : '', fp: valid ? body.fp : '' });
       send(ws, { action: 'direct_rpc', type: 'joined', id: me.id });
+      if (me.device && typeof body.nameSealed === 'string' && body.nameSealed.length <= 400 && /^[0-9a-f]{32}$/.test(body.nameTag ?? '')) {
+        await this.core(me.account).devices.put(me.account, me.device, '', { nameSealed: body.nameSealed, nameTag: body.nameTag })
+          .catch((error) => console.log(`device row not written: ${error.message}`));
+      }
       await this.notifyApps(me.account);
     }
   }
@@ -175,19 +174,21 @@ export class AccountObject extends DurableObject {
     if (until > Date.now()) for (const role of ['app', 'bridge', 'notify']) for (const [ws] of this.live(role)) await this.retire(ws, 4429, 'monthly_limit');
   }
 
+  // An alarm armed by an older version: sweep once, re-arm nothing.
   async alarm() {
     this.swept = 0;
     await this.sweep();
-    if (this.live('app').length) await this.ctx.storage.setAlarm(Date.now() + SWEEP_MS);
   }
 
-  // Dead sockets stay OPEN for minutes: one silent past SILENT_MS (no auto-answered ping) is closed.
+  // Dead sockets stay OPEN for minutes: one silent past SILENT_MS (no auto-answered ping) is closed. Run on every
+  // request and frame, not on a timer (each setAlarm is a billed row write): a Bridge's frames, at least its
+  // 4-minute heartbeat, reach it; with no traffic at all a dead App costs nothing.
   async sweep() {
     const now = Date.now();
     if (now - this.swept < 10_000) return;
     this.swept = now;
     for (const [ws, a] of this.live()) {
-      if (a.role === 'notify') continue; // Android may ping late while dozing; these never hold the alarm
+      if (a.role === 'notify') continue; // Android may ping late while dozing
       const last = this.ctx.getWebSocketAutoResponseTimestamp(ws)?.getTime() ?? a.connectedAt;
       if (now - last > SILENT_MS) await this.retire(ws, 4000, 'silent');
     }
@@ -206,9 +207,8 @@ export class AccountObject extends DurableObject {
     try { ws.serializeAttachment(a); } catch {}
     if (a.role === 'app') {
       for (const [bridge] of this.live('bridge')) send(bridge, { action: 'peer_left', id: a.id });
-      if (!this.live('app').length) await this.ctx.storage.deleteAlarm();
     } else if (a.joined) await this.notifyApps(a.account);
-    if (a.role !== 'notify') await this.usage.left(a, code, this.live('app').length).catch((error) => console.log(`usage: ${error.message}`));
+    if (a.role !== 'notify') await this.usage.left(a, code).catch((error) => console.log(`usage: ${error.message}`));
   }
 
   record(a) {

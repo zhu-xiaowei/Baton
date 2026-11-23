@@ -211,9 +211,9 @@ These override the sections above where they differ.
    the object, so every client sends the text `{"action":"realtime_ping"}`. A dead TCP socket stays in
    `getWebSockets()` as OPEN for ~8–9 min and its `webSocketClose` arrives ~9 min late: the sweep marks
    `closing` in the attachment before `close(4000)`, routing skips `closing` sockets, every send is in try/catch,
-   `peer_left` is de-duplicated. Because a room of ping-only sockets never wakes the object, an alarm runs **only
-   while App sockets are attached** (every 60 s, cancelled when the last App leaves): a dead App is found within
-   75–135 s (AWS: lease 150 s), at ≈ 1,800 alarms per month for an App open an hour a day (≈ $0.0003).
+   `peer_left` is de-duplicated. A room of ping-only sockets never wakes the object, and no alarm keeps it awake
+   (each `setAlarm` is a billed row write): the sweep runs on every request and frame, so a dead App goes at the
+   next one after 75 s, at the latest with the Bridge's 4-minute heartbeat (AWS: lease 150 s).
 4. **Auth (§3)**: browsers and Node cannot read an upgrade's 401/403, so a revoked token would look like a network
    error and retry forever. The object accepts the upgrade and closes with **4401** (bad/revoked token) or **4403**
    (wrong role/device); clients stop retrying on those codes. Malformed tokens are still rejected by the Worker.

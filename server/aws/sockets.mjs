@@ -207,6 +207,9 @@ export function createSockets({ table, devices, log = console.log }) {
       await table.updateItem({ Key: { connectionId }, UpdateExpression: 'SET rpcControlId = :control',
         ConditionExpression: 'attribute_exists(connectionId)', ExpressionAttributeValues: { ':control': ticket.controlId } });
       await post(endpoint, connectionId, { action: 'direct_rpc', type: 'joined' });
+      if (typeof body.nameSealed === 'string' && body.nameSealed.length <= 400 && /^[0-9a-f]{32}$/.test(body.nameTag ?? '')) {
+        await devices.put(accountId, ticket.deviceName, '', { nameSealed: body.nameSealed, nameTag: body.nameTag }).catch((error) => log(`device row not written: ${error.message}`));
+      }
       await notifyApps(accountId);
       return { statusCode: 200 };
     }

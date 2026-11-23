@@ -86,9 +86,11 @@ export function createNotifications({ env, table, relayPost, log, random = Math.
 
   async function registerDevice({ body, auth }) {
     if (!relayConfigured()) throw new HTTPError(503, 'iOS push is not configured on this server.');
-    // The token, so removing the device also removes its alerts.
-    await table.putItem({ Item: { ...pushKey(body, auth.accountId), tokenHash: auth.tokenHash ?? '',
-      ttl: Math.floor(Date.now() / 1000) + 30 * 86400 } });
+    // The token, so removing the device also removes its alerts. Apps register on every launch: rewritten once a day at most.
+    const key = pushKey(body, auth.accountId), now = Math.floor(Date.now() / 1000);
+    const row = (await table.getItem({ Key: key })).Item;
+    if (row?.tokenHash === (auth.tokenHash ?? '') && Math.trunc(row.ttl ?? 0) > now + 29 * 86400) return { ok: true };
+    await table.putItem({ Item: { ...key, tokenHash: auth.tokenHash ?? '', ttl: now + 30 * 86400 } });
     return { ok: true };
   }
 

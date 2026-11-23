@@ -115,3 +115,14 @@ export const openPair = (t, sealed, code) => openKey(hkdf(t, 'pair'), sealed, co
 export const fingerprint = (k) => hkdf(k, 'fp', 8).toString('hex');
 // `fp`: the old K's fingerprint, under which K' was sealed.
 export const openRotation = (k, sealed, fp) => openKey(hkdf(k, 'rotate'), sealed, fp);
+
+// A hosted computer's display name for /devices, sealed under K and bound to its device ID. The nonce comes from the
+// name, so an unchanged name seals the same (no rewrite); the tag (case-insensitive) finds a duplicate in the account.
+export const deviceNameTag = (k, name) => createHmac('sha256', hkdf(k, 'device-name-tag')).update(name.trim().toLowerCase()).digest('hex').slice(0, 32);
+export function sealDeviceName(k, device, name) {
+  const key = hkdf(k, 'device-name');
+  const nonce = createHmac('sha256', key).update(`${device}\n${name}`).digest().subarray(0, 12);
+  const cipher = createCipheriv('aes-256-gcm', key, nonce).setAAD(Buffer.from(device));
+  return { nameSealed: Buffer.concat([nonce, cipher.update(name), cipher.final(), cipher.getAuthTag()]).toString('base64'),
+    nameTag: deviceNameTag(k, name) };
+}

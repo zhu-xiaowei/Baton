@@ -118,13 +118,15 @@ test('notify_check reaches every App; alerts reach notify sockets', { skip: off 
   await deleteAccount(a.token);
 });
 
-test('a silent App is swept within 135 s and its Bridges get peer_left', { skip: off, timeout: 200_000 }, async () => {
+test('a silent App is swept at the next frame after 75 s and its Bridges get peer_left', { skip: off, timeout: 200_000 }, async () => {
   const a = await account('sweep');
   const bridge = a.bridge();
   const app = open(a.token, 'app', { ping: false });
   const [id, start] = [await app.id(), Date.now()];
   await bridge.ready;
-  assert.ok(await bridge.next((f) => f.action === 'peer_left' && f.id === id, 150_000));
+  await sleep(80_000);
+  bridge.send('{"action":"heartbeat"}');
+  assert.ok(await bridge.next((f) => f.action === 'peer_left' && f.id === id));
   assert.equal(await app.closed, 4000);
   console.log(`swept after ${Math.round((Date.now() - start) / 1000)} s`);
   closeAll(bridge);

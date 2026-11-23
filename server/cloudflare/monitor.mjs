@@ -62,7 +62,7 @@ const probe = (env) => Promise.all([
 
 // ---- Usage: month-to-date per account object (top 100) and service totals, today's Free quotas, who is online ----
 
-const USAGE = `query($a:string!,$ns:string!,$nss:[string!],$scripts:[string!],$month:Date!,$day:Date!,$alarm:Time!,$recent:Time!,$spike:Time!,$store:Time!,$service:string!,$push:string!){viewer{
+const USAGE = `query($a:string!,$ns:string!,$nss:[string!],$scripts:[string!],$month:Date!,$day:Date!,$recent:Time!,$spike:Time!,$store:Time!,$service:string!,$push:string!){viewer{
   accounts(filter:{accountTag:$a}){
     byTime:durableObjectsPeriodicGroups(limit:100,filter:{namespaceId:$ns,date_geq:$month},orderBy:[sum_duration_DESC]){sum{duration inboundWebsocketMsgCount rowsRead rowsWritten} dimensions{name objectId}}
     byWs:durableObjectsInvocationsAdaptiveGroups(limit:100,filter:{namespaceId:$ns,date_geq:$month,type:"hibernation"},orderBy:[sum_requests_DESC]){sum{requests} dimensions{name objectId}}
@@ -82,7 +82,6 @@ const USAGE = `query($a:string!,$ns:string!,$nss:[string!],$scripts:[string!],$m
     workersDay:workersInvocationsAdaptive(limit:1,filter:{date:$day,scriptName_neq:$push}){sum{requests}}
     doDay:durableObjectsPeriodicGroups(limit:1,filter:{date:$day}){sum{duration inboundWebsocketMsgCount rowsRead rowsWritten}}
     callsDay:durableObjectsInvocationsAdaptiveGroups(limit:50,filter:{date:$day}){sum{requests} dimensions{hibernation:type}}
-    alarms:durableObjectsInvocationsAdaptiveGroups(limit:10000,filter:{namespaceId:$ns,datetime_geq:$alarm,type:"alarm"}){dimensions{name}}
     awake:durableObjectsInvocationsAdaptiveGroups(limit:10000,filter:{namespaceId:$ns,datetime_geq:$recent}){dimensions{name}}
     sockets:durableObjectsPeriodicGroups(limit:10000,filter:{namespaceId:$ns,datetime_geq:$recent}){max{activeWebsocketConnections} dimensions{name}}
     errors:workersInvocationsAdaptive(limit:20,filter:{scriptName:$service,datetime_geq:$spike}){sum{requests errors}}
@@ -103,7 +102,7 @@ async function usage(env, now) {
   if (!env.ACCOUNT_NS || !env.NAMESPACES) throw new Error('ACCOUNT_NS / NAMESPACES unset'); // GraphQL ignores a null filter
   const month = iso(Date.UTC(new Date(now).getUTCFullYear(), new Date(now).getUTCMonth(), 1)).slice(0, 10);
   const v = (await gql(env, USAGE, { ns: env.ACCOUNT_NS, nss: list(env.NAMESPACES), scripts: list(env.SCRIPTS), month, day: iso(now).slice(0, 10),
-    alarm: iso(now - 3 * MIN), recent: iso(now - 5 * MIN), spike: iso(now - 15 * MIN), store: iso(now - 2880 * MIN), service: env.SERVICE_SCRIPT,
+    recent: iso(now - 5 * MIN), spike: iso(now - 15 * MIN), store: iso(now - 2880 * MIN), service: env.SERVICE_SCRIPT,
     push: env.PUSH_SCRIPT ?? '' })).accounts[0];
   // Each account object (its idFromName name is the account id): the union of the three top-100 lists.
   const objects = new Map();
@@ -142,7 +141,8 @@ async function usage(env, now) {
   const used = { ...account, ...(plan === 'free' ? today : {}), sqlBytes: allSql, r2Bytes: r2Bytes(buckets) };
   const quotas = Object.fromEntries(Object.entries(PLANS[plan]).map(([k, limit]) => [k, [used[k] ?? 0, limit]]));
   const names = (rows) => new Set(rows.map((r) => r.dimensions.name).filter((n) => n !== env.PROBE_ACCOUNT));
-  const online = { apps: names(v.alarms).size, awake: names(v.awake).size, sockets: sum(v.sockets, (r) => r.max.activeWebsocketConnections) };
+  // Analytics cannot tell an App's socket from a Bridge's: accounts with any activity, and all open sockets.
+  const online = { awake: names(v.awake).size, sockets: sum(v.sockets, (r) => r.max.activeWebsocketConnections) };
   const errors = { requests: sum(v.errors, (r) => r.sum.requests), errors: sum(v.errors, (r) => r.sum.errors) };
   return { accounts, totals, cost, plan, quotas, online, errors, storage: { sqlBytes, r2Bytes: r2Bytes(mine(buckets)), r2Objects: sum(mine(buckets), (r) => r.max.objectCount) } };
 }
@@ -172,7 +172,7 @@ async function users(env) {
     `SELECT count(DISTINCT blob2) AS n ${from(7)} AND blob1 = 'active'`,
     `SELECT count(DISTINCT blob2) AS n ${from(30)} AND blob1 = 'active'`,
     `SELECT blob4 AS platform, blob5 AS country, blob6 AS network, sum(_sample_interval) AS n ${from(30)} AND blob1 = 'active' GROUP BY platform, country, network`,
-    `SELECT blob2 AS account, blob3 AS day, max(double1) AS secs ${from(8)} AND blob1 = 'summary' GROUP BY account, day`,
+    `SELECT blob3 AS day, sum(_sample_interval * double4 * double1) AS secs ${from(8)} AND blob1 = 'conn' AND blob4 = 'app' GROUP BY day`,
     `SELECT blob7 AS version, blob4 AS os, count(DISTINCT blob2) AS n ${from(1)} AND blob1 = 'bridge' GROUP BY version, os`,
     `SELECT blob1 AS kind, blob4 AS role, double3 AS code, sum(_sample_interval * double4) AS n, sum(_sample_interval * double4 * double1) AS secs ${from(1)} AND blob1 IN ('conn', 'reject') GROUP BY kind, role, code`,
     relayed(1, `blob3 = '${day}'`), relayed(31, `blob3 >= '${day.slice(0, 8)}01'`), // accounts through the mainland-China relay
@@ -181,10 +181,12 @@ async function users(env) {
   const roles = (rows) => Object.fromEntries(rows.map((r) => [r.role, Number(r.n)]));
   const by = (key) => Object.entries(dist.reduce((o, r) => ({ ...o, [r[key] || '?']: (o[r[key] || '?'] ?? 0) + Number(r.n) }), {}))
     .sort((a, b) => b[1] - a[1]);
-  const days = time.filter((r) => r.day !== new Date().toISOString().slice(0, 10));
+  // App seconds of the finished days (sampled closes) over their active accounts.
+  const first = iso(Date.now() - 7 * 1440 * MIN).slice(0, 10); // the 8-day window's oldest day is partial
+  const days = time.filter((r) => r.day !== day && r.day >= first), active = sum(daily.filter((r) => days.some((d) => d.day === r.day)), (r) => Number(r.dau));
   return { daily, dau: Number(daily.at(-1)?.dau ?? 0), wau: Number(wau[0]?.n ?? 0), mau: Number(mau[0]?.n ?? 0),
     platforms: by('platform'), countries: by('country'), networks: by('network'),
-    avgDailySecs: days.length ? sum(days, (r) => Number(r.secs)) / days.length : null, bridges, conns,
+    avgDailySecs: active ? sum(days, (r) => Number(r.secs)) / active : null, todaySecs: Number(time.find((r) => r.day === day)?.secs ?? 0), bridges, conns,
     relay: { day: roles(relayDay), month: roles(relayMonth) }, devices: roles(devices) };
 }
 
@@ -318,7 +320,7 @@ export class MonitorStore extends DurableObject {
     for (const name of Object.keys(state.relayStale ?? {})) if (!relays.has(name)) delete state.relayStale[name];
     await this.ctx.storage.put('state', state);
     const ok = probes.reduce((bits, p, i) => bits | (p.ok ? 1 << i : 0), 0);
-    this.sql.exec('INSERT OR REPLACE INTO snaps VALUES (?, ?, ?, ?)', now, ok, used.online?.apps ?? null, JSON.stringify({ probes, ...used, accounts: used.accounts?.slice(0, 10) }));
+    this.sql.exec('INSERT OR REPLACE INTO snaps VALUES (?, ?, ?, ?)', now, ok, used.online?.awake ?? null, JSON.stringify({ probes, ...used, accounts: used.accounts?.slice(0, 10) }));
     this.sql.exec('DELETE FROM snaps WHERE t < ?', now - 35 * 1440 * MIN);
   }
 
@@ -358,10 +360,8 @@ export class MonitorStore extends DurableObject {
       return [r.t, r.ok, r.online, ...(d.probes ?? []).map((p) => p.ms), d.cost?.usage ?? null, d.errors?.errors ?? null];
     });
     const uptime = (from) => this.sql.exec('SELECT count(*) AS n, sum(ok & 1) AS v, sum((ok >> 1) & 1) AS r, sum((ok >> 2) & 1) AS w FROM snaps WHERE t >= ?', from).one();
-    // Use time so far today: online accounts integrated over the 5-minute snapshots.
-    const [today] = this.sql.exec('SELECT sum(online) * 300 AS secs FROM snaps WHERE t >= ?', midnight).toArray();
     const state = (await this.ctx.storage.get('state')) ?? {};
-    const value = { now, latest: latest && { t: latest.t, ...JSON.parse(latest.data) }, series, uptime: { today: uptime(midnight), week: uptime(now - 7 * 1440 * MIN) }, useToday: today?.secs ?? 0,
+    const value = { now, latest: latest && { t: latest.t, ...JSON.parse(latest.data) }, series, uptime: { today: uptime(midnight), week: uptime(now - 7 * 1440 * MIN) },
       blocked: state.blocked ?? {}, alerts: state.log ?? [], cap: Number(this.env.COST_CAP || 1),
       relays: Object.fromEntries([...(await this.ctx.storage.list({ prefix: 'relay:' }))].map(([k, r]) => [k.slice(6), r])),
       devices: Object.fromEntries(this.sql.exec('SELECT role, count(*) AS n FROM devices GROUP BY role').toArray().map((r) => [r.role, r.n])),

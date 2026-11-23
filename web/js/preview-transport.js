@@ -35,6 +35,7 @@ function portInUseError(error, port) {
 export class PreviewTunnel {
   constructor({ device, target, mode = 'strict', onStatus, onTraffic }) {
     this.device = device;
+    this.label = globalThis.__deviceDisplayNames?.[device] || device; // statuses name the computer as the App shows it
     this.target = target;
     this.mode = mode;
     this.onStatus = onStatus;
@@ -120,7 +121,7 @@ export class PreviewTunnel {
       try {
         await this.pair();
         this.reconnecting = null;
-        this.status(`Connected to port ${this.target.port} on ${this.device}`);
+        this.status(`Connected to port ${this.target.port} on ${this.label}`);
         return;
       } catch (error) {
         reason = error.message || String(error);
@@ -169,7 +170,7 @@ export class PreviewTunnel {
       }
       this.retransmitTimer = setInterval(() => this.retransmit(), RETRANSMIT_CHECK_MS);
       const url = `${this.localOrigin}${this.target.pathname}${this.target.search}${this.target.hash}`;
-      this.status(`Opening ${this.target.displayUrl} on ${this.device}`);
+      this.status(`Opening ${this.target.displayUrl} on ${this.label}`);
       return url;
     } catch (error) {
       await this.close();
@@ -179,10 +180,10 @@ export class PreviewTunnel {
 
   checkPort() {
     if (this.closed) return Promise.reject(new Error('Preview closed'));
-    this.status(`Checking port ${this.target.port} on ${this.device}…`);
+    this.status(`Checking port ${this.target.port} on ${this.label}…`);
     return new Promise((resolve, reject) => {
       const streamId = crypto.randomUUID();
-      const timer = setTimeout(() => finish(new Error(`Port check timed out on ${this.device}:${this.target.port}`)), 5000);
+      const timer = setTimeout(() => finish(new Error(`Port check timed out on ${this.label}:${this.target.port}`)), 5000);
       const finish = error => {
         clearTimeout(timer);
         this.portChecks.delete(streamId);
@@ -199,7 +200,7 @@ export class PreviewTunnel {
 
   nativeOpen(payload) {
     if (this.closed || payload.tunnelId !== this.localId || !UUID.test(payload.streamId)) return;
-    this.status(`Connecting to port ${this.target.port} on ${this.device}`);
+    this.status(`Connecting to port ${this.target.port} on ${this.label}`);
     const stream = {
       id: payload.streamId, opened: false, localFin: false, remoteFin: false,
       nextOutgoing: 1, nextIncoming: 1, lastWritten: 0,
@@ -297,8 +298,8 @@ export class PreviewTunnel {
       if (message.type === 'opened') portCheck();
       else if (message.type === 'error' || message.type === 'close' || message.type === 'fin') {
         portCheck(new Error(message.code === 'connection_refused'
-          ? `Port ${this.target.port} is not listening on ${this.device}`
-          : `Could not connect to port ${this.target.port} on ${this.device}`));
+          ? `Port ${this.target.port} is not listening on ${this.label}`
+          : `Could not connect to port ${this.target.port} on ${this.label}`));
       }
       return;
     }
@@ -306,7 +307,7 @@ export class PreviewTunnel {
     if (!stream || this.closed) return;
     if (message.type === 'opened') {
       stream.opened = true;
-      this.status(`Connected to port ${this.target.port} on ${this.device}`);
+      this.status(`Connected to port ${this.target.port} on ${this.label}`);
       void invoke('preview_credit', { streamId: stream.id, bytes: WINDOW_BYTES })
         .catch(() => this.closeStream(stream.id, true));
       this.status(`Loading ${this.target.displayUrl}`);
@@ -350,7 +351,7 @@ export class PreviewTunnel {
       void this.flushIncoming(stream);
     } else if (message.type === 'error') {
       this.status(message.code === 'connection_refused'
-        ? `Port ${this.target.port} is not listening on ${this.device}`
+        ? `Port ${this.target.port} is not listening on ${this.label}`
         : 'Remote preview service failed');
       this.closeStream(stream.id, false);
     } else if (message.type === 'close') {

@@ -44,7 +44,8 @@ export function createAuth({ env, table, currentKey, log }) {
       : (await table.getItem({ Key: { pk: `TOKEN#${digest}`, sk: '-' }, ConsistentRead: true })).Item;
     if (!row || !(await table.getItem({ Key: { pk: `ACCOUNT#${row.accountId}`, sk: 'META' }, ConsistentRead: true })).Item) return null;
     const result = { accountId: row.accountId, kind: row.kind, deviceName: row.deviceName ?? '', tokenHash: digest };
-    if ((seen.get(digest) ?? 0) < time - SEEN_SECONDS) { // per instance: at most hourly
+    // At most hourly: the stored value where the row carries it (Cloudflare, survives eviction), else per instance.
+    if (Math.max(seen.get(digest) ?? 0, row.lastSeen ?? 0) < time - SEEN_SECONDS) {
       seen.set(digest, time);
       try {
         await table.updateItem({ Key: { pk: `ACCOUNT#${row.accountId}`, sk: `TOKEN#${digest}` },

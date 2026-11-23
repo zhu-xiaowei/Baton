@@ -773,7 +773,8 @@ function connect() {
 
   const url = `${wsUrl}?apiKey=${_config.apiKey}&role=bridge&heartbeat=${HEARTBEAT_INTERVAL / 1000}`
     + `&device=${encodeURIComponent(_config.deviceName)}`
-    + `&name=${encodeURIComponent(_config.deviceDisplayName || _config.deviceName)}&os=${process.platform}`
+    // Hosted: the display name goes sealed with bridge_join; the server sees only the device ID.
+    + (_config.accounts ? '' : `&name=${encodeURIComponent(_config.deviceDisplayName || _config.deviceName)}`) + `&os=${process.platform}`
     + (_config.bridgeId ? `&bridgeId=${encodeURIComponent(_config.bridgeId)}` : '')
     + `&version=${encodeURIComponent(BRIDGE_VERSION)}`;
   console.log(`[ws] connecting to ${wsUrl}...`);
@@ -804,6 +805,8 @@ function connect() {
       accountKey: _config.accountKey ? Buffer.from(_config.accountKey, 'base64') : null,
       accountKeyAt: _config.accountKeyAt,
       accounts: !!_config.accounts,
+      device: _config.deviceName,
+      label: _config.deviceDisplayName || _config.deviceName,
       saveAccountKey: (raw) => { Object.assign(_config, { accountKey: raw.toString('base64'), accountKeyAt: Date.now() }); saveConfig(_config); },
       sendControl: message => send(JSON.stringify(message)),
       controlSocket: socket,

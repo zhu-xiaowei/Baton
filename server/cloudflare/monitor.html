@@ -213,7 +213,7 @@ function render(d) {
 
   h.push('<div class="kpis">',
     kpi('服务状态', healthy ? '正常' : '异常', healthy ? `${probes.map((p) => p.ms).join(' / ')} ms` : `<span style="white-space:normal">${esc(problems.join('、') || '无快照')}</span>`, healthy ? 'ok' : 'bad'),
-    kpi('当前在线', n(online.apps), `App ${n(online.apps)} · Bridge ${n(online.awake)}`),
+    kpi('当前在线', n(online.awake), `账户 ${n(online.awake)} · 连接 ${n(online.sockets)}`),
     `<div class="card"><div class="big">${n(dau)}</div><div class="label">今日日活</div><div class="sub">${u.error ? '— 数据不足' : `较昨日 ${dau - before >= 0 ? '+' : ''}${dau - before}`}</div>`
       + kv('今日 App', n(u.devices?.app ?? 0)) + kv('今日 Bridge', n(u.devices?.bridge ?? 0))
       + kv('累计设备', n((d.devices?.app ?? 0) + (d.devices?.bridge ?? 0))) + '</div>',
@@ -233,11 +233,11 @@ function render(d) {
   h.push('<h2>用户</h2><div class="grid">',
     card('活跃用户', `<div class="trio"><div><div class="big">${n(u.dau)}</div><div class="label">日活</div></div><div><div class="big">${n(u.wau)}</div><div class="label">周活</div></div>`
       + `<div><div class="big">${n(u.mau)}</div><div class="label">月活</div></div></div>${u.error ? NA(noToken ? '未设置分析令牌' : esc(u.error)) : chart('bar', daily('dau'), { from: 0, to: 30 })}`, '近 30 天'),
-    card(`当前在线 ${info('App：1 分钟内打开过 App 的账户。Bridge：5 分钟内有活动的账户（Bridge 每 4 分钟心跳）。')}`,
-      `<div class="trio"><div><div class="big">${n(online.apps)}</div><div class="label">App</div></div><div><div class="big">${n(online.awake)}</div><div class="label">Bridge</div></div>`
+    card(`当前在线 ${info('账户：5 分钟内有活动的账户（Bridge 每 4 分钟心跳）。连接数：App、Bridge 与 Android 通知的连接合计，分析数据分不出类型。趋势为在线账户。')}`,
+      `<div class="trio" style="grid-template-columns:1fr 1fr"><div><div class="big">${n(online.awake)}</div><div class="label">账户</div></div>`
       + `<div><div class="big">${n(online.sockets)}</div><div class="label">连接数</div></div></div>${line(2, { color: '#3fb950' })}`, '近 24 小时'),
-    card(`使用时长 ${info('今日：在线账户数 × 5 分钟快照累计。人均：近 7 天每个活跃账户每天的 App 连接时长。')}`,
-      `<div class="trio" style="grid-template-columns:1fr 1fr"><div><div class="big">${dur(d.useToday)}</div><div class="label">今日总计</div></div>`
+    card(`使用时长 ${info('今日：今天已断开的 App 连接时长（抽样估算，断开时计入）。人均：近 7 天每个活跃账户每天的 App 连接时长。')}`,
+      `<div class="trio" style="grid-template-columns:1fr 1fr"><div><div class="big">${dur(u.todaySecs)}</div><div class="label">今日总计</div></div>`
       + `<div><div class="big">${u.avgDailySecs == null ? '—' : dur(u.avgDailySecs)}</div><div class="label">人均每日</div></div></div>`
       + chart('bar', daily('new'), { from: 0, to: 30, color: '#3fb950' }) + '<div class="sub">每日新账户</div>'),
     card('国家/地区', bars(u.countries), '近 30 天'), card('运营商', bars(u.networks), '近 30 天'), card('平台', bars(u.platforms), '近 30 天'),

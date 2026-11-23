@@ -6,7 +6,7 @@ import WebSocket from 'ws';
 import { deflateRawSync, inflateRawSync } from 'zlib';
 import { RpcAssembler, createHeaderSigner, decodeRpcPayload, isRpcRequest, isStreamFrame, openStreamMessage, packStreamMessage, pushFrames,
   relayChunkChars, rpcAckFrame, rpcErrorFrame, rpcProgressFrame, rpcResultFrames, sealStreamMessage, streamFrame, unpackStreamMessage } from './direct-rpc-protocol.mjs';
-import { bridgeKeys } from './e2ee-node.mjs';
+import { bridgeKeys, sealDeviceName } from './e2ee-node.mjs';
 import { countFrame } from './frame-stats.mjs';
 
 // Reads that use the machine (files, Git, transcripts) run at most this many at once; requests that
@@ -84,10 +84,13 @@ export class DirectRpcBridge {
   // carries the App frames too (`receiveFrame`), sent unsigned as `{ to, ...frame }`.
   // `accountKey` (K, 32 bytes): every frame but `account_key` is sealed (e2ee.mjs); `saveAccountKey(K)`
   // stores a K an App hands over (migration of existing users, docs/v2-accounts-e2ee-plan.md §9).
-  constructor({ key, accountKey, accountKeyAt, accounts = false, saveAccountKey, sendControl, controlSocket, handlers, subscribers, socketFactory, limited = () => true, streams = {} }) {
+  // `device` / `label`: a hosted computer's ID and display name, sealed under K with every join.
+  constructor({ key, accountKey, accountKeyAt, accounts = false, device = '', label = '', saveAccountKey, sendControl, controlSocket, handlers, subscribers, socketFactory, limited = () => true, streams = {} }) {
     this.key = key;
     this.accountKey = accountKey || null;
     this.accounts = accounts;
+    this.device = device;
+    this.label = label;
     this.keyAt = accountKeyAt;
     this.keys = accountKey ? this.newKeys() : null;
     this.saveAccountKey = saveAccountKey;
@@ -206,8 +209,13 @@ export class DirectRpcBridge {
     clearTimeout(this.tokenTimer);
     this.tokenTimer = setTimeout(() => { if (this.pending) this.retry(); }, 10_000);
     this.tokenTimer.unref?.();
+    if (!this.sendControl({ action: 'direct_rpc', op: 'bridge_join', ...this.joinFields() })) this.retry();
+  }
+
+  // The session key, and a hosted computer's display name sealed under K (both servers store it with the device row).
+  joinFields() {
     const keys = this.keys ? { pub: this.keys.pub, fp: this.keys.fp } : {};
-    if (!this.sendControl({ action: 'direct_rpc', op: 'bridge_join', ...keys })) this.retry();
+    return { ...keys, ...(this.accounts && this.accountKey && this.label ? sealDeviceName(this.accountKey, this.device, this.label) : {}) };
   }
 
   // A closed App connection (relay): nothing is kept for it.
@@ -224,8 +232,7 @@ export class DirectRpcBridge {
     url.protocol = 'wss:';
     url.search = new URLSearchParams({ apiKey: this.key, role: 'bridge_data' }).toString();
     const socket = this.socket = this.socketFactory(url.href);
-    const keys = this.keys ? { pub: this.keys.pub, fp: this.keys.fp } : {};
-    socket.on('open', () => socket.send(JSON.stringify({ action: 'direct_rpc', op: 'bridge_join', token, ...keys })));
+    socket.on('open', () => socket.send(JSON.stringify({ action: 'direct_rpc', op: 'bridge_join', token, ...this.joinFields() })));
     socket.on('message', (data) => this.receive(socket, data.toString()));
     socket.on('close', () => this.closed(socket));
     socket.on('error', () => {});

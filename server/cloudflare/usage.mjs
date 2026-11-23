@@ -6,7 +6,6 @@
 import { readIpToken } from '../core/accounts.mjs';
 import { refuse } from './ports.mjs';
 
-const HOUR = 3_600_000;
 const SAMPLE = 10; // detail points: 1 in 10, weight 10
 export const today = () => new Date().toISOString().slice(0, 10);
 const platformOf = (ua = '') => (/iPhone|iPad/.test(ua) ? 'iOS' : /Android/.test(ua) ? 'Android' : /Macintosh/.test(ua) ? 'macOS'
@@ -46,10 +45,7 @@ export class Usage {
   // An accepted socket: the account's first App of the day writes `active`, each Bridge device `bridge` once a day.
   async joined(info, me, isNew) {
     const s = await this.state();
-    if (s.day !== today()) {
-      if (s.secs > (s.reported ?? 0)) await this.point(me.account, ['summary', s.day], [s.secs, s.apps?.length ?? 0]);
-      Object.assign(s, { day: today(), secs: 0, reported: 0, at: 0, apps: [], devs: [], rel: [] });
-    }
+    if (s.day !== today()) Object.assign(s, { day: today(), apps: [], devs: [], rel: [] });
     const app = me.role === 'app' ? me.tokenHash.slice(0, 8) : me.device;
     const seen = me.role === 'app' ? s.apps : s.devs;
     const relay = (this.env.RELAY_IPS ?? '').split(',').includes(info.ip);
@@ -73,17 +69,9 @@ export class Usage {
     await this.save();
   }
 
-  // A socket gone: sampled detail; App time adds up, summarised when the last App leaves (at most hourly).
-  async left(me, code, appsLeft) {
+  // A socket gone, sampled; its seconds also give the monitor's App time per active account (nothing stored).
+  async left(me, code) {
     const secs = Math.round((Date.now() - me.connectedAt) / 1000);
     if (Math.random() * SAMPLE < 1) await this.point(me.account, ['conn', today(), me.role, '', '', String(code ?? '')], [secs, 0, code ?? 0, SAMPLE]);
-    if (me.role !== 'app') return;
-    const s = await this.state();
-    s.secs = (s.secs ?? 0) + secs;
-    if (!appsLeft && Date.now() - (s.at ?? 0) >= HOUR) {
-      await this.point(me.account, ['summary', s.day ?? today()], [s.secs, s.apps?.length ?? 0]);
-      Object.assign(s, { at: Date.now(), reported: s.secs });
-    }
-    await this.save();
   }
 }
