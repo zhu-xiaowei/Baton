@@ -14,10 +14,7 @@ const ACTIVE_MS = 60_000; // an App's last activity is written at most this ofte
 const encoder = new TextEncoder();
 const send = (ws, data) => { try { ws.send(typeof data === 'string' ? data : JSON.stringify(data)); return true; } catch { return false; } };
 const PUB = /^[A-Za-z0-9+/]{86}[A-Za-z0-9+/=]{2}$/;
-// Android's notification service socket (`role=notify`) gets the sealed alerts no App acknowledged; a reconnect
-// with `after=<eventId>` gets the newer of the last REPLAY_COUNT, kept REPLAY_MS.
-const REPLAY_COUNT = 20;
-const REPLAY_MS = 3600_000;
+// Android's notification service socket (`role=notify`) gets the alerts sent while it is connected; nothing is kept.
 
 export class AccountObject extends DurableObject {
   constructor(ctx, env) {
@@ -96,11 +93,6 @@ export class AccountObject extends DurableObject {
       for (const [old] of leastActive(this.live('app').filter(([ws]) => ws !== socket), max.apps - 1)) await this.retire(old, 4429, 'too_many_apps');
     }
     for (const [old] of tok.length ? this.live(tok[0]) : []) if (old !== socket) await this.retire(old, 4409, 'replaced');
-    if (role === 'notify' && query.get('after')) {
-      const list = this.replay(account);
-      const at = list.findIndex((entry) => entry.alert.eventId === query.get('after'));
-      for (const { alert } of list.slice(at + 1)) send(socket, { action: 'alert', ...alert, accountId: account });
-    }
     if (role === 'app' && await this.ctx.storage.getAlarm() === null) await this.ctx.storage.setAlarm(Date.now() + SWEEP_MS);
     return new Response(null, { status: 101, webSocket: client });
   }
@@ -154,28 +146,18 @@ export class AccountObject extends DurableObject {
     }
   }
 
-  // A Bridge's alert, checked like the REST body, pushed to the account's iOS devices and notify sockets; only sealed ones are kept (replay).
-  // Acknowledged (`alert_ok`) once taken; a resend of an alert already taken is only acknowledged again.
+  // A Bridge's alert, checked like the REST body, pushed to the account's iOS devices and notify sockets; nothing is stored.
+  // Acknowledged (`alert_ok`) once taken. A resend (lost ack) keeps its eventId: Android skips seen IDs, iOS collapses on it.
   async alert(ws, account, { action, ...body }) {
     const alert = validateAlert(body);
     if (!alert) return;
-    const seen = this.store('putItem', { Item: { pk: `ALERTED#${account}`, sk: alert.eventId, ttl: nowInt() + 86400 },
-      ConditionExpression: 'attribute_not_exists(pk)' });
     send(ws, { action: 'alert_ok', eventId: alert.eventId });
-    if (seen.error) return;
-    const list = [...this.replay(account), ...(alert.e ? [{ at: Date.now(), alert }] : [])].slice(-REPLAY_COUNT); // sealed ones only
-    this.store('putItem', { Item: { pk: `NOTIFYQ#${account}`, sk: '-', list, ttl: nowInt() + REPLAY_MS / 1000 } });
     for (const [socket] of this.live('notify')) send(socket, { action: 'alert', ...alert, accountId: account }); // a tap checks the account
     try {
       await this.core(account).notifications.deliver(account, alert);
     } catch (error) {
       console.log(`alert not delivered: ${error.message}`);
     }
-  }
-
-  replay(account) {
-    const list = this.store('getItem', { Key: { pk: `NOTIFYQ#${account}`, sk: '-' } }).result?.Item?.list ?? [];
-    return list.filter((entry) => Date.now() - entry.at < REPLAY_MS);
   }
 
   async webSocketClose(ws, code) {

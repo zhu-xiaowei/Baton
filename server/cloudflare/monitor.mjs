@@ -71,7 +71,6 @@ const USAGE = `query($a:string!,$ns:string!,$nss:[string!],$scripts:[string!],$m
     doMonth:durableObjectsPeriodicGroups(limit:1,filter:{namespaceId_in:$nss,date_geq:$month}){sum{duration inboundWebsocketMsgCount rowsRead rowsWritten}}
     callsMonth:durableObjectsInvocationsAdaptiveGroups(limit:50,filter:{namespaceId_in:$nss,date_geq:$month}){sum{requests} dimensions{hibernation:type}}
     workersMonth:workersInvocationsAdaptive(limit:1,filter:{scriptName_in:$scripts,date_geq:$month}){sum{requests cpuTimeUs}}
-    pushMonth:workersInvocationsAdaptive(limit:1,filter:{date_geq:$month,scriptName:$push}){sum{cpuTimeUs}}
     workersAll:workersInvocationsAdaptive(limit:1,filter:{date_geq:$month,scriptName_neq:$push}){sum{requests cpuTimeUs}}
     doAll:durableObjectsPeriodicGroups(limit:1,filter:{date_geq:$month}){sum{duration inboundWebsocketMsgCount rowsRead rowsWritten}}
     callsAll:durableObjectsInvocationsAdaptiveGroups(limit:50,filter:{date_geq:$month}){sum{requests} dimensions{hibernation:type}}
@@ -126,16 +125,14 @@ async function usage(env, now) {
   const ops = (rows) => rows.reduce((o, r) => { const c = r2Class(r.dimensions.actionType); if (c) o[c] += r.sum.requests; return o; }, { r2ClassA: 0, r2ClassB: 0 });
   const mine = (rows) => rows.filter((r) => r.dimensions.bucketName === env.BUCKET);
   const elapsed = (now - Date.parse(month)) / (nextMonth(new Date(now)) - Date.parse(month));
-  // Month to date: the service's own Workers and objects (usage at list price) and the whole Cloudflare account (the bill;
-  // the push relay is reached only through a service binding: its CPU is billed, its requests are not).
+  // Month to date: the service's own Workers and objects (usage at list price) and the whole Cloudflare account (the bill).
+  // The push relay, reached only through a service binding, has no invocation rows: its CPU (≈1–2 ms an alert) is not counted.
   const month_ = (workers, periodic, calls) => ({ workerRequests: workers?.sum.requests ?? 0, workerCpuMs: (workers?.sum.cpuTimeUs ?? 0) / 1000,
     ...doTotals(calls, periodic) });
-  const push = v.pushMonth[0]?.sum ?? { cpuTimeUs: 0 }; // `scriptName:$push` matches nothing when there is no relay
   const totals = { ...month_(v.workersMonth[0], v.doMonth[0]?.sum, v.callsMonth), sqlGbMonths: (sqlBytes / 1e9) * elapsed,
     r2GbMonths: (r2Bytes(mine(buckets)) / 1e9) * elapsed, ...ops(mine(v.r2ops)) };
   const account = { ...month_(v.workersAll[0], v.doAll[0]?.sum, v.callsAll), sqlGbMonths: (allSql / 1e9) * elapsed,
     r2GbMonths: (r2Bytes(buckets) / 1e9) * elapsed, ...ops(v.r2ops), aePoints: v.aeMonth[0]?.count ?? 0 };
-  for (const t of [totals, account]) t.workerCpuMs += push.cpuTimeUs / 1000;
   const scale = projected(1, new Date(now)); // project the usage, then price it: included amounts make the bill non-linear
   const ahead = (t) => serviceCost(Object.fromEntries(Object.entries(t).map(([k, x]) => [k, x * scale])));
   const cost = { ...serviceCost(totals), bill: serviceCost(account).bill, projectedUsage: ahead(totals).usage, projectedBill: ahead(account).bill };
@@ -155,7 +152,8 @@ async function usage(env, now) {
 const LIVE = `query($a:string!,$z:string!,$day:Time!,$service:string!,$push:string!,$nss:[string!],$hosts:[string!]){viewer{
   accounts(filter:{accountTag:$a}){
     service:workersInvocationsAdaptive(limit:50,filter:{scriptName:$service,datetime_geq:$day}){sum{requests errors} dimensions{status}}
-    push:workersInvocationsAdaptive(limit:50,filter:{scriptName:$push,datetime_geq:$day}){sum{requests} dimensions{httpResponseStatus}}
+    # A service-bound relay has no invocation rows, only its subrequests: one per APNs attempt.
+    push:workersSubrequestsAdaptiveGroups(limit:20,filter:{scriptName:$push,datetime_geq:$day,hostname_in:["api.push.apple.com","api.sandbox.push.apple.com"]}){sum{subrequests} dimensions{httpResponseStatus}}
     objects:durableObjectsInvocationsAdaptiveGroups(limit:100,filter:{namespaceId_in:$nss,datetime_geq:$day}){sum{requests errors} dimensions{type status}}
     cpu:durableObjectsPeriodicGroups(limit:1,filter:{namespaceId_in:$nss,datetime_geq:$day}){sum{exceededCpuErrors exceededMemoryErrors}}
   }

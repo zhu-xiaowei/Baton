@@ -208,7 +208,7 @@ function render(d) {
   // A WebSocket's client going away ends its upgrade request as an `error`; those are not failures.
   const doErrors = total(live.objects, (r) => (/Disconnected$/.test(r.dimensions.status) ? 0 : r.sum.errors));
   const sock = (kind, code) => total(u.conns, (r) => (r.kind === kind && Number(r.code) === code ? Number(r.n) : 0));
-  const pushAll = total(live.push, (r) => r.sum.requests), pushOk = total(live.push, (r) => (Number(r.dimensions.httpResponseStatus) === 200 ? r.sum.requests : 0));
+  const pushAll = total(live.push, (r) => r.sum.subrequests), pushOk = total(live.push, (r) => (Number(r.dimensions.httpResponseStatus) === 200 ? r.sum.subrequests : 0));
   const h = [];
 
   h.push('<div class="kpis">',
@@ -254,8 +254,8 @@ function render(d) {
       `<div class="trio"><div><div class="big ${svcErrors ? 'bad' : ''}">${n(svcErrors)}</div><div class="label">Worker 错误</div></div>`
       + `<div><div class="big">${n(doErrors)}</div><div class="label">DO 错误</div></div><div><div class="big">${n(live.cpu?.exceededCpuErrors)}</div><div class="label">CPU 超限</div></div></div>`
       + line(7, { color: '#f85149' }) + `<div class="sub">错误率 ${pct(svcReq ? svcErrors / svcReq : 0)} · 4401 ${n(sock('reject', 4401))} · 4403 ${n(sock('reject', 4403))}</div>`, '近 24 小时'),
-    card('推送', pushAll ? `<div class="big ${pushOk / pushAll < 0.95 ? 'warn' : 'ok'}">${pct(pushOk / pushAll)}</div><div class="label">成功率</div><div class="sub">成功 ${n(pushOk)} · 失败 ${n(pushAll - pushOk)}</div>`
-      : NA('今日暂无推送'), '近 24 小时'),
+    card(`推送 ${info('iOS 推送：中转对 APNs 的每次请求，按 APNs 返回码计；失败含重试。')}`, pushAll ? `<div class="big ${pushOk / pushAll < 0.95 ? 'warn' : 'ok'}">${pct(pushOk / pushAll)}</div><div class="label">成功率</div><div class="sub">成功 ${n(pushOk)} · 失败 ${n(pushAll - pushOk)}</div>`
+      : NA('近 24 小时无推送'), '近 24 小时'),
     card('请求来源', bars(live.countries) + `<div class="sub">${(live.devices ?? []).map(([k, v]) => `${{ desktop: '桌面', mobile: '手机', tablet: '平板' }[k] ?? k} ${n(v)}`).join(' · ')}</div>`, '近 24 小时'),
 '</div>');
 
