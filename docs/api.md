@@ -108,7 +108,10 @@ It configures launchd on macOS, systemd user service on Linux, or Task Scheduler
 ### GET /api/bridge/devices
 
 Device names and online state from the device rows in SystemTable, which the WS `$connect` handler
-writes after a Bridge claims its device name (the control-socket URL carries `&name=<display>&os=<platform>`).
+writes after a Bridge claims its device name (the control-socket URL carries `&name=<display>`), only when the
+name changed. A hosted computer is known by a random ID (`pc-<8 hex>`, chosen when it pairs; its join link names it
+in the fragment `&n=`): it sends no `&name=`, but `nameSealed` (its display name under K) and `nameTag` (finds a
+duplicate name at pairing) with `bridge_join`, and the App opens `nameSealed` into `deviceDisplayName`.
 Everything else on the home page comes from each Bridge. `rpc` addresses the joined Bridges directly
 (`docs/v2-step1-home-plan.md`). `wsUrl` is the control socket (stored as `state.WS_URL` /
 localStorage `_wsurl`). `rpc.credentials` and `rpc.storage` are always present, also with no Bridge
@@ -119,7 +122,7 @@ online; the App calls `/devices` again when the credentials have less than 5 min
 ```json
 { "protocol": 2, "wsUrl": "wss://xxx.execute-api.xxx.amazonaws.com/v1",
   "notifications": { "accountId": "<16 hex>", "ios": true },
-  "devices": [{ "deviceName": "MacBook-Pro", "deviceDisplayName": "Office Mac", "os": "darwin", "online": true }],
+  "devices": [{ "deviceName": "MacBook-Pro", "deviceDisplayName": "Office Mac", "online": true }],
   "rpc": { "endpoint": "<data API execute-api host>", "credentials": {}, "bridges": [{ "device": "MacBook-Pro", "dataId": "…" }],
     "storage": { "bucket": "…", "region": "ap-northeast-1", "accountId": "<16 hex>", "accelerate": true } } }
 ```
@@ -793,7 +796,7 @@ All endpoints use a unified error format:
 The server keeps no Session data. `Connections` (PK `connectionId`, GSI `accountId-role-index`,
 24h TTL) holds WS connection records with role/device routing. `SystemTable` (`pk`/`sk`, TTL) holds
 token, push-device and notification rows, and one device row per Bridge: `pk DEVICE#<accountId>`,
-`sk <deviceName>`, with `deviceDisplayName`, `os`, `lastConnected` (`server/core/devices.mjs`).
+`sk <deviceName>`, with `deviceDisplayName`, or for a hosted computer `nameSealed` + `nameTag` (`server/core/devices.mjs`).
 
 ---
 
