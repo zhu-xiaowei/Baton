@@ -630,6 +630,13 @@ function handleClaudeHookRequest(input, reply) {
   return () => dismissPendingControl(sessionId, requestId);
 }
 
+// Sessions a restart would cut short: a turn (any runtime), an unanswered question, a background task.
+export function busySessions() {
+  const ids = new Set([..._activeTurns.sessions.keys(), ..._pendingControl.sessions.keys()]);
+  for (const proc of _pool.procs.values()) if (proc.busy || proc.backgroundTasks > 0) ids.add(proc.sessionId || proc.key);
+  return [...ids];
+}
+
 export function setUpdateChecker(checkUpdate) {
   _checkUpdate = checkUpdate;
 }
@@ -856,6 +863,7 @@ function connect() {
         // Pairing on behalf of an App, which never holds K in a form it could seal itself (plan D2).
         // Caught up first, so the key it seals is the account's current one (`head`).
         pair_invite: async () => { await catchUpAccountKey(); return createInvite(_config); },
+        update_now: () => { void _checkUpdate?.(true); return { ok: true }; }, // the App's Update: even while busy
         pair_approve: async params => { await catchUpAccountKey(); return approveJoin(_config, params.link); },
         // The recovery phrase is K: shown to an App of the account only (sealed like every reply).
         recovery_key: () => ({ k: _config.accounts ? _config.accountKey : '' }),
@@ -1020,6 +1028,7 @@ async function handleMessage(msg) {
       _alertAcks.get(msg.eventId)?.(true);
       break;
     case 'heartbeat':
+      if (msg.bridgeVersion === BRIDGE_VERSION) sessionIndex.updatePending = null; // the server went back to this version
       if (typeof msg.bridgeVersion === 'string' && msg.bridgeVersion
         && msg.bridgeVersion !== 'dev' && msg.bridgeVersion !== BRIDGE_VERSION) {
         await _checkUpdate?.();

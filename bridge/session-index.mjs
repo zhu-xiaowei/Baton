@@ -572,6 +572,7 @@ export class SessionIndex {
     const answer = {
       device: {
         os: process.platform, // shown on the device card; the server does not keep it
+        ...(this.updatePending ? { updatePending: this.updatePending } : {}), // { version, since }: waiting for idle
         projectCount: catalog.projects.length,
         runningCount: active.filter((row) => row.status === 'running').length,
         needsInputCount: active.filter((row) => row.status === 'needs_input').length,

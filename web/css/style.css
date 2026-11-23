@@ -164,6 +164,10 @@ body.browse-view #content { overflow-y: scroll; scrollbar-gutter: stable; }
 .badge.stopped { background: var(--fill-neutral); color: var(--text-secondary); box-shadow: inset 0 0 0 1px var(--badge-ring); }
 .badge.completed { background: rgba(var(--accent-bright-rgb), 0.15); color: var(--accent); border: 1px solid rgba(var(--accent-bright-rgb), 0.3); }
 .badge.agent { background: rgba(136, 87, 229, 0.2); color: var(--syntax-violet); border: 1px solid rgba(136, 87, 229, 0.4); }
+.update-pill { display: inline-flex; align-items: center; gap: 3px; padding: 1px 8px; border-radius: 10px; font-size: 11px; font-weight: 500; line-height: 16px;
+  flex-shrink: 0; margin-right: auto; cursor: pointer; background: rgba(var(--accent-bright-rgb), 0.15); color: var(--accent); border: 1px solid rgba(var(--accent-bright-rgb), 0.3); }
+.update-pill svg { width: 11px; height: 11px; }
+.item-top .title:has(+ .update-pill) { flex: 0 1 auto; }
 .runtime-mark { display: inline-flex; width: 16px; height: 16px; flex: 0 0 16px; align-items: center; justify-content: center; vertical-align: middle; }
 .runtime-icon { display: block; width: 16px; height: 16px; object-fit: contain; }
 :root[data-theme="dark"] .runtime-mark[data-runtime="dsh"] .runtime-icon { filter: brightness(1.45); } /* brand blue is too dark on the dark canvas */

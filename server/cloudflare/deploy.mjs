@@ -174,8 +174,12 @@ async function bucket() {
     deleteObjectsTransition: { condition: { type: 'Age', maxAge: 86400 } } }] });
 }
 
-// As server/install.sh builds it.
-async function bridgePackage(version) {
+// As server/install.sh builds it. Its version is the last commit that changed bridge/, not this deploy's: a deploy that
+// leaves the Bridge unchanged must not make every Bridge restart (they update when they see another version).
+async function bridgePackage() {
+  const semantic = JSON.parse(fs.readFileSync(path.join(ROOT, 'bridge/package.json'), 'utf8')).version;
+  const dirty = sh('git', ['status', '--porcelain', '--', 'bridge']) ? `-${Date.now().toString(36)}` : '';
+  const version = `${semantic}-${sh('git', ['log', '-1', '--format=%h', '--', 'bridge'])}${dirty}`;
   const stage = fs.mkdtempSync(path.join(os.tmpdir(), 'baton-bridge-'));
   try {
     for (const file of fs.readdirSync(path.join(ROOT, 'bridge'))) {
@@ -188,6 +192,7 @@ async function bridgePackage(version) {
     const files = fs.readdirSync(stage).filter((f) => f.endsWith('.mjs'));
     sh('tar', ['czf', path.join(stage, 'bridge.tar.gz'), ...files, 'project', 'package.json', 'package-lock.json'], { cwd: stage });
     await cf('PUT', `/r2/buckets/${flags.bucket}/objects/install/bridge.tar.gz`, new Uint8Array(fs.readFileSync(path.join(stage, 'bridge.tar.gz'))));
+    return version;
   } finally {
     fs.rmSync(stage, { recursive: true, force: true });
   }
@@ -303,9 +308,9 @@ const version = `${semantic}-${sh('git', ['rev-parse', '--short', 'HEAD'])}${sh(
 if (flags.relay) await deployRelay();
 if (!flags['skip-build']) sh('npm', ['run', 'build'], { stdio: 'inherit' });
 await bucket();
-await bridgePackage(version);
+const bridgeVersion = await bridgePackage();
 const accountId = secrets.API_KEY ? createHash('sha256').update(secrets.API_KEY).digest('hex').slice(0, 16) : '';
-const vars = { API_URL: `https://${API_HOST}`, WEB_URL: `https://${WEB_HOST}`, APP_VERSION: version, BRIDGE_VERSION: version, OPEN_REGISTRATION: 'true',
+const vars = { API_URL: `https://${API_HOST}`, WEB_URL: `https://${WEB_HOST}`, APP_VERSION: version, BRIDGE_VERSION: bridgeVersion, OPEN_REGISTRATION: 'true',
   CF_ACCOUNT_ID: ACCOUNT, R2_BUCKET: flags.bucket, ACCOUNT_ID: secrets.ACCOUNT_ID ?? accountId, API_KEY_NAME: secrets.API_KEY_NAME ?? '',
   R2_PARENT_KEY_ID: secrets.R2_PARENT_KEY_ID ?? '', MAX_APPS: flags['max-apps'], MAX_BRIDGES: flags['max-bridges'], ...(INSTALL_HOST && { INSTALL_URL: `https://${INSTALL_HOST}` }),
   ...(RELAY_HOST && { API_ENTRIES: `https://${RELAY_HOST}`, RELAY_IPS: RELAY_IPS.join(',') }) };

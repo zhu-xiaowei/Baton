@@ -7,7 +7,8 @@ import './theme.js';
 import './state.js';
 import './api.js';
 import { showToast } from './components/toast.js';
-import { onDeviceOnline } from './v2/direct-transport.js';
+import { onDeviceOnline, request } from './v2/direct-transport.js';
+import { confirmDialog } from './components/confirm-dialog.js';
 import './components/skeleton.js';
 import '../css/back-button.css';
 import '../css/breadcrumb.css';
@@ -65,3 +66,35 @@ addEventListener('pageshow', (event) => {
     if (!location.hash.replace(/^#\/?/, '')) window.loadDevices?.();
   });
 });
+
+// A device card's Update (index.html): a Bridge update that has waited a day for idle, applied now on confirmation.
+async function confirmBridgeUpdate(pill) {
+  const days = Math.max(1, Math.floor((Date.now() - Number(pill.dataset.since)) / 864e5));
+  const busy = JSON.parse(pill.dataset.busy || '[]');
+  const sessions = busy.filter(Boolean);
+  const short = (title) => (title.length > 60 ? title.slice(0, 59).trimEnd() + '…' : title);
+  const lines = sessions.slice(0, 3).map(([title, status]) => `• ${short(title)} — ${status === 'needs_input' ? 'needs input' : 'running'}`);
+  if (sessions.length > 3) lines.push(`• and ${sessions.length - 3} more`);
+  if (sessions.length < busy.length || !busy.length) lines.push('• Background tasks on this computer');
+  const detail = [`An update has been waiting for ${days} day${days > 1 ? 's' : ''}. Updating now stops:`, ...lines,
+    '• Open terminals on this computer', '', 'Stopped sessions keep their history. Send "continue" to pick up where they left off.'];
+  if (!await confirmDialog(`Update Bridge on ${pill.dataset.label}?`, [[false, 'Cancel'], [true, 'Update', true]], false, detail)) return;
+  try {
+    await request(pill.dataset.update, 'update_now');
+    showToast(`Updating ${pill.dataset.label}…`);
+    pill.remove();
+  } catch (error) {
+    showToast(`Update failed: ${error.message}`);
+  }
+}
+const updatePill = (event) => event.target.closest?.('.update-pill[data-update]');
+addEventListener('click', (event) => {
+  const pill = updatePill(event);
+  if (!pill) return;
+  event.preventDefault(); // the card is a link
+  event.stopPropagation();
+  void confirmBridgeUpdate(pill);
+}, true);
+addEventListener('keydown', (event) => {
+  if ((event.key === 'Enter' || event.key === ' ') && updatePill(event)) { event.preventDefault(); event.stopPropagation(); void confirmBridgeUpdate(updatePill(event)); }
+}, true);
