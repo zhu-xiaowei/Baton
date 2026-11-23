@@ -81,8 +81,9 @@ Bridge status rows → bridge/notify.mjs → POST /api/notifications/events ─�
      15 s in the background. Hosted (relay) servers keep no feed: the service holds one
      `wss://…/ws?role=notify` socket (`RelaySocket.kt`, no library) that receives each sealed
      alert no App acknowledged. It pings after 60 s idle and reconnects when no answer comes
-     within 10 s; `after=<last eventId>` replays the newer of the account object's last 20
-     alerts of the past hour. Notify sockets are not Apps: no `notify_check`, no App limit,
+     within 10 s. Nothing is stored or replayed: alerts sent while it is disconnected are
+     missed. A Bridge resend after a lost `alert_ok` keeps its eventId, which the service skips
+     (iOS collapses it through `apns-collapse-id`). Notify sockets are not Apps: no `notify_check`, no App limit,
      no sweep or alarm. Force-stop ends it; some vendor ROMs need Baton
      exempted from battery optimisation.
 

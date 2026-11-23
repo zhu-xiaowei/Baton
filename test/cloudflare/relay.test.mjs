@@ -9,8 +9,8 @@ const off = skip || (!WS && 'BATON_WS is unset');
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // A socket that records frames and its close code; `ping` sends the 25 s text ping.
-function open(apiKey, role, { device, after, ping = true } = {}) {
-  const ws = new WebSocket(`${WS}?${new URLSearchParams({ apiKey, role, ...(device && { device }), ...(after && { after }) })}`);
+function open(apiKey, role, { device, ping = true } = {}) {
+  const ws = new WebSocket(`${WS}?${new URLSearchParams({ apiKey, role, ...(device && { device }) })}`);
   const s = { ws, frames: [], closed: new Promise((resolve) => ws.on('close', (code) => resolve(code))) };
   ws.on('message', (data) => s.frames.push(JSON.parse(data)));
   const timer = ping && setInterval(() => ws.readyState === 1 && ws.send('{"action":"realtime_ping"}'), 25_000);
@@ -94,7 +94,7 @@ test('alerts are pushed, never stored', { skip: off }, async () => {
   await bridge.ready;
   const alert = { action: 'alert', eventId: randomBytes(32).toString('hex'), device: 'ct-alert-pc', sessionId: 's', rootSessionId: 's',
     title: 'ct', body: 'ct body', e: randomBytes(600).toString('base64') };
-  for (let i = 0; i < 2; i++) { // a resend is acknowledged again (and not pushed twice)
+  for (let i = 0; i < 2; i++) { // a resend is acknowledged again
     bridge.send(alert);
     assert.ok(await bridge.next((f) => f.action === 'alert_ok' && f.eventId === alert.eventId));
   }
@@ -104,7 +104,7 @@ test('alerts are pushed, never stored', { skip: off }, async () => {
   await deleteAccount(a.token);
 });
 
-test('notify_check reaches every App; alerts reach notify sockets, a reconnect replays newer ones', { skip: off }, async () => {
+test('notify_check reaches every App; alerts reach notify sockets', { skip: off }, async () => {
   const a = await account('notify');
   const [bridge, app, notify] = [a.bridge(), open(a.token, 'app'), open(a.token, 'notify')];
   await Promise.all([bridge.ready, app.ready, notify.ready]);
@@ -114,10 +114,7 @@ test('notify_check reaches every App; alerts reach notify sockets, a reconnect r
   for (const n of [1, 2, 3]) { bridge.send(alert(n)); await bridge.next((f) => f.action === 'alert_ok'); }
   await sleep(500);
   assert.deepEqual([notify.frames.map((f) => f.eventId[0]), app.frames.filter((f) => f.action === 'alert')], [['1', '2', '3'], []]);
-  const again = open(a.token, 'notify', { after: '1'.repeat(64) });
-  await sleep(1500);
-  assert.deepEqual(again.frames.map((f) => f.eventId[0]), ['2', '3']);
-  closeAll(bridge, app, notify, again);
+  closeAll(bridge, app, notify);
   await deleteAccount(a.token);
 });
 

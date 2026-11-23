@@ -38,9 +38,7 @@ class AlertService : Service() {
     @Volatile var openSession = ""
 
     fun start(context: Context, server: String, apiKey: String, notifyKey: String, relay: String) {
-      val edit = prefs(context).edit()
-      if (prefs(context).getString("apiKey", null) != apiKey) edit.remove("lastEvent") // another account
-      edit.putString("server", server).putString("apiKey", apiKey).putString("notifyKey", notifyKey).putString("relay", relay).apply()
+      prefs(context).edit().putString("server", server).putString("apiKey", apiKey).putString("notifyKey", notifyKey).putString("relay", relay).apply()
       ContextCompat.startForegroundService(context, Intent(context, AlertService::class.java))
     }
 
@@ -150,11 +148,10 @@ class AlertService : Service() {
     if (running) stopSelf()
   }
 
-  // Alerts no open app acknowledged; `after` replays those missed while disconnected (the last 20 of the past hour).
+  // Alerts no open app acknowledged, while connected (the server keeps none to replay).
   // Idle 60 s → a text ping; nothing within 10 s → reconnect. True once the socket answered at all.
   private fun listen(relay: String, key: String): Boolean {
-    val after = prefs(this).getString("lastEvent", "").orEmpty()
-    val query = "apiKey=" + URLEncoder.encode(key, "UTF-8") + "&role=notify" + if (after.isEmpty()) "" else "&after=$after"
+    val query = "apiKey=" + URLEncoder.encode(key, "UTF-8") + "&role=notify"
     val ws = RelaySocket("$relay?$query")
     socket = ws
     listening = "$relay|$key"
@@ -175,7 +172,6 @@ class AlertService : Service() {
         val id = event.optString("eventId")
         if (event.optString("action") != "alert" || id.isEmpty() || !recent.add(id)) continue
         if (recent.size > 50) recent.remove(recent.first())
-        prefs(this).edit().putString("lastEvent", id).apply()
         show(open(event))
       }
     } catch (closed: RelaySocket.Closed) {
