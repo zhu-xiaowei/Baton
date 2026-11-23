@@ -172,7 +172,7 @@ async function users(env) {
     `SELECT count(DISTINCT blob2) AS n ${from(7)} AND blob1 = 'active'`,
     `SELECT count(DISTINCT blob2) AS n ${from(30)} AND blob1 = 'active'`,
     `SELECT blob4 AS platform, blob5 AS country, blob6 AS network, sum(_sample_interval) AS n ${from(30)} AND blob1 = 'active' GROUP BY platform, country, network`,
-    `SELECT blob2 AS account, blob3 AS day, max(double1) AS secs ${from(8)} AND blob1 = 'summary' GROUP BY account, day`,
+    `SELECT blob3 AS day, sum(_sample_interval * double4 * double1) AS secs ${from(8)} AND blob1 = 'conn' AND blob4 = 'app' GROUP BY day`,
     `SELECT blob7 AS version, blob4 AS os, count(DISTINCT blob2) AS n ${from(1)} AND blob1 = 'bridge' GROUP BY version, os`,
     `SELECT blob1 AS kind, blob4 AS role, double3 AS code, sum(_sample_interval * double4) AS n, sum(_sample_interval * double4 * double1) AS secs ${from(1)} AND blob1 IN ('conn', 'reject') GROUP BY kind, role, code`,
     relayed(1, `blob3 = '${day}'`), relayed(31, `blob3 >= '${day.slice(0, 8)}01'`), // accounts through the mainland-China relay
@@ -181,10 +181,11 @@ async function users(env) {
   const roles = (rows) => Object.fromEntries(rows.map((r) => [r.role, Number(r.n)]));
   const by = (key) => Object.entries(dist.reduce((o, r) => ({ ...o, [r[key] || '?']: (o[r[key] || '?'] ?? 0) + Number(r.n) }), {}))
     .sort((a, b) => b[1] - a[1]);
-  const days = time.filter((r) => r.day !== new Date().toISOString().slice(0, 10));
+  // App seconds of the finished days (sampled closes) over their active accounts.
+  const days = time.filter((r) => r.day !== day), active = sum(daily.filter((r) => days.some((d) => d.day === r.day)), (r) => Number(r.dau));
   return { daily, dau: Number(daily.at(-1)?.dau ?? 0), wau: Number(wau[0]?.n ?? 0), mau: Number(mau[0]?.n ?? 0),
     platforms: by('platform'), countries: by('country'), networks: by('network'),
-    avgDailySecs: days.length ? sum(days, (r) => Number(r.secs)) / days.length : null, bridges, conns,
+    avgDailySecs: active ? sum(days, (r) => Number(r.secs)) / active : null, bridges, conns,
     relay: { day: roles(relayDay), month: roles(relayMonth) }, devices: roles(devices) };
 }
 

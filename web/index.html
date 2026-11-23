@@ -540,7 +540,7 @@
         var dotClass = d.online ? 'online' : 'offline';
         return '<a class="item device-item device-card" href="#/' + esc(encodeURIComponent(d.deviceName)) + '" data-nav="device" data-name="' + esc(d.deviceName) + '">'
           + '<div class="item-top"><span class="device-dot ' + dotClass + '"></span><span class="title">' + esc(d.deviceDisplayName || d.deviceName) + '</span><span class="item-time">' + (d.lastActive ? timeAgo(d.lastActive) : '') + '</span></div>'
-          + '<div class="item-bottom"><span class="subtitle">' + osName(d.os) + (d.projectCount != null ? ' &middot; ' + d.projectCount + ' projects' : '') + '</span><span class="item-status">' + rc + ' running &middot; ' + ic + ' needs input</span></div>'
+          + '<div class="item-bottom"><span class="subtitle">' + [d.os && osName(d.os), d.projectCount != null && d.projectCount + ' projects'].filter(Boolean).join(' &middot; ') + '</span><span class="item-status">' + rc + ' running &middot; ' + ic + ' needs input</span></div>'
           + '</a>';
       }).join('');
       html += '</div></section>';

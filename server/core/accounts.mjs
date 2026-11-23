@@ -132,7 +132,8 @@ export function createAccounts({ env, table, auth, devices, sockets, log, place 
     const [index, listed] = tokenKeys(account, await tokenHash(token));
     // Listed first: a token whose index write failed is visible and removable, never a hidden credential.
     await table.putItem({ Item: { ...listed, kind, deviceName: name, install, createdAt: nowInt() } });
-    await table.putItem({ Item: { ...index, kind, deviceName: name, accountId: account } });
+    // Cloudflare resolves tokens from the listed row (the token names its account): no index.
+    if (!env.TOKENS_BY_ACCOUNT) await table.putItem({ Item: { ...index, kind, deviceName: name, accountId: account } });
     return token;
   }
 
@@ -148,7 +149,8 @@ export function createAccounts({ env, table, auth, devices, sockets, log, place 
       ConditionExpression: `attribute_exists(pk) AND #ttl > :now AND ${condition}`, ExpressionAttributeNames: { '#ttl': 'ttl' },
       ExpressionAttributeValues: { ':now': nowInt() - grace, ...values } }));
     const by = old && old.Attributes.by;
-    if (!old || (by && !(await table.getItem({ Key: { pk: `TOKEN#${by}`, sk: '-' } })).Item)) throw new HTTPError(404, GONE);
+    const byKey = by && tokenKeys(old.Attributes.accountId, by)[env.TOKENS_BY_ACCOUNT ? 1 : 0];
+    if (!old || (by && !(await table.getItem({ Key: byKey })).Item)) throw new HTTPError(404, GONE);
     return old.Attributes;
   }
 

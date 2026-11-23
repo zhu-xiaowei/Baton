@@ -81,7 +81,7 @@ export function createServer(ports) {
     const online = new Set(bridges.map((row) => row.deviceName ?? ''));
     const result = { protocol: PROTOCOL_VERSION, wsUrl: wsUrl(), notifications: notifications.info(account),
       devices: items.filter((item) => item.deviceName).map((item) => ({ deviceName: item.deviceName,
-        deviceDisplayName: item.deviceDisplayName || item.deviceName, os: item.os ?? '', online: online.has(item.deviceName) })) };
+        deviceDisplayName: item.deviceDisplayName || item.deviceName, online: online.has(item.deviceName) })) };
     const meta = await accounts.meta(account);
     Object.assign(result, { apps: await accounts.listTokens(account), rotations: meta.rotations ?? [], hosted: !!meta.joinSecretHash,
       ...(env.INSTALL_URL && { install: env.INSTALL_URL }), self: (caller.tokenHash ?? '').slice(0, 12) });

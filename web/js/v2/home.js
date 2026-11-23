@@ -140,7 +140,7 @@ function mergeDevices(list, answerFor, reachable) {
   const devices = list.map((device) => {
     const answer = answerFor(device.deviceName);
     const live = device.online && reachable.has(device.deviceName);
-    return { deviceName: device.deviceName, deviceDisplayName: device.deviceDisplayName, os: device.os,
+    return { deviceName: device.deviceName, deviceDisplayName: device.deviceDisplayName,
       online: device.online, ...(answer ? answer.device : {}), ...(answer && !live ? { runningCount: 0, needsInputCount: 0 } : {}) };
   });
   devices.sort((a, b) => ((a.lastActive || '') < (b.lastActive || '') ? 1 : (a.lastActive || '') > (b.lastActive || '') ? -1 : 0));

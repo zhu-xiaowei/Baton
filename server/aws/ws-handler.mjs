@@ -65,7 +65,7 @@ async function connect(event, context, connectionId, connectedEndpoint, sockets,
   if (item.bridgeOwner) {
     if (!await sockets.claimBridgeConnection(item, connectedEndpoint)) return { statusCode: 409 };
     try { // display only: the connection does not depend on it
-      await sockets.devices.put(accountId, device, qs.name ?? '', qs.os ?? '');
+      await sockets.devices.put(accountId, device, qs.name ?? '');
     } catch (error) {
       console.log(`device row not written: ${error.message}`);
     }
