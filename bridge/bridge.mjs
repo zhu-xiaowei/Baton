@@ -19,7 +19,7 @@ import { sessionIndex } from './session-index.mjs';
 import { startRuntimeWatchers } from './runtime-watcher-registry.mjs';
 import { registerInstalledRuntimes } from './runtime-registry.mjs';
 import { killLeftovers } from './turn-process.mjs';
-import { bridgeBusy, closeTerminalsForUpdate, initWs, shutdownInteractions, setUpdateChecker } from './ws.mjs';
+import { busySessions, closeTerminalsForUpdate, initWs, shutdownInteractions, setUpdateChecker } from './ws.mjs';
 import { BRIDGE_VERSION } from './version.mjs';
 import { pickEntry } from './entry.mjs';
 import {
@@ -95,7 +95,7 @@ setInterval(() => checkStopped(CONFIG), CHECK_STOPPED_INTERVAL);
 // would be cut short (checked again at each heartbeat that reports another version); `force` is the App's Update.
 async function checkUpdate(force = false) {
   if (shuttingDown || updateInProgress || (!force && Date.now() < nextUpdateCheckAt)) return;
-  nextUpdateCheckAt = Date.now() + 4 * 60_000;
+  nextUpdateCheckAt = Date.now() + 3 * 60_000; // under the 4-minute heartbeat, so each one checks
   updateInProgress = true;
   try {
     const res = await fetch(`${CONFIG.server}/api/version`, {
@@ -106,8 +106,10 @@ async function checkUpdate(force = false) {
     const info = await res.json();
     const version = info.bridgeVersion || info.version;
     if (!version || version === 'dev' || version === BRIDGE_VERSION || version === skippedVersion) return;
-    if (sessionIndex.updatePending?.version !== version) sessionIndex.updatePending = { version, since: Date.now() };
-    if (!force && bridgeBusy()) return;
+    const busy = busySessions();
+    const since = sessionIndex.updatePending?.version === version ? sessionIndex.updatePending.since : Date.now();
+    sessionIndex.updatePending = { version, since, busy }; // the App's Update lists `busy`
+    if (!force && busy.length) return;
     console.log(`[update] ${BRIDGE_VERSION} → ${version}, updating...`);
     const serverBase = CONFIG.server.replace(/\/$/, '');
     const nameParam = encodeURIComponent(CONFIG.deviceName || os.hostname());
@@ -133,6 +135,7 @@ async function checkUpdate(force = false) {
         const floor = unmetNodeFloor(stage);
         if (floor) {
           skippedVersion = version;
+          sessionIndex.updatePending = null;
           console.log(`[update] ${version} needs Node.js >= ${floor} (running ${process.versions.node}), update skipped`);
           return;
         }
@@ -144,7 +147,7 @@ async function checkUpdate(force = false) {
           throw new Error('downloaded Bridge version does not match server');
         }
 
-        if (!force && bridgeBusy()) return; // a turn started while downloading: the next heartbeat tries again
+        if (!force && busySessions().length) return; // a turn started while downloading: the next heartbeat tries again
         if (process.platform === 'win32') await closeTerminalsForUpdate();
         installStagedBridge(stage, BRIDGE_HOME);
       } finally {

@@ -71,9 +71,11 @@ addEventListener('pageshow', (event) => {
 async function confirmBridgeUpdate(pill) {
   const days = Math.max(1, Math.floor((Date.now() - Number(pill.dataset.since)) / 864e5));
   const busy = JSON.parse(pill.dataset.busy || '[]');
-  const lines = busy.slice(0, 3).map(([title, status]) => `• ${title} — ${status === 'needs_input' ? 'needs input' : 'running'}`);
-  if (busy.length > 3) lines.push(`• and ${busy.length - 3} more`);
-  if (!busy.length) lines.push('• Background tasks on this computer');
+  const sessions = busy.filter(Boolean);
+  const short = (title) => (title.length > 60 ? title.slice(0, 59).trimEnd() + '…' : title);
+  const lines = sessions.slice(0, 3).map(([title, status]) => `• ${short(title)} — ${status === 'needs_input' ? 'needs input' : 'running'}`);
+  if (sessions.length > 3) lines.push(`• and ${sessions.length - 3} more`);
+  if (sessions.length < busy.length || !busy.length) lines.push('• Background tasks on this computer');
   const detail = [`An update has been waiting for ${days} day${days > 1 ? 's' : ''}. Updating now stops:`, ...lines,
     '• Open terminals on this computer', '', 'Stopped sessions keep their history. Send "continue" to pick up where they left off.'];
   if (!await confirmDialog(`Update Bridge on ${pill.dataset.label}?`, [[false, 'Cancel'], [true, 'Update', true]], false, detail)) return;

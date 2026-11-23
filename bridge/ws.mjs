@@ -630,10 +630,11 @@ function handleClaudeHookRequest(input, reply) {
   return () => dismissPendingControl(sessionId, requestId);
 }
 
-// A restart would end something this Bridge runs: a turn (any runtime), an unanswered question, a background task.
-export function bridgeBusy() {
-  return _activeTurns.sessions.size > 0 || _pendingControl.sessions.size > 0
-    || [..._pool.procs.values()].some((proc) => proc.busy || proc.backgroundTasks > 0);
+// Sessions a restart would cut short: a turn (any runtime), an unanswered question, a background task.
+export function busySessions() {
+  const ids = new Set([..._activeTurns.sessions.keys(), ..._pendingControl.sessions.keys()]);
+  for (const proc of _pool.procs.values()) if (proc.busy || proc.backgroundTasks > 0) ids.add(proc.sessionId || proc.key);
+  return [...ids];
 }
 
 export function setUpdateChecker(checkUpdate) {
