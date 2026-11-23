@@ -630,6 +630,12 @@ function handleClaudeHookRequest(input, reply) {
   return () => dismissPendingControl(sessionId, requestId);
 }
 
+// A restart would end something this Bridge runs: a turn (any runtime), an unanswered question, a background task.
+export function bridgeBusy() {
+  return _activeTurns.sessions.size > 0 || _pendingControl.sessions.size > 0
+    || [..._pool.procs.values()].some((proc) => proc.busy || proc.backgroundTasks > 0);
+}
+
 export function setUpdateChecker(checkUpdate) {
   _checkUpdate = checkUpdate;
 }
@@ -856,6 +862,7 @@ function connect() {
         // Pairing on behalf of an App, which never holds K in a form it could seal itself (plan D2).
         // Caught up first, so the key it seals is the account's current one (`head`).
         pair_invite: async () => { await catchUpAccountKey(); return createInvite(_config); },
+        update_now: () => { void _checkUpdate?.(true); return { ok: true }; }, // the App's Update: even while busy
         pair_approve: async params => { await catchUpAccountKey(); return approveJoin(_config, params.link); },
         // The recovery phrase is K: shown to an App of the account only (sealed like every reply).
         recovery_key: () => ({ k: _config.accounts ? _config.accountKey : '' }),

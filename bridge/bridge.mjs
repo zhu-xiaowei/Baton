@@ -19,7 +19,7 @@ import { sessionIndex } from './session-index.mjs';
 import { startRuntimeWatchers } from './runtime-watcher-registry.mjs';
 import { registerInstalledRuntimes } from './runtime-registry.mjs';
 import { killLeftovers } from './turn-process.mjs';
-import { closeTerminalsForUpdate, initWs, shutdownInteractions, setUpdateChecker } from './ws.mjs';
+import { bridgeBusy, closeTerminalsForUpdate, initWs, shutdownInteractions, setUpdateChecker } from './ws.mjs';
 import { BRIDGE_VERSION } from './version.mjs';
 import { pickEntry } from './entry.mjs';
 import {
@@ -91,9 +91,10 @@ const initialSync = syncSessions(CONFIG);
 warmed.then(() => checkStopped(CONFIG));
 setInterval(() => checkStopped(CONFIG), CHECK_STOPPED_INTERVAL);
 
-// Compare the immutable package version; config.json is user state.
-async function checkUpdate() {
-  if (shuttingDown || updateInProgress || Date.now() < nextUpdateCheckAt) return;
+// Compare the immutable package version; config.json is user state. An update waits until nothing this Bridge runs
+// would be cut short (checked again at each heartbeat that reports another version); `force` is the App's Update.
+async function checkUpdate(force = false) {
+  if (shuttingDown || updateInProgress || (!force && Date.now() < nextUpdateCheckAt)) return;
   nextUpdateCheckAt = Date.now() + 4 * 60_000;
   updateInProgress = true;
   try {
@@ -105,6 +106,8 @@ async function checkUpdate() {
     const info = await res.json();
     const version = info.bridgeVersion || info.version;
     if (!version || version === 'dev' || version === BRIDGE_VERSION || version === skippedVersion) return;
+    if (sessionIndex.updatePending?.version !== version) sessionIndex.updatePending = { version, since: Date.now() };
+    if (!force && bridgeBusy()) return;
     console.log(`[update] ${BRIDGE_VERSION} → ${version}, updating...`);
     const serverBase = CONFIG.server.replace(/\/$/, '');
     const nameParam = encodeURIComponent(CONFIG.deviceName || os.hostname());
@@ -141,6 +144,7 @@ async function checkUpdate() {
           throw new Error('downloaded Bridge version does not match server');
         }
 
+        if (!force && bridgeBusy()) return; // a turn started while downloading: the next heartbeat tries again
         if (process.platform === 'win32') await closeTerminalsForUpdate();
         installStagedBridge(stage, BRIDGE_HOME);
       } finally {
