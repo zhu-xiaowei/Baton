@@ -102,7 +102,7 @@
   var collapsedRecentProjects = new Set();
   var recentTimeObserver = null;
   var allRecentProjects = false;
-  var loadingRecentProjects = false;
+  var homeLoading = false;
   var homeActiveData = null;
   var homeDeviceData = null;
   var homeLoadVersion = 0;
@@ -270,55 +270,16 @@
   }
 
   function moreProjectsControl(less) {
-    return '<button class="recent-projects-show-more' + (loadingRecentProjects ? ' recent-projects-loading' : '')
-      + '" type="button" data-show-more-projects' + (loadingRecentProjects ? ' disabled aria-busy="true"' : '') + '>'
-      + (loadingRecentProjects ? 'Loading…' : less ? 'Show less' : 'Show more') + '</button>';
+    return '<button class="recent-projects-show-more" type="button" data-show-more-projects' + (homeLoading ? ' disabled' : '') + '>'
+      + (less ? 'Show less' : 'Show more') + '</button>';
   }
 
-  function showMoreProjects() {
-    if (loadingRecentProjects) return;
-    var footer = document.getElementById('recent-projects-footer');
-    if (!footer) return;
-    var button = footer.querySelector('[data-show-more-projects]');
-    if (!button) return;
-    var previousMode = allRecentProjects;
-    var account = localStorage.getItem('_ak');
-    var accountServer = localStorage.getItem('_as');
-    var devices = homeDeviceData || (readCache() || {}).devices || { devices: [] };
-    allRecentProjects = true;
-    loadingRecentProjects = true;
-    button.textContent = 'Loading…';
-    button.disabled = true;
-    button.classList.add('recent-projects-loading');
-    button.setAttribute('aria-busy', 'true');
-    var activePromise = Promise.resolve().then(function () {
-      return window.bridgeHome({ allProjects: true });
-    }).then(function (data) {
-      if (!Array.isArray(data.recentProjects) || data.hasMoreProjects !== false) {
-        throw new Error('Incomplete project snapshot');
-      }
-      return data;
-    });
-    var run = loadHome(activePromise, Promise.resolve(devices), {
-      keepContent: true,
-      appendProjects: true,
-      isCurrent: function () {
-        return !!document.getElementById('recent-projects-section')
-          && localStorage.getItem('_ak') === account
-          && localStorage.getItem('_as') === accountServer;
-      }
-    });
-    var version = homeLoadVersion;
-    run.then(function (fresh) {
-      if (version !== homeLoadVersion) return;
-      loadingRecentProjects = false;
-      if (!fresh) {
-        allRecentProjects = previousMode;
-        var currentFooter = document.getElementById('recent-projects-footer');
-        if (currentFooter) currentFooter.innerHTML =
-          '<span class="recent-projects-error" role="alert">Unable to load more projects.</span>' + moreProjectsControl();
-      }
-    });
+  // Show more/less only re-renders the loaded answer (it already holds 15 projects); it is
+  // disabled until the current home load settles.
+  function setHomeLoading(loading) {
+    homeLoading = loading;
+    var more = document.querySelector('[data-show-more-projects]');
+    if (more) more.disabled = loading;
   }
 
   function bindHomeNavigation(content) {
@@ -327,10 +288,12 @@
     content.addEventListener('click', function (e) {
       var moreButton = e.target.closest('[data-show-more-projects]');
       if (moreButton) {
+        if (homeLoading) return;
         var cached = readCache() || {};
-        if (moreButton.textContent === 'Show less') { allRecentProjects = false; renderInline(homeActiveData || cached.active, homeDeviceData || cached.devices); }
-        else if (typeof window.bridgeHome === 'function') showMoreProjects();
-        else (window.__navQueue = window.__navQueue || []).push(showMoreProjects);
+        var keepScroll = content.scrollTop;
+        allRecentProjects = moreButton.textContent !== 'Show less';
+        renderInline(homeActiveData || cached.active, homeDeviceData || cached.devices);
+        content.scrollTop = keepScroll;
         return;
       }
       var toggle = e.target.closest('[data-home-toggle]');
@@ -439,35 +402,6 @@
       }).join('') + '</div></section>';
   }
 
-  function appendRecentProjects(fresh) {
-    var content = document.getElementById('content');
-    var footer = document.getElementById('recent-projects-footer');
-    var current = homeActiveData || (readCache() || {}).active;
-    if (!footer || !current) throw new Error('Home is no longer available');
-    var existing = current.recentProjects || [];
-    var seen = new Set(existing.map(function (p) { return JSON.stringify([p.deviceName, p.projectHash]); }));
-    var added = [];
-    fresh.recentProjects.forEach(function (p) {
-      var key = JSON.stringify([p.deviceName, p.projectHash]);
-      if (seen.has(key) || added.length >= 10 || existing.length + added.length >= 15) return;
-      seen.add(key);
-      added.push(p);
-    });
-    var keepScroll = content.scrollTop;
-    footer.insertAdjacentHTML('beforebegin', added.map(function (p, i) {
-      return recentProjectHtml(p, existing.length + i);
-    }).join(''));
-    footer.innerHTML = '<button class="recent-projects-show-more" type="button" data-show-more-projects>Show less</button>';
-    fitRecentTimeColumn();
-    content.scrollTop = keepScroll;
-    // Cache exactly what remains displayed; a normal home refresh replaces it
-    // with current activity and the latest project ordering.
-    homeActiveData = Object.assign({}, current, {
-      recentProjects: existing.concat(added), hasMoreProjects: false,
-    });
-    return homeActiveData;
-  }
-
   function renderInline(activeData, devData) {
     var content = document.getElementById('content');
     if (!content) return;
@@ -518,7 +452,6 @@
     if (Array.isArray(recentProjects)) {
       var hasMoreProjects = activeData.hasMoreProjects || (!allRecentProjects && recentProjects.length > 5);
       recentProjects = recentProjects.slice(0, allRecentProjects ? 15 : 5);
-      homeActiveData = Object.assign({}, activeData, { recentProjects: recentProjects, hasMoreProjects: hasMoreProjects });
       html += '<section id="recent-projects-section" aria-labelledby="recent-projects-heading">'
         + '<h2 class="section-title home-section-heading" id="recent-projects-heading">'
         + '<button class="home-section-toggle recent-projects-toggle" type="button" data-home-toggle="recent-projects" aria-expanded="' + !recentProjectsCollapsed + '" aria-controls="recent-project-list">'
@@ -600,7 +533,6 @@
   function loadHome(activePromise, devicesPromise, options) {
     options = options || {};
     var version = ++homeLoadVersion;
-    if (!options.appendProjects) loadingRecentProjects = false;
     var cached = readCache();
     var hasCached = !!(cached && cached.active && cached.devices);
     var usePagePreview = !options.resetScroll && !!window.__returningHome;
@@ -610,11 +542,11 @@
     var isCurrent = function () { return version === homeLoadVersion && isVisible(); };
 
     setSync(true);
+    homeLoading = true;
     whenContentReady(function () {
       if (!isCurrent()) return;
       document.body.classList.add('browse-view');
       setSync(true);
-      if (options.keepContent) return;
       var restoredPreview = options.restoreSnapshot
         ? restoreReturningHomePreview(options.restoreSnapshot)
         : usePagePreview && (window.__homePreviewRestored || restoreReturningHomePreview());
@@ -624,6 +556,7 @@
         else renderSkeleton(!!options.resetScroll);
       }
       if (options.resetScroll) document.getElementById('content').scrollTop = 0;
+      setHomeLoading(true);
     });
 
     var run = Promise.all([Promise.resolve(activePromise), Promise.resolve(devicesPromise)]).then(function (fresh) {
@@ -631,17 +564,13 @@
         whenContentReady(function () {
           if (!isCurrent()) { resolve(fresh); return; }
           if (!fresh[0] || !fresh[1]) { reject(new Error('Home refresh failed')); return; }
-          if (options.appendProjects) {
-            fresh[0] = appendRecentProjects(fresh[0]);
-          } else {
-            var freshRaw = JSON.stringify({ active: fresh[0], devices: fresh[1] });
-            var cachedRaw = hasCached ? JSON.stringify({ active: cached.active, devices: cached.devices }) : null;
-            if (!window.__inlineRendered || freshRaw !== cachedRaw) {
-              var content = document.getElementById('content');
-              var keepScroll = content ? content.scrollTop : 0;
-              renderInline(fresh[0], fresh[1]);
-              if (content) content.scrollTop = keepScroll;
-            }
+          var freshRaw = JSON.stringify({ active: fresh[0], devices: fresh[1] });
+          var cachedRaw = hasCached ? JSON.stringify({ active: cached.active, devices: cached.devices }) : null;
+          if (!window.__inlineRendered || freshRaw !== cachedRaw) {
+            var content = document.getElementById('content');
+            var keepScroll = content ? content.scrollTop : 0;
+            renderInline(fresh[0], fresh[1]);
+            if (content) content.scrollTop = keepScroll;
           }
           writeCache(fresh[0], fresh[1]);
           if (options.onFresh) options.onFresh(fresh[0], fresh[1]);
@@ -652,7 +581,7 @@
       // Cache remains usable when revalidation fails.
       return null;
     }).then(function (fresh) {
-      if (isCurrent()) stopSync();
+      if (isCurrent()) { stopSync(); setHomeLoading(false); }
       if (usePagePreview) {
         window.__returningHome = false;
         document.documentElement.classList.remove('returning-home');

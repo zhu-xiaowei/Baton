@@ -11,7 +11,7 @@ import { cacheAttachment, cachedAttachmentBlob } from './components/attachment-c
 import { imageMimeType } from './components/image-type.js';
 import { requestProjectFiles } from './project/rpc.js';
 import { currentProjectHash, relativeProjectImagePath } from './project/project-hash.js';
-import { expandedHome, loadHomeV2 } from './v2/home.js';
+import { loadHomeV2 } from './v2/home.js';
 import { request as requestBridge, resetDirectTransport } from './v2/direct-transport.js';
 import { forgetAccountKey } from './v2/account-key.js';
 import { loadLatestHistory, loadOlderHistory } from './v2/history.js';
@@ -121,8 +121,8 @@ async function api(path, params, opts) {
 }
 
 // Session data is answered by each Bridge over the direct channel.
-async function bridgeHome(options) {
-  return (await (options?.allProjects ? expandedHome() : loadHomeV2())).active;
+async function bridgeHome() {
+  return (await loadHomeV2()).active;
 }
 
 async function bridgeDevices() {
