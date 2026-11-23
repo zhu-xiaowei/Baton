@@ -6,7 +6,7 @@ import fs from 'fs';
 import { createInterface } from 'readline/promises';
 import qrcode from 'qrcode-terminal';
 import { BRIDGE_HOME, CONFIG_PATH, bridgeCommand, saveConfig } from './config.mjs';
-import { fingerprint, openPair, openRotation, pairCode, sealPair } from './e2ee-node.mjs';
+import { deviceNameTag, fingerprint, openPair, openRotation, pairCode, sealPair } from './e2ee-node.mjs';
 import { pickEntry, vouched } from './entry.mjs';
 import { runningBridgePid } from './instance-lock.mjs';
 
@@ -33,7 +33,8 @@ async function request(base, config, path, body, fetchImpl) {
 
 // One secret per link (`p`): the server sees only pairCode(p), and K is sealed under p. `web` (the server's reply)
 // is where the App is served; that page knows its API server, so the link needs only the fragment.
-const link = (kind, p, web, server) => `${web || server}/#${kind}=${p.toString('base64url')}`;
+// A computer's link also names it (`n`): the fragment never reaches the server, which knows the computer by a random ID.
+const link = (kind, p, web, server, name = '') => `${web || server}/#${kind}=${p.toString('base64url')}${name ? `&n=${encodeURIComponent(name)}` : ''}`;
 const sealed = (config, t, code) => sealPair(t, Buffer.from(config.accountKey, 'base64'), code);
 
 function show(print, url) {
@@ -43,12 +44,14 @@ function show(print, url) {
 
 // Resolves with the config to save once an App approved this computer; a new code every 15 minutes.
 export async function join(config, { print = console.log, sleep = pause, fetchImpl = fetch } = {}) {
-  config = { ...config, entry: await pickEntry(config.server, fetchImpl) }; // the account is placed near this computer's entry
+  // The account is placed near this computer's entry. The host name stays the display name, sealed (ws.mjs).
+  config = { ...config, entry: await pickEntry(config.server, fetchImpl), deviceDisplayName: config.deviceDisplayName || config.deviceName,
+    deviceName: `pc-${randomBytes(4).toString('hex')}` };
   for (;;) {
     const t = randomBytes(16);
     const { code, poll, expiresIn, web } = await call(config, '/api/pair/start', { deviceName: config.deviceName, code: pairCode(t) }, fetchImpl);
     print('\nScan with the Baton app on your phone to add this computer:');
-    show(print, link('j', t, web, config.server));
+    show(print, link('j', t, web, config.server, config.deviceDisplayName));
     // Polled until the server calls the code expired (RFC 8628), not by this clock: an approval made at the end is collected.
     for (const end = Date.now() + (expiresIn + 120) * 1000; Date.now() < end; await sleep(2000)) {
       const reply = await call(config, '/api/pair/wait', { code, poll }, fetchImpl).catch((error) => (error.status === 404 ? null : { pending: true }));
@@ -78,7 +81,10 @@ export function approveJoin(config, url) {
   // Older links: `j` is the code itself and `t` the secret.
   const t = Buffer.from(params.get('t') || params.get('j'), 'base64url');
   const code = params.get('t') ? params.get('j') : pairCode(t);
-  return call(config, '/api/pair/approve', { code, sealed: sealed(config, t, code) });
+  const name = params.get('n') || '';
+  const nameTag = name ? deviceNameTag(Buffer.from(config.accountKey, 'base64'), name) : '';
+  return call(config, '/api/pair/approve', { code, sealed: sealed(config, t, code), nameTag })
+    .then((reply) => ({ ...reply, displayName: name || reply.deviceName }));
 }
 
 // The newest K after rotations made while this computer was away or just now (`account_rotated`), or null.
@@ -113,7 +119,7 @@ export async function runPair() {
     return 1;
   }
   if (config.accountKey && target) {
-    console.log(`Added ${(await approveJoin(config, target)).deviceName}`);
+    console.log(`Added ${(await approveJoin(config, target)).displayName}`);
     return 0;
   }
   if (!process.stdout.isTTY) {

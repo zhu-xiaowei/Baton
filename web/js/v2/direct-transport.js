@@ -681,6 +681,13 @@ export function devices() {
     const body = await response.json();
     if (body.protocol === 2) updateRoutes(body);
     if (body.rotations?.length) await followRotations(body.rotations);
+    // A hosted computer's display name is sealed under K (bridge/e2ee-node.mjs sealDeviceName); its ID until it opens.
+    if (body.devices?.some((device) => device.nameSealed)) {
+      await accountKeys();
+      if (keys) await Promise.all(body.devices.map(async (device) => {
+        if (device.nameSealed) device.deviceDisplayName = await keys.openName(device.nameSealed, device.deviceName) || device.deviceDisplayName;
+      }));
+    }
     return body;
   })().finally(() => { devicesInflight = null; });
   return devicesInflight;

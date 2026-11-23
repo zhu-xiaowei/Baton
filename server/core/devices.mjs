@@ -5,10 +5,11 @@ import { truncate } from './util.mjs';
 export function createDevices(table) {
   const pk = (accountId) => `DEVICE#${accountId}`;
   return {
-    async put(accountId, device, displayName = '') {
-      const Item = { pk: pk(accountId), sk: device, deviceName: device, deviceDisplayName: truncate(displayName || device, 64) };
+    // `sealed`: a hosted computer's { nameSealed, nameTag } (its display name under K; the tag finds duplicates).
+    async put(accountId, device, displayName = '', sealed = {}) {
+      const Item = { pk: pk(accountId), sk: device, deviceName: device, deviceDisplayName: truncate(displayName || device, 64), ...sealed };
       const row = (await table.getItem({ Key: { pk: Item.pk, sk: device } })).Item;
-      if (row?.deviceDisplayName !== Item.deviceDisplayName) await table.putItem({ Item });
+      if (['deviceDisplayName', 'nameSealed', 'nameTag'].some((field) => row?.[field] !== Item[field])) await table.putItem({ Item });
     },
     async list(accountId) {
       const params = { KeyConditionExpression: '#pk = :pk', ExpressionAttributeNames: { '#pk': 'pk' },

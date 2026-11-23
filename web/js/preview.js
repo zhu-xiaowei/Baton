@@ -111,7 +111,7 @@ function getConnection(target, device) {
 }
 
 function portNotListening(entry, status = entry.status) {
-  const message = `Port ${entry.target.port} is not listening on ${entry.device}`;
+  const message = `Port ${entry.target.port} is not listening on ${globalThis.__deviceDisplayNames?.[entry.device] || entry.device}`;
   return status === message || status === `Preview failed: ${message}`;
 }
 

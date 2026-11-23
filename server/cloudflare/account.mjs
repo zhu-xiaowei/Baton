@@ -82,11 +82,8 @@ export class AccountObject extends DurableObject {
         send(old, { action: 'bridge_replaced' });
         await this.retire(old, 1000, 'replaced');
       }
-      try { // display only
-        await core.devices.put(account, device, query.get('name') ?? '');
-      } catch (error) {
-        console.log(`device row not written: ${error.message}`);
-      }
+      // A hosted computer names itself sealed, with bridge_join; others in clear here.
+      if (query.has('name')) await core.devices.put(account, device, query.get('name')).catch((error) => console.log(`device row not written: ${error.message}`));
     }
     if (role === 'app') {
       for (const [old] of leastActive(this.live('app').filter(([ws]) => ws !== socket), max.apps - 1)) await this.retire(old, 4429, 'too_many_apps');
@@ -140,6 +137,10 @@ export class AccountObject extends DurableObject {
       const valid = typeof body.pub === 'string' && PUB.test(body.pub) && typeof body.fp === 'string' && /^[0-9a-f]{16}$/.test(body.fp);
       ws.serializeAttachment({ ...me, joined: true, pub: valid ? body.pub : '', fp: valid ? body.fp : '' });
       send(ws, { action: 'direct_rpc', type: 'joined', id: me.id });
+      if (me.device && typeof body.nameSealed === 'string' && body.nameSealed.length <= 400 && /^[0-9a-f]{32}$/.test(body.nameTag ?? '')) {
+        await this.core(me.account).devices.put(me.account, me.device, '', { nameSealed: body.nameSealed, nameTag: body.nameTag })
+          .catch((error) => console.log(`device row not written: ${error.message}`));
+      }
       await this.notifyApps(me.account);
     }
   }

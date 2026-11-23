@@ -4,7 +4,7 @@ import { randomBytes } from 'node:crypto';
 import { deflateRawSync, inflateRawSync } from 'node:zlib';
 import { RpcAssembler, decodeRpcPayload, rpcResultFrames } from '../../bridge/direct-rpc-protocol.mjs';
 import { appKeys, importAccountKey } from '../../bridge/e2ee.mjs';
-import { bridgeKeys } from '../../bridge/e2ee-node.mjs';
+import { bridgeKeys, deviceNameTag, sealDeviceName } from '../../bridge/e2ee-node.mjs';
 import { setTransferKeys, transfer } from '../../bridge/transfer-store.mjs';
 
 test('App (WebCrypto) and Bridge (node:crypto) seal for each other; tamper, wrong K and replay fail', async () => {
@@ -25,4 +25,14 @@ test('App (WebCrypto) and Bridge (node:crypto) seal for each other; tamper, wron
   assert.equal(await stranger.open(part.payload.head, part.payload.data), null);
   const fileKey = async (keys) => { setTransferKeys(keys.files); return transfer.keyFor('a'.repeat(64), '.pdf'); };
   assert.equal(await fileKey(app), await fileKey(bridge)); // same sealed file keys on both sides
+});
+
+test('a hosted display name: the App opens it, an unchanged name seals the same, the tag ignores case', async () => {
+  const k = randomBytes(32);
+  const sealed = sealDeviceName(k, 'pc-1', 'MacBook Pro');
+  assert.deepEqual(sealDeviceName(k, 'pc-1', 'MacBook Pro'), sealed);
+  const app = await appKeys(await importAccountKey(k));
+  assert.equal(await app.openName(sealed.nameSealed, 'pc-1'), 'MacBook Pro');
+  assert.equal(await app.openName(sealed.nameSealed, 'pc-2'), '');
+  assert.equal(deviceNameTag(k, ' macbook pro'), sealed.nameTag);
 });

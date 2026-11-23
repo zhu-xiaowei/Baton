@@ -138,17 +138,18 @@ export function mountStartUrlForm(root, { adding = false, onAdded } = {}) {
     if (signedIn) {
       if (link.kind !== 'j') throw new Error('This code adds a new phone. To move that computer to your account, run `~/.baton-bridge/baton pair --leave` on it (Windows PowerShell: `~\\.baton-bridge\\baton.cmd pair --leave`; cmd: `%USERPROFILE%\\.baton-bridge\\baton.cmd pair --leave`) and scan the new code.');
       var reply = await viaComputer('pair_approve', { link: link.text });
-      return finishAdd(reply.deviceName);
+      return finishAdd(reply.deviceName, reply.displayName);
     }
     var result = await signInWithLink(link);
     setCredentials(result.token, result.server);
-    if (result.added) return finishAdd(result.added);
+    if (result.added) return finishAdd(result.added, result.addedName);
     location.replace('index.html');
   }
 
-  function finishAdd(name) {
+  function finishAdd(name, label) {
     if (!root.isConnected) return; // closed while connecting
     sessionStorage.setItem('baton-added', name);
+    sessionStorage.setItem('baton-added-name', label || name);
     if (onAdded) onAdded();
     else location.replace('index.html');
   }

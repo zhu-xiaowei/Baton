@@ -20,11 +20,12 @@ test('pair --leave keeps config.json until another account approves, then keeps 
     if (url.endsWith('/start')) return { ok: true, json: async () => ({ code: JSON.parse(body).code, poll: 'x', expiresIn: 600 }) };
     return { ok: true, json: async () => ({ token: 'bt_new', approvedBy: 'phone', sealed: sealPair(p, k, pairCode(p)) }) };
   };
-  const print = (line) => { if (line.includes('#j=')) p = Buffer.from(line.split('#j=')[1], 'base64url'); };
+  const print = (line) => { if (line.includes('#j=')) p = Buffer.from(new URLSearchParams(line.split('#')[1]).get('j'), 'base64url'); };
   await assert.rejects(leave(old, { print, fetchImpl: async () => ({ ok: false, status: 503, json: async () => ({}) }) }));
   assert.deepEqual(fs.readdirSync(dir), ['config.json']);
   await leave(old, { print, fetchImpl, sleep: async () => {} });
   const saved = JSON.parse(fs.readFileSync(path.join(dir, 'config.json')));
-  assert.deepEqual([saved.apiKey, saved.server, saved.deviceName, saved.bridgeId], ['bt_new', old.server, 'mac', 'b']);
+  assert.deepEqual([saved.apiKey, saved.server, saved.deviceDisplayName, saved.bridgeId], ['bt_new', old.server, 'mac', 'b']);
+  assert.match(saved.deviceName, /^pc-[0-9a-f]{8}$/); // a new account knows it by a new random ID
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dir, fs.readdirSync(dir).find((f) => f.includes('.bak-'))))), old);
 });

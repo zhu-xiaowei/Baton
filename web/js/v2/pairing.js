@@ -18,6 +18,7 @@ export function parseLink(text) {
   const t = params.get('t') || params.get(kind);
   if (!kind || !t) return null;
   return { text: url.href, kind, code: params.get('t') ? params.get(kind) : null, t: fromBase64(t.replace(/-/g, '+').replace(/_/g, '/')),
+    name: params.get('n') || '', // a computer's display name (the server knows it by a random ID)
     // A link to this very page is served by this deployment, whose API server it knows; older links name theirs (`s`).
     server: url.origin === globalThis.location?.origin ? defaultServer() : (/^https:\/\//.test(params.get('s') || '') && params.get('s').replace(/\/$/, '')) || '' };
 }
@@ -77,7 +78,7 @@ export async function signInWithLink(link) {
     added = (await post(server, '/api/pair/approve', { code, sealed: await sealPair(link.t, raw, code) }, token)).deviceName;
   }
   await saveAccountKey(server, raw);
-  return { token, added, server };
+  return { token, added, addedName: link.name || added, server };
 }
 
 export async function recoverAccount(server, raw) {

@@ -108,6 +108,15 @@ export async function appKeys(k, since = 0) {
         return { ...event, ...JSON.parse(new TextDecoder().decode(plain.subarray(5))) };
       } catch { return event; }
     },
+    // A hosted computer's display name from /devices (e2ee-node.mjs sealDeviceName), or '' when it does not open.
+    openName: async (sealed, device) => {
+      try {
+        const bytes = fromBase64(sealed);
+        const key = await derive(k, 'device-name', { name: 'AES-GCM', length: 256 }, ['decrypt']);
+        return new TextDecoder().decode(await subtle().decrypt({ name: 'AES-GCM', iv: bytes.subarray(0, 12),
+          additionalData: encoder.encode(device) }, key, bytes.subarray(12)));
+      } catch { return ''; }
+    },
     files: () => (files ||= Promise.all([derive(k, 'file', { name: 'AES-GCM', length: 256 }, ['encrypt', 'decrypt']),
       derive(k, 'file-id', { name: 'HMAC', hash: 'SHA-256', length: 256 }, ['sign'])]).then(([key, id]) => ({ key, id, since }))),
   };
