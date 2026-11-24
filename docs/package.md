@@ -8,7 +8,9 @@ The existing Xcode Cloud workflow archives the iOS Xcode project for TestFlight.
 
 ## Prepare a versioned release
 
-Use a branch such as `release/1.1.0` to prepare the version bump and release
+Claude Code `/release <version>` (Codex `$release <version>`) runs this whole
+section end to end: version bump PR, packaging, the Latest GitHub Release and
+dl.agentbaton.app. Use a branch such as `release/1.1.0` to prepare the version bump and release
 notes. Keep these application versions in sync:
 
 | Location | Field |
