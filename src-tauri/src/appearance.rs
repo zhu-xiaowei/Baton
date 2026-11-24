@@ -60,7 +60,7 @@ impl Appearance {
   }
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 pub fn current(app: &tauri::AppHandle) -> Appearance {
   app.state::<Mutex<Appearance>>().lock().unwrap_or_else(|error| error.into_inner()).clone()
 }
@@ -69,17 +69,23 @@ fn apply(app: &tauri::AppHandle, appearance: &Appearance) {
   #[cfg(desktop)]
   {
     app.set_theme(appearance.theme());
-    // Per-window and per-webview access needs Tauri's `unstable` feature, enabled only on macOS.
-    #[cfg(not(target_os = "macos"))]
+    // Per-window and per-webview access needs Tauri's `unstable` feature, enabled on macOS and Windows.
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     for window in app.webview_windows().values() {
       let _ = window.set_theme(appearance.theme());
       let _ = window.set_background_color(Some(appearance.color(false)));
     }
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     for window in app.windows().values() {
       let _ = window.set_theme(appearance.theme());
       let _ = window.set_background_color(Some(appearance.color(false)));
     }
+    #[cfg(target_os = "windows")]
+    for webview in app.webviews().values() {
+      let _ = webview.set_background_color(Some(appearance.color(webview.label().starts_with("tab-strip-"))));
+    }
+    #[cfg(target_os = "windows")]
+    crate::windows_caption::set_colors(app, appearance.mode == "light", appearance.color(true));
     // WKWebView does not implement Tauri's set_background_color.
     #[cfg(target_os = "macos")]
     for webview in app.webviews().values() {

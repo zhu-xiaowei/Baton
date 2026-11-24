@@ -787,6 +787,14 @@ Tauri v2 wraps web/ static frontend as native app, zero web code changes.
   must take `Webview`, not `WebviewWindow` (that extractor fails once a window has children).
   Rust owns tab order/selection/titles and pushes `macos-tabs` to the strip; pages report titles
   from `updateBreadcrumb`. Preview tunnels and native preview views are owned per webview label.
+- Windows tabs share `macos_tabs.rs` and the same pages. The window is frameless
+  (`tauri.windows.conf.json`); the strip is the title bar row (`app-region: drag`). `windows_caption.rs`
+  draws the caption buttons (46px × strip height) in a column of the top-level window left free by the
+  strip and answers `WM_NCHITTEST`: only a top-level HTMAXBUTTON gives Windows 11 Snap Layouts (WebView2
+  is another process). The top resize edge is a `SM_CYFRAME` row above the strip (Tauri creates no resize-border child here); tabs are re-laid out
+  on every resize/DPI change. On `WM_SETFOCUS` it focuses the selected tab (wry only focuses `main`;
+  Tauri's `Focused(true)` also fires for child webviews and loops). Shortcuts live in `macos-tabs.js`;
+  `appearance.rs` sets per-webview backgrounds, as `webview_windows()` is empty once a window has children.
 
 ### Targets
 - Android: primary

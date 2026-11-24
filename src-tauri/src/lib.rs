@@ -1,9 +1,11 @@
-// Multi-window and tabs are macOS-only. Windows/Linux are intentionally left single-window
+// Multi-window is macOS-only; tabs are macOS and Windows. Linux is intentionally left single-window
 // (title_bar_style/hidden_title below are macOS-only builder methods anyway).
 mod preview_proxy;
 mod macos_zoom;
 mod macos_tabs;
 mod appearance;
+#[cfg(target_os = "windows")]
+mod windows_caption;
 
 #[cfg(target_os = "macos")]
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -120,7 +122,6 @@ pub fn run() {
       #[cfg(target_os = "macos")]
       {
         use tauri::menu::{Menu, MenuItemBuilder};
-        use tauri::Manager;
 
         let menu = Menu::default(app.handle())?;
 
@@ -147,10 +148,12 @@ pub fn run() {
           }
           macos_tabs::handle_menu(app, event.id().as_ref());
         });
-
-        if let Some(main) = app.get_webview_window("main") {
-          macos_tabs::attach(&main.as_ref().window(), main.as_ref())?;
-        }
+      }
+      #[cfg(any(target_os = "macos", target_os = "windows"))]
+      if let Some(main) = tauri::Manager::get_webview_window(app, "main") {
+        #[cfg(target_os = "windows")]
+        windows_caption::attach(&main.as_ref().window());
+        macos_tabs::attach(&main.as_ref().window(), main.as_ref())?;
       }
 
       Ok(())
