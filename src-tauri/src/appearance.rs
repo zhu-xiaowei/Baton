@@ -85,7 +85,7 @@ fn apply(app: &tauri::AppHandle, appearance: &Appearance) {
       let _ = webview.set_background_color(Some(appearance.color(webview.label().starts_with("tab-strip-"))));
     }
     #[cfg(target_os = "windows")]
-    crate::windows_caption::set_colors(app, appearance.mode == "light", &appearance.strip);
+    crate::windows_caption::set_colors(app, appearance.mode == "light", appearance.color(true));
     // WKWebView does not implement Tauri's set_background_color.
     #[cfg(target_os = "macos")]
     for webview in app.webviews().values() {

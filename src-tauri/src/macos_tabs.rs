@@ -1,6 +1,5 @@
-// macOS and Windows tabs: each window holds a tab-strip webview (macOS: in the titlebar row;
-// Windows: the whole title bar row) plus one content webview per tab. Hidden tabs keep their
-// own page, draft, navigation and connection.
+// macOS and Windows tabs: each window holds a tab-strip webview in the titlebar row plus one content
+// webview per tab. Hidden tabs keep their own page, draft, navigation and connection.
 use serde::Serialize;
 
 #[derive(Clone, Serialize)]
@@ -96,16 +95,15 @@ pub use imp::{handle_menu, setup_menu};
 mod imp {
   use super::{Tab, TabsState};
   #[cfg(target_os = "macos")]
-  use objc2::{msg_send, sel};
-  #[cfg(target_os = "macos")]
-  use objc2_app_kit::{NSAutoresizingMaskOptions, NSView, NSWindow};
-  #[cfg(target_os = "macos")]
-  use objc2_foundation::{NSObjectProtocol, NSPoint, NSRect, NSSize};
+  use {
+    objc2::{msg_send, sel},
+    objc2_app_kit::{NSAutoresizingMaskOptions, NSView, NSWindow},
+    objc2_foundation::{NSObjectProtocol, NSPoint, NSRect, NSSize},
+    tauri::menu::{Menu, MenuItemBuilder, MenuItemKind, PredefinedMenuItem, Submenu, WINDOW_SUBMENU_ID},
+  };
   use std::collections::HashMap;
   use std::sync::atomic::{AtomicUsize, Ordering};
   use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
-  #[cfg(target_os = "macos")]
-  use tauri::menu::{Menu, MenuItemBuilder, MenuItemKind, PredefinedMenuItem, Submenu, WINDOW_SUBMENU_ID};
   use tauri::{
     AppHandle, Emitter, EventTarget, LogicalPosition, LogicalSize, Manager, Webview, WebviewBuilder,
     WebviewUrl, Window,
@@ -188,8 +186,8 @@ mod imp {
     });
   }
 
-  // Windows has no autoresizing: the strip and every tab are laid out again on each resize.
-  // The strip leaves the caption buttons' column and the top resize row to the window (windows_caption.rs).
+  // No autoresizing on Windows: laid out again on each resize, leaving the caption buttons' column and
+  // the top resize row to the window (windows_caption.rs).
   #[cfg(target_os = "windows")]
   fn place(webview: &Webview, strip: bool) {
     let window = webview.window();
@@ -266,8 +264,6 @@ mod imp {
     Ok(())
   }
 
-  // Windows: the window itself took focus (Alt+Tab, taskbar, launch); with child webviews nothing passes
-  // it on, so keys went nowhere until a click. windows_caption.rs calls this on WM_SETFOCUS.
   #[cfg(target_os = "windows")]
   pub fn focus_selected(window: &Window) {
     let selected = with_tabs(window.label(), |tabs| tabs.selected.clone());

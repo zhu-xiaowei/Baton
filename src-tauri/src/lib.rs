@@ -122,7 +122,6 @@ pub fn run() {
       #[cfg(target_os = "macos")]
       {
         use tauri::menu::{Menu, MenuItemBuilder};
-        use tauri::Manager;
 
         let menu = Menu::default(app.handle())?;
 
@@ -149,19 +148,12 @@ pub fn run() {
           }
           macos_tabs::handle_menu(app, event.id().as_ref());
         });
-
-        if let Some(main) = app.get_webview_window("main") {
-          macos_tabs::attach(&main.as_ref().window(), main.as_ref())?;
-        }
       }
-      // Windows: frameless (tauri.windows.conf.json); the strip is the title bar row, with the caption buttons.
-      #[cfg(target_os = "windows")]
-      {
-        use tauri::Manager;
-        if let Some(main) = app.get_webview_window("main") {
-          windows_caption::attach(&main.as_ref().window());
-          macos_tabs::attach(&main.as_ref().window(), main.as_ref())?;
-        }
+      #[cfg(any(target_os = "macos", target_os = "windows"))]
+      if let Some(main) = tauri::Manager::get_webview_window(app, "main") {
+        #[cfg(target_os = "windows")]
+        windows_caption::attach(&main.as_ref().window());
+        macos_tabs::attach(&main.as_ref().window(), main.as_ref())?;
       }
 
       Ok(())

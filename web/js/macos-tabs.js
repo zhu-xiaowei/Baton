@@ -4,7 +4,6 @@ import { state } from './state.js';
 let native = null;
 let lastTitle = null;
 
-// The Windows app has the same tabs; its strip is the title bar row.
 export function isNativeWindows(win) {
   return !!win.__TAURI_INTERNALS__ && /^Win/.test(win.navigator.platform);
 }
@@ -17,8 +16,8 @@ function invoke(command, args) {
 }
 
 // Shortcuts that the macOS menu cannot express reliably (digits, Shift+brackets, Ctrl+Tab).
-// Windows has no menu: Ctrl takes Cmd's place, and Ctrl+T / Ctrl+W are handled here too, except in
-// the terminal (readline keys). Letters follow the layout; non-Latin layouts use the key position.
+// Windows has no menu: Ctrl replaces Cmd and Ctrl+T/W are handled here, except in the terminal (readline
+// keys); non-Latin layouts match the key position.
 export function tabShortcut(event, windows = false) {
   if (event.isComposing || event.defaultPrevented || event.altKey) return null;
   if (event.ctrlKey && !event.metaKey && event.key === 'Tab') {
