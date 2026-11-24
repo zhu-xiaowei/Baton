@@ -745,6 +745,15 @@ Replaced the old tmux send-keys approach (deleted in Phase 2E). Full design: `do
   splash; `uiMode` is in `configChanges`, so no Activity restart), iOS `batonAppearance` message
   (window style, status bar, preview webviews), desktop `appearance_set` (`src-tauri/src/appearance.rs`:
   Tauri theme, window/webview backgrounds, macOS tab strip, saved to `appearance.json` for the next launch).
+- Android cold start mirrors iOS from the app's first frame: the 12+ system splash is only the canvas color (no
+  icon, removed at once); before 12 the starting window is the canvas of the system theme. `LaunchSkeletonView`
+  draws the home Web skeleton natively on the decor view (Wry replaces the content view later) in the saved
+  theme's colors and is removed without a fade when `window.__skelReady` (or a non-home page) is reached, polled
+  every 20 ms independently of each result (a navigation can drop it), 15 s cap. It matches the WebView pixel for
+  pixel: `env(safe-area-inset-top)` rounds up to whole CSS px, the stable scrollbar gutter is `floor(6 × dpr)`
+  device px, text is unhinted at subpixel positions with baselines rounded to device px, and active cards keep
+  their 135° gradient. Keep it in step with `renderSkeleton` in `index.html`. Three-button navigation gets bottom
+  padding from the tappable-element inset; gesture navigation stays edge to edge.
 - Cold-start launch screens follow the app's choice, not the system's: Android 12+ uses the app night mode;
   iOS renders the LaunchScreen skeleton into light and dark snapshots per orientation
   (`Library/SplashBoard/Snapshots/<bundle> - {DEFAULT GROUP}/*.ktx`, Apple's `AAPL` container with ASTC,
