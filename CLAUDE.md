@@ -755,8 +755,8 @@ Replaced the old tmux send-keys approach (deleted in Phase 2E). Full design: `do
   their 135° gradient. Keep it in step with `renderSkeleton` in `index.html`. Only the phone portrait layout
   (≤ 480 CSS px) is drawn; landscape and wide windows lay home out differently and keep a plain canvas cover. The
   content view is padded by min(tappable element, navigation bars) so three-button navigation does not cover the
-  page (gesture navigation stays edge to edge), and before Android 11 also by the keyboard, which does not resize an
-  edge-to-edge window there.
+  page (gesture navigation stays edge to edge), and before Android 11 also by the keyboard: an edge-to-edge window is
+  not resized there, and only `adjustResize` reports the keyboard (with the navigation bar) in the system window insets.
 - Cold-start launch screens follow the app's choice, not the system's: Android 12+ uses the app night mode;
   iOS renders the LaunchScreen skeleton into light and dark snapshots per orientation
   (`Library/SplashBoard/Snapshots/<bundle> - {DEFAULT GROUP}/*.ktx`, Apple's `AAPL` container with ASTC,
