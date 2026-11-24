@@ -56,6 +56,18 @@ pub async fn macos_tabs_set_title(webview: tauri::Webview, title: String) -> Res
   imp::set_title(&webview, &title)
 }
 
+// The root Session a tab shows ('' when none), reported as the page opens or leaves one.
+#[tauri::command]
+pub async fn macos_tabs_set_session(webview: tauri::Webview, session: String) -> Result<(), String> {
+  imp::set_session(&webview, &session)
+}
+
+// A tapped notification: the leftmost tab showing its Session, else a new tab (rightmost) that opens it.
+#[tauri::command]
+pub async fn macos_tabs_open_session(webview: tauri::Webview, session: String, target: serde_json::Value) -> Result<(), String> {
+  imp::open_session(&webview, &session, &target)
+}
+
 #[cfg(not(target_os = "macos"))]
 mod imp {
   use super::TabsState;
@@ -68,6 +80,8 @@ mod imp {
   pub fn move_tab(_: &tauri::Webview, _: &str, _: usize) -> Result<(), String> { Err(UNSUPPORTED.into()) }
   pub fn close(_: &tauri::Webview, _: Option<&str>) -> Result<(), String> { Err(UNSUPPORTED.into()) }
   pub fn set_title(_: &tauri::Webview, _: &str) -> Result<(), String> { Err(UNSUPPORTED.into()) }
+  pub fn set_session(_: &tauri::Webview, _: &str) -> Result<(), String> { Err(UNSUPPORTED.into()) }
+  pub fn open_session(_: &tauri::Webview, _: &str, _: &serde_json::Value) -> Result<(), String> { Err(UNSUPPORTED.into()) }
 }
 
 #[cfg(target_os = "macos")]
@@ -99,6 +113,7 @@ mod imp {
     order: Vec<String>,
     selected: String,
     titles: HashMap<String, String>,
+    sessions: HashMap<String, String>,
     fullscreen: bool,
   }
 
@@ -186,6 +201,7 @@ mod imp {
       order: vec![first.label().to_string()],
       selected: first.label().to_string(),
       titles: HashMap::new(),
+      sessions: HashMap::new(),
       fullscreen: false,
     });
     let owner = window.clone();
@@ -210,14 +226,15 @@ mod imp {
     with_tabs(webview.window().label(), |tabs| snapshot(tabs))
   }
 
-  fn open(window: &Window) -> Result<(), String> {
+  // `script` runs before the page: the notification a new tab opens.
+  fn open(window: &Window, script: &str) -> Result<(), String> {
     let size = window.inner_size().and_then(|size| Ok(size.to_logical::<f64>(window.scale_factor()?)))
       .map_err(|e| e.to_string())?;
     let label = format!("tab-{}", TAB_SEQ.fetch_add(1, Ordering::Relaxed) + 1);
     let webview = window.add_child(
       WebviewBuilder::new(&label, WebviewUrl::App("index.html".into()))
         .disable_drag_drop_handler()
-        .initialization_script(format!("window.__BATON_NATIVE_THEME__ = {:?};", crate::appearance::current(window.app_handle()).preference))
+        .initialization_script(format!("window.__BATON_NATIVE_THEME__ = {:?};{script}", crate::appearance::current(window.app_handle()).preference))
         .background_color(crate::appearance::current(window.app_handle()).color(false)),
       LogicalPosition::new(0.0, STRIP_HEIGHT),
       LogicalSize::new(size.width, (size.height - STRIP_HEIGHT).max(1.0)),
@@ -228,7 +245,26 @@ mod imp {
   }
 
   pub fn new_tab(webview: &Webview) -> Result<(), String> {
-    open(&webview.window())
+    open(&webview.window(), "")
+  }
+
+  pub fn set_session(webview: &Webview, session: &str) -> Result<(), String> {
+    let id = webview.label().to_string();
+    with_tabs(webview.window().label(), |tabs| {
+      if session.is_empty() { tabs.sessions.remove(&id); } else if tabs.order.contains(&id) { tabs.sessions.insert(id, session.to_string()); }
+    })
+  }
+
+  pub fn open_session(webview: &Webview, session: &str, target: &serde_json::Value) -> Result<(), String> {
+    let window = webview.window();
+    let showing = with_tabs(window.label(), |tabs| {
+      tabs.order.iter().find(|tab| tabs.sessions.get(*tab).map(String::as_str) == Some(session)).cloned()
+    })?;
+    match showing {
+      Some(id) => show(&window, &id),
+      // Re-serialized, so the page gets a JSON literal and nothing else.
+      None => open(&window, &format!("window.__BATON_NOTIFY__ = {};", serde_json::to_string(target).map_err(|e| e.to_string())?)),
+    }
   }
 
   // Show the new tab before hiding the old one so the content area never flashes empty.
@@ -296,6 +332,7 @@ mod imp {
         with_tabs(window.label(), |tabs| {
           tabs.order.retain(|tab| *tab != id);
           tabs.titles.remove(&id);
+          tabs.sessions.remove(&id);
         })?;
         let app = window.app_handle();
         release(app, &id);
@@ -365,7 +402,7 @@ mod imp {
         return;
       };
       let result = match id.as_str() {
-        "macos_tab_new" => open(&window),
+        "macos_tab_new" => open(&window, ""),
         "macos_tab_close" => close_tab(&window, None),
         _ => window.close().map_err(|e| e.to_string()),
       };

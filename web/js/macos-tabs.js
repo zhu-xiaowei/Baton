@@ -44,6 +44,18 @@ export function setNativeTabTitle(title, win = window) {
   invoke('macos_tabs_set_title', { title }).catch(() => { lastTitle = null; });
 }
 
+// The root Session this tab shows, so a tapped notification can switch to it.
+export function setNativeTabSession(sessionId, win = window) {
+  if (isNativeMac(win)) invoke('macos_tabs_set_session', { session: sessionId || '' }).catch(() => {});
+}
+
+// A tapped notification: the leftmost tab showing its Session, else a new tab opening it. False outside the macOS app.
+export function openSessionInTab(target, win = window) {
+  if (!isNativeMac(win)) return false;
+  invoke('macos_tabs_open_session', { session: target.rootSessionId || target.sessionId, target }).catch(() => {});
+  return true;
+}
+
 export function initMacosTabs(win = window) {
   if (!isNativeMac(win)) return;
   attachTabShortcuts(win, (command, args) => invoke(command, args).catch(() => {}));
