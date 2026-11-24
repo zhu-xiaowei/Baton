@@ -5,7 +5,9 @@ use std::sync::Mutex;
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
 use windows_sys::Win32::Graphics::Gdi::*;
 use windows_sys::Win32::UI::HiDpi::{GetDpiForWindow, GetSystemMetricsForDpi};
-use windows_sys::Win32::UI::Input::KeyboardAndMouse::{GetActiveWindow, TrackMouseEvent, TME_LEAVE, TME_NONCLIENT, TRACKMOUSEEVENT};
+use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
+  GetActiveWindow, ReleaseCapture, SetCapture, TrackMouseEvent, TME_LEAVE, TME_NONCLIENT, TRACKMOUSEEVENT,
+};
 use windows_sys::Win32::UI::Shell::{DefSubclassProc, SetWindowSubclass};
 use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
@@ -65,9 +67,12 @@ unsafe fn layout(hwnd: HWND) -> (RECT, i32, i32) {
   (RECT { left: client.right - bw * 3, top: 0, right: client.right, bottom: sh }, bw, bh)
 }
 
-unsafe fn hit(hwnd: HWND, lparam: LPARAM) -> Option<u32> {
-  let mut point = POINT { x: (lparam & 0xffff) as i16 as i32, y: ((lparam >> 16) & 0xffff) as i16 as i32 };
-  ScreenToClient(hwnd, &mut point);
+fn point(lparam: LPARAM) -> POINT {
+  POINT { x: (lparam & 0xffff) as i16 as i32, y: ((lparam >> 16) & 0xffff) as i16 as i32 }
+}
+
+// `point` is in client coordinates.
+unsafe fn hit(hwnd: HWND, point: POINT) -> Option<u32> {
   let (column, bw, bh) = layout(hwnd);
   if point.y >= 0 && point.y < border(hwnd) {
     return Some(if point.x < bw / 2 { HTTOPLEFT } else if point.x >= column.right - bw / 2 { HTTOPRIGHT } else { HTTOP });
@@ -130,34 +135,50 @@ unsafe extern "system" fn subclass(hwnd: HWND, msg: u32, wparam: WPARAM, lparam:
   let state = &mut *(data as *mut (u32, u32));
   let button = BUTTONS.contains(&(wparam as u32));
   match msg {
-    WM_NCHITTEST => if let Some(code) = hit(hwnd, lparam) { return code as LRESULT },
-    WM_NCMOUSEMOVE => {
+    WM_NCHITTEST => {
+      let mut client = point(lparam);
+      ScreenToClient(hwnd, &mut client);
+      if let Some(code) = hit(hwnd, client) { return code as LRESULT }
+    }
+    WM_NCMOUSEMOVE if state.1 == 0 => {
       let hovered = if button { wparam as u32 } else { 0 };
       if hovered != state.0 {
-        *state = (hovered, if hovered == state.1 { state.1 } else { 0 });
+        state.0 = hovered;
         let mut track = TRACKMOUSEEVENT { cbSize: size_of::<TRACKMOUSEEVENT>() as u32, dwFlags: TME_LEAVE | TME_NONCLIENT, hwndTrack: hwnd, dwHoverTime: 0 };
         TrackMouseEvent(&mut track);
         redraw(hwnd);
       }
     }
-    WM_NCMOUSELEAVE => { *state = (0, 0); redraw(hwnd); }
-    // DefWindowProc would track and draw a classic button; the click is handled here instead.
+    WM_NCMOUSELEAVE if state.1 == 0 => { state.0 = 0; redraw(hwnd); }
+    // DefWindowProc would track and draw a classic button. Like a native button, a press captures the
+    // mouse; it stays armed while held and fires on release over the same button.
     WM_NCLBUTTONDOWN | WM_NCLBUTTONDBLCLK if button => {
-      state.1 = wparam as u32;
+      *state = (wparam as u32, wparam as u32);
+      SetCapture(hwnd);
       redraw(hwnd);
       return 0;
     }
-    WM_NCLBUTTONUP if button => {
-      let command = match (std::mem::take(&mut state.1) == wparam as u32, wparam as u32) {
-        (false, _) => 0,
-        (_, HTMINBUTTON) => SC_MINIMIZE,
-        (_, HTMAXBUTTON) => if IsZoomed(hwnd) != 0 { SC_RESTORE } else { SC_MAXIMIZE },
-        _ => SC_CLOSE,
+    WM_MOUSEMOVE if state.1 != 0 => {
+      state.0 = if hit(hwnd, point(lparam)) == Some(state.1) { state.1 } else { 0 };
+      redraw(hwnd);
+      return 0;
+    }
+    WM_LBUTTONUP if state.1 != 0 => {
+      let pressed = std::mem::take(&mut state.1);
+      state.0 = 0; // hover returns with the next WM_NCMOUSEMOVE
+      ReleaseCapture();
+      let command = match hit(hwnd, point(lparam)) {
+        Some(code) if code != pressed => 0,
+        None => 0,
+        Some(HTMINBUTTON) => SC_MINIMIZE,
+        Some(HTMAXBUTTON) => if IsZoomed(hwnd) != 0 { SC_RESTORE } else { SC_MAXIMIZE },
+        Some(_) => SC_CLOSE,
       };
-      redraw(hwnd);
       if command != 0 { PostMessageW(hwnd, WM_SYSCOMMAND, command as WPARAM, 0); }
+      redraw(hwnd);
       return 0;
     }
+    WM_CAPTURECHANGED if state.1 != 0 => { *state = (0, 0); redraw(hwnd); }
     WM_PAINT | WM_ERASEBKGND | WM_NCACTIVATE | WM_SIZE => {
       let result = DefSubclassProc(hwnd, msg, wparam, lparam);
       if msg == WM_PAINT { paint(hwnd, *state) } else { redraw(hwnd) }

@@ -64,6 +64,8 @@ html, body {
 }
 .tab-new:hover { background: var(--surface); color: var(--text-primary); }
 .tab-new:active, .tab-close:active { background: var(--border); }
-/* Windows: the strip is the title bar row (WebView2 non-client regions: drag, double-click, system menu). */
+/* Windows: the strip is the title bar row (WebView2 non-client regions: drag, double-click, system menu).
+   Its webview is shorter by the top resize border when restored, so the tabs keep their place. */
+.tab-strip.windows { height: 100%; }
 .tab-strip.windows, .tab-strip.windows .tab-list { app-region: drag; }
 .tab-strip.windows .tab, .tab-strip.windows .tab-new { app-region: no-drag; }
