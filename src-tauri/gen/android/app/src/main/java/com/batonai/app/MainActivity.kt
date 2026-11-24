@@ -76,7 +76,7 @@ class MainActivity : TauriActivity() {
     if (Build.VERSION.SDK_INT >= 31) splashScreen.setOnExitAnimationListener { it.remove() }
     // Three-button navigation draws over the page; gesture navigation has no tappable inset, so the page stays edge to edge.
     ViewCompat.setOnApplyWindowInsetsListener(findViewById(android.R.id.content)) { view, insets ->
-      val bar = insets.getInsets(WindowInsetsCompat.Type.tappableElement())
+      val bar = LaunchSkeletonView.navigationPadding(insets)
       view.setPadding(bar.left, 0, bar.right, bar.bottom)
       insets
     }
@@ -104,7 +104,6 @@ class MainActivity : TauriActivity() {
 
   // System Back reaches JS through Tauri's onBackButtonPress; this lets the root page background the app.
   override fun onWebViewCreate(webView: WebView) {
-    webView.setBackgroundColor(launchCanvas)
     releaseSkeleton(webView)
     if (WebViewFeature.isFeatureSupported(WebViewFeature.ALGORITHMIC_DARKENING)) {
       WebSettingsCompat.setAlgorithmicDarkeningAllowed(webView.settings, false)

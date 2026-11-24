@@ -11,6 +11,7 @@ import android.graphics.Shader
 import android.graphics.Typeface
 import android.os.Build
 import android.view.View
+import androidx.core.graphics.Insets
 import androidx.core.graphics.PathParser
 import androidx.core.view.WindowInsetsCompat
 import kotlin.math.ceil
@@ -89,7 +90,10 @@ class LaunchSkeletonView(context: Context, light: Boolean) : View(context) {
       ?.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
     // WebView rounds env(safe-area-inset-top) up to whole CSS px.
     val sat = ceil((insets?.top ?: 0) / d)
-    val vw = width / d
+    // The content view is padded clear of three-button navigation (MainActivity); draw inside the same area.
+    val side = rootWindowInsets?.let { navigationPadding(WindowInsetsCompat.toWindowInsetsCompat(it, this)) }
+    cv.translate((side?.left ?: 0).toFloat(), 0f)
+    val vw = (width - (side?.left ?: 0) - (side?.right ?: 0)) / d
     // Top bar: surface, 44px row under the status bar, 1px inset shadow at the bottom.
     val bar = sat + 44f
     rect(cv, c.elevated, 0f, 0f, vw, bar)
@@ -150,6 +154,10 @@ class LaunchSkeletonView(context: Context, light: Boolean) : View(context) {
   }
 
   companion object {
+    // Tappable insets are zero for gesture navigation; before Android 10 they fall back to the system window insets,
+    // which include the keyboard, so they are capped by the navigation bar.
+    fun navigationPadding(insets: WindowInsetsCompat): Insets =
+      Insets.min(insets.getInsets(WindowInsetsCompat.Type.tappableElement()), insets.getInsets(WindowInsetsCompat.Type.navigationBars()))
     private val LOGO = arrayOf(
       "M535.83872 744.22272A81.92 81.92 0 0 0 634.88 664.10496v-320.1024a81.92 81.92 0 0 0-61.56288-79.36l-143.36-36.7616C378.12224 214.6304 327.68 253.7472 327.68 307.24096v116.5312a20.48 20.48 0 1 0 40.96 0v-116.5312a40.96 40.96 0 0 1 51.13856-39.66976l143.36 36.7616A40.96 40.96 0 0 1 593.92 344.00256v320.1024a40.96 40.96 0 0 1-49.52064 40.05888l-85.46304-18.26816a20.48 20.48 0 0 0-8.56064 40.05888l85.46304 18.26816zM180.96128 285.34784A81.92 81.92 0 0 0 81.92 365.4656v320.1024a81.92 81.92 0 0 0 61.56288 79.33952l143.36 36.7616c51.8144 13.29152 102.27712-25.84576 102.27712-79.33952V628.5312a20.48 20.48 0 1 0-40.96 0v93.77792a40.96 40.96 0 0 1-51.13856 39.66976l-143.36-36.7616A40.96 40.96 0 0 1 122.88 685.568v-320.1024a40.96 40.96 0 0 1 49.52064-40.05888l85.46304 18.24768a20.48 20.48 0 0 0 8.56064-40.05888l-85.46304-18.24768z",
       "M272.708 610.145 488.708 423.145A24 24 0 0 0 457.292 386.855L241.292 573.855A24 24 0 0 0 272.708 610.145Z")
