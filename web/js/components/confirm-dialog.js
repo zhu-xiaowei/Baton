@@ -14,8 +14,7 @@ export function confirmDialog(message, choices = [[false, 'Cancel'], [true, 'Con
       + '<div class="modal-title"></div><div class="modal-actions"></div></div>';
     overlay.querySelector('.modal-title').textContent = message;
     if (detail) overlay.querySelector('.modal-title').insertAdjacentHTML('afterend', '<div class="modal-desc"></div>');
-    // An array is shown one entry per line.
-    if (detail) overlay.querySelector('.modal-desc').append(...[].concat(detail).flatMap((line, i) => (i ? [document.createElement('br'), line] : [line])));
+    if (detail) overlay.querySelector('.modal-desc').textContent = detail;
     const buttons = choices.map(([value, label, primary]) => {
       const button = document.createElement('button');
       button.type = 'button';

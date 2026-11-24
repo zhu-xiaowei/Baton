@@ -109,7 +109,7 @@ async function checkUpdate(force = false) {
     if (!version || version === 'dev' || version === BRIDGE_VERSION || version === skippedVersion) return;
     const busy = busySessions();
     const since = sessionIndex.updatePending?.version === version ? sessionIndex.updatePending.since : Date.now();
-    sessionIndex.updatePending = { version, since, busy }; // the App's Update lists `busy`
+    sessionIndex.updatePending = { version, since };
     if (!force && busy.length) return;
     console.log(`[update] ${BRIDGE_VERSION} → ${version}, updating...`);
     const serverBase = CONFIG.server.replace(/\/$/, '');
