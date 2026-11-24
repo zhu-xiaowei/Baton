@@ -775,6 +775,12 @@ Tauri v2 wraps web/ static frontend as native app, zero web code changes.
   must take `Webview`, not `WebviewWindow` (that extractor fails once a window has children).
   Rust owns tab order/selection/titles and pushes `macos-tabs` to the strip; pages report titles
   from `updateBreadcrumb`. Preview tunnels and native preview views are owned per webview label.
+- Windows tabs share `macos_tabs.rs` and the same commands/pages: the native title bar stays (snap
+  layouts, min/max/close), the strip is the first 41px row of the client area, and every resize or
+  DPI change re-lays out the strip and all tab webviews in physical pixels (no autoresizing on
+  Windows). There is no menu bar, so Ctrl+T/W, Ctrl+Tab, Ctrl+1–9 live in `macos-tabs.js`.
+  `appearance.rs` sets per-webview backgrounds, since `webview_windows()` is empty once a window
+  has children.
 
 ### Targets
 - Android: primary

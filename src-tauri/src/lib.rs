@@ -1,4 +1,4 @@
-// Multi-window and tabs are macOS-only. Windows/Linux are intentionally left single-window
+// Multi-window is macOS-only; tabs are macOS and Windows. Linux is intentionally left single-window
 // (title_bar_style/hidden_title below are macOS-only builder methods anyway).
 mod preview_proxy;
 mod macos_zoom;
@@ -148,6 +148,14 @@ pub fn run() {
           macos_tabs::handle_menu(app, event.id().as_ref());
         });
 
+        if let Some(main) = app.get_webview_window("main") {
+          macos_tabs::attach(&main.as_ref().window(), main.as_ref())?;
+        }
+      }
+      // Windows keeps its native title bar and menu-less window; the strip sits below it.
+      #[cfg(target_os = "windows")]
+      {
+        use tauri::Manager;
         if let Some(main) = app.get_webview_window("main") {
           macos_tabs::attach(&main.as_ref().window(), main.as_ref())?;
         }

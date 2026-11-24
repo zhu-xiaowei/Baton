@@ -1,5 +1,6 @@
-// macOS tabs: each window holds a tab-strip webview in the titlebar row plus one content
-// webview per tab. Hidden tabs keep their own page, draft, navigation and connection.
+// macOS and Windows tabs: each window holds a tab-strip webview (macOS: in the titlebar row;
+// Windows: below the native title bar) plus one content webview per tab. Hidden tabs keep their
+// own page, draft, navigation and connection.
 use serde::Serialize;
 
 #[derive(Clone, Serialize)]
@@ -68,10 +69,10 @@ pub async fn macos_tabs_open_session(webview: tauri::Webview, session: String, t
   imp::open_session(&webview, &session, &target)
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 mod imp {
   use super::TabsState;
-  const UNSUPPORTED: &str = "Tabs are only available on macOS";
+  const UNSUPPORTED: &str = "Tabs are only available on macOS and Windows";
   pub fn state(_: &tauri::Webview) -> Result<TabsState, String> { Err(UNSUPPORTED.into()) }
   pub fn new_tab(_: &tauri::Webview) -> Result<(), String> { Err(UNSUPPORTED.into()) }
   pub fn select(_: &tauri::Webview, _: &str) -> Result<(), String> { Err(UNSUPPORTED.into()) }
@@ -84,18 +85,24 @@ mod imp {
   pub fn open_session(_: &tauri::Webview, _: &str, _: &serde_json::Value) -> Result<(), String> { Err(UNSUPPORTED.into()) }
 }
 
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+pub use imp::attach;
 #[cfg(target_os = "macos")]
-pub use imp::{attach, handle_menu, setup_menu};
+pub use imp::{handle_menu, setup_menu};
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 mod imp {
   use super::{Tab, TabsState};
+  #[cfg(target_os = "macos")]
   use objc2::{msg_send, sel};
+  #[cfg(target_os = "macos")]
   use objc2_app_kit::{NSAutoresizingMaskOptions, NSView, NSWindow};
+  #[cfg(target_os = "macos")]
   use objc2_foundation::{NSObjectProtocol, NSPoint, NSRect, NSSize};
   use std::collections::HashMap;
   use std::sync::atomic::{AtomicUsize, Ordering};
   use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
+  #[cfg(target_os = "macos")]
   use tauri::menu::{Menu, MenuItemBuilder, MenuItemKind, PredefinedMenuItem, Submenu, WINDOW_SUBMENU_ID};
   use tauri::{
     AppHandle, Emitter, EventTarget, LogicalPosition, LogicalSize, Manager, Webview, WebviewBuilder,
@@ -149,6 +156,7 @@ mod imp {
   // AppKit's frame view supports a custom titlebar height and lays the traffic lights out
   // within it. Giving it the strip height makes AppKit itself place them on the strip, so
   // nothing moves them afterwards.
+  #[cfg(target_os = "macos")]
   fn titlebar_follows_strip(window: &Window) {
     let Ok(ptr) = window.ns_window() else { return };
     let ptr = ptr as usize;
@@ -162,6 +170,7 @@ mod imp {
 
   // Wry pins child webviews to the top-left; AppKit autoresizing keeps the strip and content
   // aligned during live resize. Wry's parent view is not flipped, so y grows upwards.
+  #[cfg(target_os = "macos")]
   fn place(webview: &Webview, strip: bool) {
     let _ = webview.with_webview(move |platform| unsafe {
       let Some(view) = (platform.inner() as *const NSView).as_ref() else { return };
@@ -177,8 +186,30 @@ mod imp {
     });
   }
 
+  // Windows has no autoresizing: the strip and every tab are laid out again on each resize.
+  #[cfg(target_os = "windows")]
+  fn place(webview: &Webview, strip: bool) {
+    let window = webview.window();
+    let (Ok(size), Ok(scale)) = (window.inner_size(), window.scale_factor()) else { return };
+    if size.width == 0 || size.height == 0 { return; } // minimized
+    let top = ((STRIP_HEIGHT * scale).round() as u32).min(size.height);
+    let (y, height) = if strip { (0, top) } else { (top, size.height - top) };
+    let _ = webview.set_bounds(tauri::Rect {
+      position: tauri::PhysicalPosition::new(0, y as i32).into(),
+      size: tauri::PhysicalSize::new(size.width, height.max(1)).into(),
+    });
+  }
+
+  #[cfg(target_os = "windows")]
+  fn layout(window: &Window) {
+    let Ok(tabs) = with_tabs(window.label(), |tabs| tabs.order.clone()) else { return };
+    if let Some(strip) = window.app_handle().get_webview(&strip_label(window.label())) { place(&strip, true); }
+    for tab in tabs.iter().filter_map(|tab| window.app_handle().get_webview(tab)) { place(&tab, false); }
+  }
+
   fn release(app: &AppHandle, tab: &str) {
     crate::preview_proxy::release_owner(Arc::clone(app.state::<Arc<crate::preview_proxy::PreviewProxy>>().inner()), tab.to_string());
+    #[cfg(target_os = "macos")]
     tauri_plugin_preview_webview::release_owner(app, tab);
   }
 
@@ -205,9 +236,14 @@ mod imp {
       fullscreen: false,
     });
     let owner = window.clone();
+    #[cfg(target_os = "macos")]
     titlebar_follows_strip(window);
     window.on_window_event(move |event| match event {
+      #[cfg(target_os = "windows")]
+      tauri::WindowEvent::ScaleFactorChanged { .. } => layout(&owner),
       tauri::WindowEvent::Resized(_) => {
+        #[cfg(target_os = "windows")]
+        layout(&owner);
         let fullscreen = owner.is_fullscreen().unwrap_or(false);
         let changed = with_tabs(owner.label(), |tabs| std::mem::replace(&mut tabs.fullscreen, fullscreen) != fullscreen);
         if changed.unwrap_or(false) { broadcast(&owner); }
@@ -280,10 +316,12 @@ mod imp {
     let app = window.app_handle();
     if let Some(next) = app.get_webview(id) {
       next.show().map_err(|e| e.to_string())?;
+      #[cfg(target_os = "macos")]
       tauri_plugin_preview_webview::set_owner_visible(app, id, true);
       let _ = next.set_focus();
     }
     if previous != id {
+      #[cfg(target_os = "macos")]
       tauri_plugin_preview_webview::set_owner_visible(app, &previous, false);
       if let Some(old) = app.get_webview(&previous) { let _ = old.hide(); }
     }
@@ -376,6 +414,7 @@ mod imp {
     Ok(())
   }
 
+  #[cfg(target_os = "macos")]
   pub fn setup_menu(app: &tauri::App, menu: &Menu<tauri::Wry>, file: &Submenu<tauri::Wry>) -> tauri::Result<()> {
     // Cmd+W closes a tab, so drop the predefined Close Window items that also claim it.
     for submenu in [Some(file.clone()), menu.get(WINDOW_SUBMENU_ID).and_then(|item| item.as_submenu().cloned())]
@@ -395,6 +434,7 @@ mod imp {
   }
 
   // Menu events run on the main thread; tab work is dispatched so it never blocks AppKit.
+  #[cfg(target_os = "macos")]
   pub fn handle_menu(app: &AppHandle, id: &str) {
     if !matches!(id, "macos_tab_new" | "macos_tab_close" | "macos_window_close") {
       return;
