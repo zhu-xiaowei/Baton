@@ -14,7 +14,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::*;
 const BUTTONS: [u32; 3] = [HTMINBUTTON, HTMAXBUTTON, HTCLOSE];
 // Strip and glyph colours (0x00BBGGRR) from the app's appearance.
 static COLORS: Mutex<(u32, u32)> = Mutex::new((0x090401, 0xf3ede6));
-// Per window: hovered and pressed hit-test codes.
+// Per window: hovered and pressed hit-test codes, and the window.
 type State = (u32, u32, tauri::Window);
 
 // Like Windows Terminal: 46px wide, the full strip height, so the glyphs centre on the tab labels.
@@ -44,12 +44,10 @@ pub fn set_colors(app: &tauri::AppHandle, light: bool, strip: tauri::webview::Co
 
 pub fn attach(window: &tauri::Window) {
   let Ok(hwnd) = window.hwnd() else { return };
-  let state: Box<State> = Box::new((0, 0, window.clone()));
   unsafe {
-    SetWindowSubclass(hwnd.0 as HWND, Some(subclass), 1, Box::into_raw(state) as usize);
+    SetWindowSubclass(hwnd.0 as HWND, Some(subclass), 1, Box::into_raw(Box::<State>::new((0, 0, window.clone()))) as usize);
     // Rounded corners like Windows 11's own frames (Windows 10 rejects the attribute).
-    let round = DWMWCP_ROUND;
-    DwmSetWindowAttribute(hwnd.0 as HWND, DWMWA_WINDOW_CORNER_PREFERENCE as u32, &round as *const i32 as _, 4);
+    DwmSetWindowAttribute(hwnd.0 as HWND, DWMWA_WINDOW_CORNER_PREFERENCE as u32, &DWMWCP_ROUND as *const i32 as _, 4);
   }
 }
 
@@ -100,8 +98,8 @@ unsafe fn paint(hwnd: HWND, hovered: u32, pressed: u32) {
   let mut glyphs = font("Segoe Fluent Icons");
   let previous = SelectObject(hdc, glyphs);
   let mut name = [0u16; 32];
-  let len = GetTextFaceW(hdc, 32, name.as_mut_ptr()) as usize; // includes the terminating NUL
-  if String::from_utf16_lossy(&name[..len.saturating_sub(1)]) != "Segoe Fluent Icons" {
+  GetTextFaceW(hdc, 32, name.as_mut_ptr());
+  if String::from_utf16_lossy(&name).trim_end_matches('\0') != "Segoe Fluent Icons" {
     SelectObject(hdc, previous);
     DeleteObject(glyphs);
     glyphs = font("Segoe MDL2 Assets");
