@@ -3,6 +3,7 @@
 // HTMAXBUTTON gives Windows 11 its Snap Layouts flyout. The strip webview stops short of this column.
 use std::sync::Mutex;
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
+use windows_sys::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND};
 use windows_sys::Win32::Graphics::Gdi::*;
 use windows_sys::Win32::UI::HiDpi::{GetDpiForWindow, GetSystemMetricsForDpi};
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
@@ -47,7 +48,13 @@ pub fn set_colors(app: &tauri::AppHandle, light: bool, strip: &str) {
 pub fn attach(window: &tauri::Window) {
   let Ok(hwnd) = window.hwnd() else { return };
   let state = Box::into_raw(Box::new((0u32, 0u32))) as usize; // (hovered, pressed) hit-test codes
-  unsafe { SetWindowSubclass(hwnd.0 as HWND, Some(subclass), 1, state) };
+  unsafe {
+    SetWindowSubclass(hwnd.0 as HWND, Some(subclass), 1, state);
+    // Windows 11 leaves a frameless window's corners square; ask for the rounded ones of its own frames
+    // (fails harmlessly on Windows 10).
+    let round = DWMWCP_ROUND;
+    DwmSetWindowAttribute(hwnd.0 as HWND, DWMWA_WINDOW_CORNER_PREFERENCE as u32, &round as *const i32 as _, 4);
+  }
 }
 
 // The left, right and bottom resize borders are tao's invisible frame. The top one is a row of the
