@@ -51,7 +51,7 @@ if [ ! -f "$(dirname "${BASH_SOURCE[0]:-$0}")/../$SELF_MARKER" ] 2>/dev/null; th
   CLONE_DIR=$(mktemp -d)
   trap 'rm -rf "$CLONE_DIR"' EXIT
   echo "Cloning baton..."
-  if ! git clone --depth 1 --quiet ${DEFAULT_REF:+--branch "$DEFAULT_REF"} "$REPO_URL" "$CLONE_DIR/baton"; then
+  if ! git -c advice.detachedHead=false clone --depth 1 --quiet ${DEFAULT_REF:+--branch "$DEFAULT_REF"} "$REPO_URL" "$CLONE_DIR/baton"; then
     echo "${C_RED}ERROR: Failed to clone repository${C_RESET}"
     exit 1
   fi
