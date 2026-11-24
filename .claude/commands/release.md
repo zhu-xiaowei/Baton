@@ -10,8 +10,10 @@ version changes, the full release notes and the CI result. Once the user
 confirms, or immediately with `--auto`, run steps 3–10 without further prompts.
 On a failure, stop and report it. Every step first checks whether it is already done and
 then reuses its result, so re-running the same command resumes the release.
-Work in a fresh clone on `main` (packaging needs a real branch that matches
-`origin`, and `main` is checked out elsewhere); never force-push.
+Work in a clone on `main` at `../baton-release-<version>` next to the main
+checkout, reused when re-running (packaging needs a real branch that matches
+`origin`, and `main` is checked out elsewhere); copy the main checkout's
+`.env.local` into it for `/testflight`. Never force-push.
 HarmonyOS (DevEco) is not part of this flow.
 
 1. **Prepare** branch `release/<version>` (reuse it and its PR if present). The
@@ -54,7 +56,8 @@ HarmonyOS (DevEco) is not part of this flow.
    gh release edit v<version> --draft=false --prerelease=false --latest
    ```
    An existing draft or Pre-release of this version (e.g. v2.0.0, tagged on an
-   older commit) is first removed with `gh release delete v<version> --cleanup-tag -y`.
+   older commit) is first removed with `gh release delete v<version> -y`, plus
+   `--cleanup-tag` when its tag exists.
 8. **Downloads:** `node scripts/publish-downloads.mjs v<version>`.
 9. **iOS:** run `/testflight` from the updated `main`.
 10. **Verify:** `releases/latest/download/install.sh` contains

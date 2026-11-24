@@ -35,7 +35,7 @@ Update the download links and feature descriptions in all three root READMEs,
 and prepare English GitHub Release notes with changes and upgrade instructions.
 Upload `Baton.deb` and `Baton.deb.sha256` alongside the other installers so the
 Linux download links in all three READMEs resolve to published release assets.
-Draft notes can be kept locally in `docs/releases/<version>.md`.
+Keep draft notes in the ignored `release/<version>/notes.md`; an untracked file elsewhere blocks packaging.
 Update version-specific download QR codes such as `docs/assets/baton_android.avif`,
 and decode the generated image to verify that it points to the new release.
 Keep previous release notes, protocol examples, test fixtures, and dependency
