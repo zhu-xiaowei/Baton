@@ -164,7 +164,10 @@
       // VitePress). Inline code spans may sit inside: **结论：做 `pair`。**确认
       emStrong: function (src, masked, prev) {
         var match = /^\*\*(?![\s*])((?:[^*\\`_<>\[\]\r\n]|`[^`\r\n]+`)+?)\*\*/u.exec(src);
-        if (!match || /\s$/.test(match[1]) || !cjkEdge(match[1][0], prev) || !cjkEdge(match[1].slice(-1), src[match[0].length])) return false;
+        if (!match) return false;
+        // A longer * run on either side is marked's own case; characters are code points (emoji, CJK Extension B).
+        var inner = Array.from(match[1]), next = Array.from(src.slice(match[0].length, match[0].length + 2))[0];
+        if (prev === '*' || next === '*' || /\s$/.test(match[1]) || !cjkEdge(inner[0], prev) || !cjkEdge(inner[inner.length - 1], next)) return false;
         return {
           type: 'strong', raw: match[0], text: match[1],
           tokens: this.lexer.inlineTokens(match[1]),
