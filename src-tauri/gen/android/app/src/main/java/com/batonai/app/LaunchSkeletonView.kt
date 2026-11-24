@@ -94,6 +94,8 @@ class LaunchSkeletonView(context: Context, light: Boolean) : View(context) {
     val side = rootWindowInsets?.let { navigationPadding(WindowInsetsCompat.toWindowInsetsCompat(it, this)) }
     cv.translate((side?.left ?: 0).toFloat(), 0f)
     val vw = (width - (side?.left ?: 0) - (side?.right ?: 0)) / d
+    // The skeleton is the phone portrait layout (max-width: 480px); landscape and wide layouts differ, so they get the canvas only.
+    if (vw > 480f || width > height) return
     // Top bar: surface, 44px row under the status bar, 1px inset shadow at the bottom.
     val bar = sat + 44f
     rect(cv, c.elevated, 0f, 0f, vw, bar)

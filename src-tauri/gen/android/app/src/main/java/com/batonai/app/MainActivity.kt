@@ -77,7 +77,9 @@ class MainActivity : TauriActivity() {
     // Three-button navigation draws over the page; gesture navigation has no tappable inset, so the page stays edge to edge.
     ViewCompat.setOnApplyWindowInsetsListener(findViewById(android.R.id.content)) { view, insets ->
       val bar = LaunchSkeletonView.navigationPadding(insets)
-      view.setPadding(bar.left, 0, bar.right, bar.bottom)
+      // Before Android 11 an edge-to-edge window is not resized for the keyboard; later WebViews shrink their own viewport.
+      val ime = if (Build.VERSION.SDK_INT < 30) insets.getInsets(WindowInsetsCompat.Type.ime()).bottom else 0
+      view.setPadding(bar.left, 0, bar.right, maxOf(bar.bottom, ime))
       insets
     }
     // Above the content view: Wry replaces the content view when its WebView is ready.
