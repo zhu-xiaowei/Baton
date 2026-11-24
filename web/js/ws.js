@@ -129,6 +129,16 @@ function followBottomAfterLayout() {
 }
 
 if (window.visualViewport && _isMobile) {
+  var _chromeShown = 0; // top bar + breadcrumb height translated off screen
+  var _chromeTarget = 0;
+  var _chromeSlide = null;
+  var applyMobileViewport = function () {
+    var vv = window.visualViewport;
+    document.body.style.bottom = 'auto';
+    document.body.style.top = layoutPixels(_isIOS ? vv.offsetTop : 0) + 'px';
+    document.body.style.height = (layoutPixels(vv.height) + _chromeShown) + 'px';
+    document.body.style.transform = _chromeShown ? 'translateY(-' + _chromeShown + 'px)' : '';
+  };
   var syncMobileViewport = function () {
     var vv = window.visualViewport;
     // A native page zoom or rotation changes viewport units, unlike a keyboard.
@@ -169,9 +179,7 @@ if (window.visualViewport && _isMobile) {
       });
     }
     var chromeHeight = 0;
-    // The centered new-session layout already follows the viewport height.
-    // Hiding chrome at the keyboard threshold would make its hero jump.
-    if (_isIOS && kbUp && !document.body.classList.contains('new-session')
+    if (_isIOS && kbUp
       && !document.querySelector('#projectTerminalPage, #gitStatusPage:not([hidden]), #internalBrowserPage:not([hidden])')) {
       var topBar = document.querySelector('.top-bar');
       var breadcrumb = document.getElementById('breadcrumb');
@@ -180,10 +188,25 @@ if (window.visualViewport && _isMobile) {
         chromeHeight += breadcrumb.offsetHeight;
       }
     }
-    document.body.style.bottom = 'auto';
-    document.body.style.top = layoutPixels(_isIOS ? vv.offsetTop : 0) + 'px';
-    document.body.style.height = (layoutPixels(vv.height) + chromeHeight) + 'px';
-    document.body.style.transform = chromeHeight ? 'translateY(-' + chromeHeight + 'px)' : '';
+    if (chromeHeight !== _chromeTarget) {
+      _chromeTarget = chromeHeight;
+      cancelAnimationFrame(_chromeSlide);
+      _chromeSlide = null;
+      // Hiding the chrome at once would make the centered New Session hero jump, so slide it.
+      if (document.body.classList.contains('new-session')) {
+        var from = _chromeShown, start = performance.now();
+        var slide = function (now) {
+          var t = Math.max(0, Math.min(1, (now - start) / 250));
+          _chromeShown = from + (chromeHeight - from) * (1 - Math.pow(1 - t, 3));
+          _chromeSlide = t < 1 ? requestAnimationFrame(slide) : null;
+          applyMobileViewport();
+        };
+        _chromeSlide = requestAnimationFrame(slide);
+      } else {
+        _chromeShown = chromeHeight;
+      }
+    }
+    applyMobileViewport();
     if (_isIOS) {
       var bar = document.getElementById('input-bar');
       if (bar) bar.classList.toggle('kb-up', kbUp);
