@@ -145,6 +145,13 @@
     if (codeEl) codeEl.innerHTML = mermaidCodeHtml(code);
   };
 
+  // A delimiter whose inner side is non-CJK punctuation needs whitespace, punctuation or CJK outside it.
+  var CJK = /[\p{sc=Han}\p{sc=Hiragana}\p{sc=Katakana}\p{sc=Hangul}\p{sc=Bopomofo}\u3000-\u303f\uff00-\uffef]/u;
+  var PUNCT = /[\p{P}\p{S}]/u;
+  function cjkEdge(inner, outer) {
+    return !PUNCT.test(inner) || CJK.test(inner) || !outer || /\s/.test(outer) || PUNCT.test(outer) || CJK.test(outer);
+  }
+
   marked.use({
     tokenizer: {
       // GFM autolinks run to the next space. Like VS Code, CJK punctuation also ends the link.
@@ -153,10 +160,11 @@
         var stop = src.search(/[、。｡､，．：；‘〈「『〔（［｛｢｣｝］）〕』」〉’｀～…]/);
         return stop < 0 ? false : Object.getPrototypeOf(this).url.call(this, src.slice(0, stop));
       },
-      emStrong: function (src) {
-        // Inline code spans may sit inside the label: **结论：做 `pair`。**确认
-        var match = /^\*\*((?=[\p{L}\p{N}`])(?:[^*\\`_<>\[\]\r\n]|`[^`\r\n]+`)*[，。！？：；、）】》」』])\*\*(?=[\p{L}\p{N}])/u.exec(src);
-        if (!match) return false;
+      // CommonMark misses **…** beside CJK text: the CJK-friendly amendment (tats-u/markdown-cjk-friendly, as in
+      // VitePress). Inline code spans may sit inside: **结论：做 `pair`。**确认
+      emStrong: function (src, masked, prev) {
+        var match = /^\*\*(?![\s*])((?:[^*\\`_<>\[\]\r\n]|`[^`\r\n]+`)+?)\*\*/u.exec(src);
+        if (!match || /\s$/.test(match[1]) || !cjkEdge(match[1][0], prev) || !cjkEdge(match[1].slice(-1), src[match[0].length])) return false;
         return {
           type: 'strong', raw: match[0], text: match[1],
           tokens: this.lexer.inlineTokens(match[1]),
