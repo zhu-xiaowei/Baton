@@ -5,7 +5,8 @@ allowed-tools: Bash(./scripts/package-all.sh), Bash(bash scripts/package-all.sh)
 
 Build the release packages for the current `package.json` version and copy them
 into `release/<version>/` as `Baton.apk`, `Baton.dmg`, `Baton.exe`, and
-`Baton.deb` with its verified `Baton.deb.sha256`.
+`Baton.deb` with its verified `Baton.deb.sha256`, plus the server `install.sh`
+pinned to `v<version>`.
 
 Run the packaging script (it reads the version itself and collects all four
 platforms independently):

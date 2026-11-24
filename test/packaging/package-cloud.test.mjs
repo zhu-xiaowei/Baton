@@ -15,6 +15,8 @@ function fixture(t) {
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   fs.mkdirSync(path.join(root, 'scripts'));
   fs.mkdirSync(path.join(root, 'src-tauri'));
+  fs.mkdirSync(path.join(root, 'server'));
+  fs.writeFileSync(path.join(root, 'server/install.sh'), 'REPO=x\nDEFAULT_REF=""\nmain\n');
   fs.mkdirSync(path.join(root, 'bin'));
   fs.copyFileSync(source, path.join(root, 'scripts/package-cloud.mjs'));
   fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ version: '1.2.3' }));
@@ -88,6 +90,7 @@ test('cloud package collects four artifacts from the verified run', (t) => {
     assert.equal(fs.readFileSync(path.join(root, 'release/1.2.3', file), 'utf8'), `fixture-${file}`);
   }
   assert.ok(fs.existsSync(path.join(root, 'release/1.2.3/Baton.deb.sha256')));
+  assert.equal(fs.readFileSync(path.join(root, 'release/1.2.3/install.sh'), 'utf8'), 'REPO=x\nDEFAULT_REF="v1.2.3"\nmain\n');
   assert.match(result.stdout, /SUMMARY \(v1\.2\.3\)/);
 });
 
@@ -135,6 +138,7 @@ test('iOS dev package dispatches alone without release secrets', (t) => {
   assert.ok(JSON.parse(fs.readFileSync(path.join(root, 'dispatch-args'), 'utf8')).includes('package=dev-ios'));
   assert.ok(!fs.existsSync(path.join(root, 'secret-query')));
   assert.ok(result.stdout.includes('release/dev/aaaaaaaaaaaa/Baton.ipa'));
+  assert.ok(!fs.existsSync(path.join(root, 'release/dev', sha.slice(0, 12), 'install.sh')));
 });
 
 test('Windows release package dispatches alone', (t) => {

@@ -1,6 +1,6 @@
 # Release packages
 
-Use Claude Code `/package`, Codex `$package`, or `npm run package` from the repository root. Cloud packaging collects `release/<package.json version>/Baton.apk`, `Baton.dmg`, `Baton.exe`, `Baton.deb`, and `Baton.deb.sha256`. iOS releases use the separate TestFlight workflow.
+Use Claude Code `/package`, Codex `$package`, or `npm run package` from the repository root. Cloud packaging collects `release/<package.json version>/Baton.apk`, `Baton.dmg`, `Baton.exe`, `Baton.deb`, `Baton.deb.sha256`, and the server `install.sh` pinned to `v<version>`. iOS releases use the separate TestFlight workflow.
 
 On macOS the command uses the local Android, macOS, and Windows build scripts, then builds Linux through GitHub Actions. On Linux it dispatches `.github/workflows/package.yml`, which builds on Android/Linux, macOS, and Windows runners, then downloads each successful artifact. The current Linux host has no Rust or Android SDK, and the Windows release script uses macOS tool paths; those local builds cannot run as written on this host.
 
@@ -43,8 +43,9 @@ Before packaging, merge the release preparation into `main` and wait for
 production CI to pass for the exact commit being packaged. The versioned
 `release/<version>` branch has no production-CI exemption. Package the resulting
 `main` commit with `npm run package`, then publish the `v<version>` GitHub release
-with `Baton.apk`, `Baton.dmg`, `Baton.exe`, `Baton.deb`, and `Baton.deb.sha256`
-from `release/<version>/`. The README
+with `Baton.apk`, `Baton.dmg`, `Baton.exe`, `Baton.deb`, `Baton.deb.sha256`, and `install.sh`
+from `release/<version>/`. The README server command downloads `install.sh` from the Latest
+release, so self-hosted installs only ever clone a published tag. The README
 download links become available once those assets are published. iOS uses the
 separate TestFlight workflow; HarmonyOS requires its own DevEco build.
 
