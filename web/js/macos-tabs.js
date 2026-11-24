@@ -17,14 +17,16 @@ function invoke(command, args) {
 }
 
 // Shortcuts that the macOS menu cannot express reliably (digits, Shift+brackets, Ctrl+Tab).
-// Windows has no menu: Ctrl takes Cmd's place, and Ctrl+T / Ctrl+W are handled here too.
+// Windows has no menu: Ctrl takes Cmd's place, and Ctrl+T / Ctrl+W are handled here too, except in
+// the terminal (readline keys). Letters follow the layout; non-Latin layouts use the key position.
 export function tabShortcut(event, windows = false) {
   if (event.isComposing || event.defaultPrevented || event.altKey) return null;
   if (event.ctrlKey && !event.metaKey && event.key === 'Tab') {
     return ['macos_tabs_step', { delta: event.shiftKey ? -1 : 1 }];
   }
   if (windows ? !event.ctrlKey || event.metaKey : !event.metaKey || event.ctrlKey) return null;
-  const letter = windows && !event.shiftKey && event.key?.toLowerCase();
+  const letter = windows && !event.shiftKey && !event.target?.closest?.('.xterm')
+    && (/^[a-z]$/i.test(event.key) ? event.key.toLowerCase() : /^Key([A-Z])$/.exec(event.code)?.[1].toLowerCase());
   if (letter === 't') return ['macos_tabs_new'];
   if (letter === 'w') return ['macos_tabs_close'];
   if (!windows && event.shiftKey && (event.code === 'BracketRight' || event.code === 'BracketLeft')) {

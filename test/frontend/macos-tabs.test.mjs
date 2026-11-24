@@ -24,9 +24,12 @@ test('Windows uses Ctrl for new, close and digit tab shortcuts', () => {
   const ctrl = (key, code = '', extra = {}) => tabShortcut({ key, code, ctrlKey: true, ...extra }, true);
   assert.deepEqual(ctrl('t'), ['macos_tabs_new']);
   assert.deepEqual(ctrl('W'), ['macos_tabs_close']);
+  assert.deepEqual(ctrl('е', 'KeyT'), ['macos_tabs_new']);
   assert.deepEqual(ctrl('1', 'Digit1'), ['macos_tabs_select_index', { index: 0 }]);
   assert.deepEqual(ctrl('Tab', '', { shiftKey: true }), ['macos_tabs_step', { delta: -1 }]);
-  for (const other of [ctrl('z'), ctrl('t', 'KeyT', { shiftKey: true }), ctrl('w', 'KeyW', { altKey: true }),
+  const terminal = { closest: selector => selector === '.xterm' };
+  for (const other of [ctrl('z', 'KeyW'), ctrl('w', 'KeyW', { target: terminal }), ctrl('t', 'KeyT', { shiftKey: true }),
+    ctrl('w', 'KeyW', { altKey: true }),
     tabShortcut({ key: 't', code: 'KeyT', metaKey: true }, true), tabShortcut({ key: 'w', code: 'KeyW', ctrlKey: true })]) {
     assert.equal(other, null);
   }
