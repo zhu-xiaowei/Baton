@@ -6,7 +6,7 @@ use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM}
 use windows_sys::Win32::Graphics::Gdi::*;
 use windows_sys::Win32::UI::HiDpi::{GetDpiForWindow, GetSystemMetricsForDpi};
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
-  GetActiveWindow, ReleaseCapture, SetCapture, TrackMouseEvent, TME_LEAVE, TME_NONCLIENT, TRACKMOUSEEVENT,
+  ReleaseCapture, SetCapture, TrackMouseEvent, TME_LEAVE, TME_NONCLIENT, TRACKMOUSEEVENT,
 };
 use windows_sys::Win32::UI::Shell::{DefSubclassProc, SetWindowSubclass};
 use windows_sys::Win32::UI::WindowsAndMessaging::*;
@@ -84,7 +84,7 @@ unsafe fn hit(hwnd: HWND, point: POINT) -> Option<u32> {
 unsafe fn paint(hwnd: HWND, (hovered, pressed): (u32, u32)) {
   let (column, bw, bh) = layout(hwnd);
   let (strip, fg) = *COLORS.lock().unwrap_or_else(|e| e.into_inner());
-  let fg = if GetActiveWindow() == hwnd { fg } else { mix(strip, fg, 0.45) };
+  let fg = if GetForegroundWindow() == hwnd { fg } else { mix(strip, fg, 0.45) };
   let hdc = GetDC(hwnd);
   let fill = |rect: &RECT, color: u32| { let brush = CreateSolidBrush(color); FillRect(hdc, rect, brush); DeleteObject(brush); };
   fill(&RECT { top: bh, ..column }, strip);
@@ -179,7 +179,7 @@ unsafe extern "system" fn subclass(hwnd: HWND, msg: u32, wparam: WPARAM, lparam:
       return 0;
     }
     WM_CAPTURECHANGED if state.1 != 0 => { *state = (0, 0); redraw(hwnd); }
-    WM_PAINT | WM_ERASEBKGND | WM_NCACTIVATE | WM_SIZE => {
+    WM_PAINT | WM_ERASEBKGND | WM_NCACTIVATE | WM_ACTIVATE | WM_SIZE => {
       let result = DefSubclassProc(hwnd, msg, wparam, lparam);
       if msg == WM_PAINT { paint(hwnd, *state) } else { redraw(hwnd) }
       return result;
