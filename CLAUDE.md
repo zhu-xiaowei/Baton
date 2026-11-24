@@ -779,14 +779,16 @@ Tauri v2 wraps web/ static frontend as native app, zero web code changes.
   (`tauri.windows.conf.json`, tao keeps the caption styles, shadow and maximized work-area fit); the
   41px strip is the title bar row, an `app-region: drag` WebView2 non-client region (drag, Aero snap,
   double-click, system menu). The caption buttons are not in the webview: `windows_caption.rs` draws
-  them in a 138px column of the top-level window that the strip leaves free and answers
+  them (46px × the strip height, like Windows Terminal) in a 138px column of the top-level window that the strip leaves free and answers
   `WM_NCHITTEST` with HTMINBUTTON/HTMAXBUTTON/HTCLOSE, because only a top-level HTMAXBUTTON gives
   Windows 11 Snap Layouts (a WebView2 child HWND is another process). Every resize or DPI change
   re-lays out the strip and all tab webviews in physical pixels (no autoresizing on Windows). The
   top resize edge is a `SM_CYFRAME` row of the window above the strip (none when maximized): Tauri's
   resize-border child is not created for these windows. There is no menu bar, so Ctrl+T/W, Ctrl+Tab, Ctrl+1–9 live in `macos-tabs.js`.
   `appearance.rs` sets per-webview backgrounds, since `webview_windows()` is empty once a window
-  has children.
+  has children. When the window itself takes focus (`WM_SETFOCUS`: Alt+Tab, taskbar, launch) it
+  focuses the selected tab, as wry only forwards it to `main`; Tauri's `Focused(true)` is unsuitable
+  (it also fires for child webviews and loops). The window asks for `DWMWCP_ROUND` corners.
 
 ### Targets
 - Android: primary
