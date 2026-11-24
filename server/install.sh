@@ -2,7 +2,7 @@
 # Baton Server — one-command deploy
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/agentbaton/baton/main/server/install.sh | bash
+#   curl -fsSL https://github.com/agentbaton/baton/releases/latest/download/install.sh | bash
 #   curl ... | bash -s -- --region us-west-2
 #   ./install.sh                                 # from cloned repo
 #   ./install.sh --region us-west-2
@@ -28,6 +28,8 @@ trap 'rc=$?; echo ""; echo "${C_RED}ERROR: install.sh failed at line $LINENO (ex
 
 # ===== Self-bootstrap: if not inside the repo, clone it first =====
 REPO_URL="https://github.com/agentbaton/baton.git"
+# Release asset copies pin this to their tag (scripts/package-cloud.mjs); empty = default branch
+DEFAULT_REF=""
 SELF_MARKER="server/template/Baton.template"
 
 if [ ! -f "$(dirname "${BASH_SOURCE[0]:-$0}")/../$SELF_MARKER" ] 2>/dev/null; then
@@ -49,7 +51,7 @@ if [ ! -f "$(dirname "${BASH_SOURCE[0]:-$0}")/../$SELF_MARKER" ] 2>/dev/null; th
   CLONE_DIR=$(mktemp -d)
   trap 'rm -rf "$CLONE_DIR"' EXIT
   echo "Cloning baton..."
-  if ! git clone --depth 1 --quiet "$REPO_URL" "$CLONE_DIR/baton"; then
+  if ! git clone --depth 1 --quiet ${DEFAULT_REF:+--branch "$DEFAULT_REF"} "$REPO_URL" "$CLONE_DIR/baton"; then
     echo "${C_RED}ERROR: Failed to clone repository${C_RESET}"
     exit 1
   fi
