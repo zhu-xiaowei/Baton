@@ -261,7 +261,11 @@ mod imp {
       tabs.order.iter().find(|tab| tabs.sessions.get(*tab).map(String::as_str) == Some(session)).cloned()
     })?;
     match showing {
-      Some(id) => show(&window, &id),
+      // That tab opens the exact Session (a thread of its root) unless it shows it already.
+      Some(id) => {
+        let _ = window.emit_to(EventTarget::webview(&id), "macos-tabs-notify", target);
+        show(&window, &id)
+      }
       // Re-serialized, so the page gets a JSON literal and nothing else.
       None => open(&window, &format!("window.__BATON_NOTIFY__ = {};", serde_json::to_string(target).map_err(|e| e.to_string())?)),
     }

@@ -1,4 +1,5 @@
 import { isNativeMac } from './macos-zoom.js';
+import { state } from './state.js';
 
 let native = null;
 let lastTitle = null;
@@ -58,5 +59,9 @@ export function openSessionInTab(target, win = window) {
 
 export function initMacosTabs(win = window) {
   if (!isNativeMac(win)) return;
+  invoke('macos_tabs_set_session', { session: '' }).catch(() => {}); // a new page shows no Session until it opens one
+  import('@tauri-apps/api/webview').then(({ getCurrentWebview }) => getCurrentWebview().listen('macos-tabs-notify', ({ payload }) => {
+    if (payload.sessionId !== state.wsSessionId) win.openNotificationSession?.(payload);
+  })).catch(() => {});
   attachTabShortcuts(win, (command, args) => invoke(command, args).catch(() => {}));
 }
