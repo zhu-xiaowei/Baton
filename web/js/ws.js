@@ -196,7 +196,7 @@ if (window.visualViewport && _isMobile) {
       if (document.body.classList.contains('new-session')) {
         var from = _chromeShown, start = performance.now();
         var slide = function (now) {
-          var t = Math.min(1, (now - start) / 250);
+          var t = Math.max(0, Math.min(1, (now - start) / 250));
           _chromeShown = from + (chromeHeight - from) * (1 - Math.pow(1 - t, 3));
           _chromeSlide = t < 1 ? requestAnimationFrame(slide) : null;
           applyMobileViewport();
