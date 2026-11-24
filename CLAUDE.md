@@ -752,8 +752,11 @@ Replaced the old tmux send-keys approach (deleted in Phase 2E). Full design: `do
   every 20 ms independently of each result (a navigation can drop it), 15 s cap. It matches the WebView pixel for
   pixel: `env(safe-area-inset-top)` rounds up to whole CSS px, the stable scrollbar gutter is `floor(6 × dpr)`
   device px, text is unhinted at subpixel positions with baselines rounded to device px, and active cards keep
-  their 135° gradient. Keep it in step with `renderSkeleton` in `index.html`. Three-button navigation gets bottom
-  padding from the tappable-element inset; gesture navigation stays edge to edge.
+  their 135° gradient. Keep it in step with `renderSkeleton` in `index.html`. Only the phone portrait layout
+  (≤ 480 CSS px) is drawn; landscape and wide windows lay home out differently and keep a plain canvas cover. The
+  content view is padded by min(tappable element, navigation bars) so three-button navigation does not cover the
+  page (gesture navigation stays edge to edge), and before Android 11 also by the keyboard, which does not resize an
+  edge-to-edge window there.
 - Cold-start launch screens follow the app's choice, not the system's: Android 12+ uses the app night mode;
   iOS renders the LaunchScreen skeleton into light and dark snapshots per orientation
   (`Library/SplashBoard/Snapshots/<bundle> - {DEFAULT GROUP}/*.ktx`, Apple's `AAPL` container with ASTC,
