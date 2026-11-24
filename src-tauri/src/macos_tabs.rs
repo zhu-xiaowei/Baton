@@ -249,6 +249,13 @@ mod imp {
     window.on_window_event(move |event| match event {
       #[cfg(target_os = "windows")]
       tauri::WindowEvent::ScaleFactorChanged { .. } => layout(&owner),
+      // With child webviews nothing focuses one when the window itself is activated (Alt+Tab, taskbar,
+      // launch), so keys went nowhere until a click; hand focus to the selected tab.
+      #[cfg(target_os = "windows")]
+      tauri::WindowEvent::Focused(true) => {
+        let selected = with_tabs(owner.label(), |tabs| tabs.selected.clone());
+        if let Some(tab) = selected.ok().and_then(|id| owner.app_handle().get_webview(&id)) { let _ = tab.set_focus(); }
+      }
       tauri::WindowEvent::Resized(_) => {
         #[cfg(target_os = "windows")]
         layout(&owner);
