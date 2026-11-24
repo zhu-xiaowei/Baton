@@ -1,13 +1,14 @@
 ---
 description: Publish Baton <version> as the Latest GitHub Release (version bump PR, packages, release notes, dl.agentbaton.app)
-argument-hint: <version>, e.g. 2.0.1
+argument-hint: <version> [--auto], e.g. 2.0.1
 ---
 
-Publish Baton `$ARGUMENTS` from `main` as a normal (not Pre-release) GitHub
-Release marked Latest. The request authorizes the version-bump branch and PR,
-its squash-merge after required checks pass, packaging, the tag and release, and
-the dl.agentbaton.app update. Continue without approval prompts; on a failure,
-stop and report it. Every step first checks whether it is already done and
+Arguments: `$ARGUMENTS` (version, optional `--auto`). Publish that version from
+`main` as a normal (not Pre-release) GitHub Release marked Latest. The request
+authorizes steps 1–3 up to a green PR. There, stop and ask: summarize the
+version changes, the full release notes and the CI result. Once the user
+confirms, or immediately with `--auto`, run steps 3–8 without further prompts.
+On a failure, stop and report it. Every step first checks whether it is already done and
 then reuses its result, so re-running the same command resumes the release.
 Work in an isolated checkout of the latest `origin/main`; never force-push.
 iOS (`/testflight`) and HarmonyOS builds are not part of this flow.
@@ -27,8 +28,8 @@ iOS (`/testflight`) and HarmonyOS builds are not part of this flow.
    self-hosted server command with the same region, stack and profile; Bridges
    update automatically.
 3. **Merge:** PR `chore(release): <version>` to `main`, wait for all required
-   checks, fix failures within the release scope, squash-merge. Use the merged
-   commit from here on.
+   checks and fix failures within the release scope. After the confirmation
+   above, squash-merge and use the merged commit from here on.
 4. **Package:** after that commit's `main` push CI passes, check out `main` at it
    and run `/package` (skip if `release/<version>/` already holds a complete
    set built from it). All four platforms must succeed.
