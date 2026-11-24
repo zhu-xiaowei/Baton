@@ -26,7 +26,7 @@ export function tabShortcut(event, windows = false) {
   if (windows ? !event.ctrlKey || event.metaKey : !event.metaKey || event.ctrlKey) return null;
   const terminal = windows && event.target?.closest?.('.xterm');
   const letter = windows && !event.shiftKey && !terminal
-    && (/^[a-z]$/i.test(event.key) ? event.key.toLowerCase() : /[^\x00-\x7f]/.test(event.key) && /^Key([A-Z])$/.exec(event.code)?.[1].toLowerCase());
+    && (/^[a-z]$/i.test(event.key) ? event.key.toLowerCase() : /^Key([A-Z])$/.exec(event.code)?.[1].toLowerCase());
   if (letter === 't') return ['macos_tabs_new'];
   if (letter === 'w') return ['macos_tabs_close'];
   if (letter === 'n') return ['macos_tabs_new_window'];
