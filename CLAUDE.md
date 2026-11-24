@@ -782,8 +782,9 @@ Tauri v2 wraps web/ static frontend as native app, zero web code changes.
   them in a 138px column of the top-level window that the strip leaves free and answers
   `WM_NCHITTEST` with HTMINBUTTON/HTMAXBUTTON/HTCLOSE, because only a top-level HTMAXBUTTON gives
   Windows 11 Snap Layouts (a WebView2 child HWND is another process). Every resize or DPI change
-  re-lays out the strip and all tab webviews in physical pixels (no autoresizing on Windows) and
-  re-raises Tauri's top resize-border child above them. There is no menu bar, so Ctrl+T/W, Ctrl+Tab, Ctrl+1–9 live in `macos-tabs.js`.
+  re-lays out the strip and all tab webviews in physical pixels (no autoresizing on Windows). The
+  top resize edge is a `SM_CYFRAME` row of the window above the strip (none when maximized): Tauri's
+  resize-border child is not created for these windows. There is no menu bar, so Ctrl+T/W, Ctrl+Tab, Ctrl+1–9 live in `macos-tabs.js`.
   `appearance.rs` sets per-webview backgrounds, since `webview_windows()` is empty once a window
   has children.
 

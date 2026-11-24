@@ -4,7 +4,7 @@
 use std::sync::Mutex;
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
 use windows_sys::Win32::Graphics::Gdi::*;
-use windows_sys::Win32::UI::HiDpi::GetDpiForWindow;
+use windows_sys::Win32::UI::HiDpi::{GetDpiForWindow, GetSystemMetricsForDpi};
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{GetActiveWindow, TrackMouseEvent, TME_LEAVE, TME_NONCLIENT, TRACKMOUSEEVENT};
 use windows_sys::Win32::UI::Shell::{DefSubclassProc, SetWindowSubclass};
 use windows_sys::Win32::UI::WindowsAndMessaging::*;
@@ -48,16 +48,14 @@ pub fn attach(window: &tauri::Window) {
   unsafe { SetWindowSubclass(hwnd.0 as HWND, Some(subclass), 1, state) };
 }
 
-// The Tauri resize border child must stay above the webviews added later, or the top edge stops resizing.
-pub fn raise_resize_border(window: &tauri::Window) {
-  let Ok(hwnd) = window.hwnd() else { return };
-  unsafe {
-    let class: Vec<u16> = "TAURI_DRAG_RESIZE_BORDERS\0".encode_utf16().collect();
-    let border = FindWindowExW(hwnd.0 as HWND, std::ptr::null_mut(), class.as_ptr(), std::ptr::null());
-    if !border.is_null() {
-      SetWindowPos(border, HWND_TOP, 0, 0, 0, 0, SWP_ASYNCWINDOWPOS | SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE | SWP_NOOWNERZORDER);
-    }
-  }
+// The left, right and bottom resize borders are tao's invisible frame. The top one is a row of the
+// window above the strip webview (none when maximized), as the client area starts at the window top.
+unsafe fn border(hwnd: HWND) -> i32 {
+  if IsZoomed(hwnd) != 0 { 0 } else { GetSystemMetricsForDpi(SM_CYFRAME, GetDpiForWindow(hwnd)) }
+}
+
+pub fn top_border(window: &tauri::Window) -> u32 {
+  window.hwnd().map(|hwnd| unsafe { border(hwnd.0 as HWND) } as u32).unwrap_or(0)
 }
 
 unsafe fn layout(hwnd: HWND) -> (RECT, i32, i32) {
@@ -71,6 +69,9 @@ unsafe fn hit(hwnd: HWND, lparam: LPARAM) -> Option<u32> {
   let mut point = POINT { x: (lparam & 0xffff) as i16 as i32, y: ((lparam >> 16) & 0xffff) as i16 as i32 };
   ScreenToClient(hwnd, &mut point);
   let (column, bw, bh) = layout(hwnd);
+  if point.y >= 0 && point.y < border(hwnd) {
+    return Some(if point.x < bw / 2 { HTTOPLEFT } else if point.x >= column.right - bw / 2 { HTTOPRIGHT } else { HTTOP });
+  }
   if point.x < column.left || point.x >= column.right || point.y < 0 || point.y >= column.bottom { return None; }
   Some(if point.y < bh { BUTTONS[((point.x - column.left) / bw).clamp(0, 2) as usize] } else { HTCAPTION })
 }
@@ -82,6 +83,7 @@ unsafe fn paint(hwnd: HWND, (hovered, pressed): (u32, u32)) {
   let hdc = GetDC(hwnd);
   let fill = |rect: &RECT, color: u32| { let brush = CreateSolidBrush(color); FillRect(hdc, rect, brush); DeleteObject(brush); };
   fill(&RECT { top: bh, ..column }, strip);
+  fill(&RECT { left: 0, top: 0, right: column.right, bottom: border(hwnd) }, strip);
   let font = |face: &str| {
     let face: Vec<u16> = face.encode_utf16().chain([0]).collect();
     CreateFontW(-((10 * GetDpiForWindow(hwnd) / 96) as i32), 0, 0, 0, FW_NORMAL as i32, 0, 0, 0, DEFAULT_CHARSET as u32,
@@ -121,7 +123,7 @@ unsafe fn paint(hwnd: HWND, (hovered, pressed): (u32, u32)) {
 
 unsafe fn redraw(hwnd: HWND) {
   let (column, _, _) = layout(hwnd);
-  InvalidateRect(hwnd, &column, 0);
+  InvalidateRect(hwnd, &RECT { left: 0, ..column }, 0);
 }
 
 unsafe extern "system" fn subclass(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM, _: usize, data: usize) -> LRESULT {

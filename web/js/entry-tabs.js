@@ -1,5 +1,5 @@
 import './theme.js';
-// Entry for tabs.html — the tab strip webview (macOS titlebar row, below the Windows title bar).
+// Entry for tabs.html — the tab strip webview in the titlebar row (macOS, Windows).
 import '../css/tab-strip.css';
 import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWebview } from '@tauri-apps/api/webview';

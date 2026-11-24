@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "macos-tabs",
-  "description": "Tab strip (macOS titlebar row, below the Windows title bar): drag and double-click the window",
+  "description": "Tab strip in the titlebar row (macOS, Windows): drag and double-click the window",
   "platforms": ["macOS", "windows"],
   "windows": ["main", "peek-*"],
   "permissions": [

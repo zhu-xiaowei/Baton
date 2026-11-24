@@ -1,5 +1,5 @@
 // macOS and Windows tabs: each window holds a tab-strip webview (macOS: in the titlebar row;
-// Windows: below the native title bar) plus one content webview per tab. Hidden tabs keep their
+// Windows: the whole title bar row) plus one content webview per tab. Hidden tabs keep their
 // own page, draft, navigation and connection.
 use serde::Serialize;
 
@@ -189,7 +189,7 @@ mod imp {
   }
 
   // Windows has no autoresizing: the strip and every tab are laid out again on each resize.
-  // The strip leaves the caption buttons' column to the window itself (windows_caption.rs).
+  // The strip leaves the caption buttons' column and the top resize row to the window (windows_caption.rs).
   #[cfg(target_os = "windows")]
   fn place(webview: &Webview, strip: bool) {
     let window = webview.window();
@@ -197,7 +197,8 @@ mod imp {
     if size.width == 0 || size.height == 0 { return; } // minimized
     let top = ((STRIP_HEIGHT * scale).round() as u32).min(size.height);
     let (y, width, height) = if strip {
-      (0, size.width.saturating_sub(crate::windows_caption::width(scale)), top)
+      let border = crate::windows_caption::top_border(&window).min(top);
+      (border, size.width.saturating_sub(crate::windows_caption::width(scale)), top - border)
     } else {
       (top, size.width, size.height - top)
     };
@@ -205,7 +206,6 @@ mod imp {
       position: tauri::PhysicalPosition::new(0, y as i32).into(),
       size: tauri::PhysicalSize::new(width.max(1), height.max(1)).into(),
     });
-    crate::windows_caption::raise_resize_border(&window);
   }
 
   #[cfg(target_os = "windows")]

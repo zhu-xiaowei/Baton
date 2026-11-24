@@ -1,4 +1,4 @@
-/* Tab strip (macOS titlebar row, below the Windows title bar). Height must match STRIP_HEIGHT in src-tauri/src/macos_tabs.rs. */
+/* Tab strip in the titlebar row (macOS, Windows). Height must match STRIP_HEIGHT in src-tauri/src/macos_tabs.rs. */
 :root { --tab-strip-height: 41px; --tab-height: 35px; --tab-active: var(--surface-elevated); --tab-radius: 8px; }
 * { box-sizing: border-box; margin: 0; padding: 0; }
 html, body {

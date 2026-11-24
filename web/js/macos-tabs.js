@@ -4,7 +4,7 @@ import { state } from './state.js';
 let native = null;
 let lastTitle = null;
 
-// The Windows app has the same tabs, below its native title bar.
+// The Windows app has the same tabs; its strip is the title bar row.
 export function isNativeWindows(win) {
   return !!win.__TAURI_INTERNALS__ && /^Win/.test(win.navigator.platform);
 }
