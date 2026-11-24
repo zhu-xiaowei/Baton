@@ -303,6 +303,7 @@ dependencies = [
  "tauri-plugin-push",
  "tauri-plugin-speech",
  "uuid",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

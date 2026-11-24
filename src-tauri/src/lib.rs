@@ -4,6 +4,8 @@ mod preview_proxy;
 mod macos_zoom;
 mod macos_tabs;
 mod appearance;
+#[cfg(target_os = "windows")]
+mod windows_caption;
 
 #[cfg(target_os = "macos")]
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -152,11 +154,12 @@ pub fn run() {
           macos_tabs::attach(&main.as_ref().window(), main.as_ref())?;
         }
       }
-      // Windows keeps its native title bar and menu-less window; the strip sits below it.
+      // Windows: frameless (tauri.windows.conf.json); the strip is the title bar row, with the caption buttons.
       #[cfg(target_os = "windows")]
       {
         use tauri::Manager;
         if let Some(main) = app.get_webview_window("main") {
+          windows_caption::attach(&main.as_ref().window());
           macos_tabs::attach(&main.as_ref().window(), main.as_ref())?;
         }
       }

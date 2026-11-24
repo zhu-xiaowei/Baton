@@ -87,6 +87,8 @@ mod imp {
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 pub use imp::attach;
+#[cfg(target_os = "windows")]
+pub use imp::STRIP_HEIGHT;
 #[cfg(target_os = "macos")]
 pub use imp::{handle_menu, setup_menu};
 
@@ -187,17 +189,23 @@ mod imp {
   }
 
   // Windows has no autoresizing: the strip and every tab are laid out again on each resize.
+  // The strip leaves the caption buttons' column to the window itself (windows_caption.rs).
   #[cfg(target_os = "windows")]
   fn place(webview: &Webview, strip: bool) {
     let window = webview.window();
     let (Ok(size), Ok(scale)) = (window.inner_size(), window.scale_factor()) else { return };
     if size.width == 0 || size.height == 0 { return; } // minimized
     let top = ((STRIP_HEIGHT * scale).round() as u32).min(size.height);
-    let (y, height) = if strip { (0, top) } else { (top, size.height - top) };
+    let (y, width, height) = if strip {
+      (0, size.width.saturating_sub(crate::windows_caption::width(scale)), top)
+    } else {
+      (top, size.width, size.height - top)
+    };
     let _ = webview.set_bounds(tauri::Rect {
       position: tauri::PhysicalPosition::new(0, y as i32).into(),
-      size: tauri::PhysicalSize::new(size.width, height.max(1)).into(),
+      size: tauri::PhysicalSize::new(width.max(1), height.max(1)).into(),
     });
+    crate::windows_caption::raise_resize_border(&window);
   }
 
   #[cfg(target_os = "windows")]

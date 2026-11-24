@@ -775,10 +775,15 @@ Tauri v2 wraps web/ static frontend as native app, zero web code changes.
   must take `Webview`, not `WebviewWindow` (that extractor fails once a window has children).
   Rust owns tab order/selection/titles and pushes `macos-tabs` to the strip; pages report titles
   from `updateBreadcrumb`. Preview tunnels and native preview views are owned per webview label.
-- Windows tabs share `macos_tabs.rs` and the same commands/pages: the native title bar stays (snap
-  layouts, min/max/close), the strip is the first 41px row of the client area, and every resize or
-  DPI change re-lays out the strip and all tab webviews in physical pixels (no autoresizing on
-  Windows). There is no menu bar, so Ctrl+T/W, Ctrl+Tab, Ctrl+1–9 live in `macos-tabs.js`.
+- Windows tabs share `macos_tabs.rs` and the same commands/pages. The window is frameless
+  (`tauri.windows.conf.json`, tao keeps the caption styles, shadow and maximized work-area fit); the
+  41px strip is the title bar row, an `app-region: drag` WebView2 non-client region (drag, Aero snap,
+  double-click, system menu). The caption buttons are not in the webview: `windows_caption.rs` draws
+  them in a 138px column of the top-level window that the strip leaves free and answers
+  `WM_NCHITTEST` with HTMINBUTTON/HTMAXBUTTON/HTCLOSE, because only a top-level HTMAXBUTTON gives
+  Windows 11 Snap Layouts (a WebView2 child HWND is another process). Every resize or DPI change
+  re-lays out the strip and all tab webviews in physical pixels (no autoresizing on Windows) and
+  re-raises Tauri's top resize-border child above them. There is no menu bar, so Ctrl+T/W, Ctrl+Tab, Ctrl+1–9 live in `macos-tabs.js`.
   `appearance.rs` sets per-webview backgrounds, since `webview_windows()` is empty once a window
   has children.
 
