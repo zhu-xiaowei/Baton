@@ -88,7 +88,7 @@ mod imp {
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 pub use imp::attach;
 #[cfg(target_os = "windows")]
-pub use imp::STRIP_HEIGHT;
+pub use imp::{focus_selected, STRIP_HEIGHT};
 #[cfg(target_os = "macos")]
 pub use imp::{handle_menu, setup_menu};
 
@@ -249,13 +249,6 @@ mod imp {
     window.on_window_event(move |event| match event {
       #[cfg(target_os = "windows")]
       tauri::WindowEvent::ScaleFactorChanged { .. } => layout(&owner),
-      // With child webviews nothing focuses one when the window itself is activated (Alt+Tab, taskbar,
-      // launch), so keys went nowhere until a click; hand focus to the selected tab.
-      #[cfg(target_os = "windows")]
-      tauri::WindowEvent::Focused(true) => {
-        let selected = with_tabs(owner.label(), |tabs| tabs.selected.clone());
-        if let Some(tab) = selected.ok().and_then(|id| owner.app_handle().get_webview(&id)) { let _ = tab.set_focus(); }
-      }
       tauri::WindowEvent::Resized(_) => {
         #[cfg(target_os = "windows")]
         layout(&owner);
@@ -271,6 +264,14 @@ mod imp {
       _ => {}
     });
     Ok(())
+  }
+
+  // Windows: the window itself took focus (Alt+Tab, taskbar, launch); with child webviews nothing passes
+  // it on, so keys went nowhere until a click. windows_caption.rs calls this on WM_SETFOCUS.
+  #[cfg(target_os = "windows")]
+  pub fn focus_selected(window: &Window) {
+    let selected = with_tabs(window.label(), |tabs| tabs.selected.clone());
+    if let Some(tab) = selected.ok().and_then(|id| window.app_handle().get_webview(&id)) { let _ = tab.set_focus(); }
   }
 
   pub fn state(webview: &Webview) -> Result<TabsState, String> {

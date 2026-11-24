@@ -15,6 +15,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::*;
 const BUTTONS: [u32; 3] = [HTMINBUTTON, HTMAXBUTTON, HTCLOSE];
 // Strip colour, glyph colour (0x00BBGGRR); set from the app's appearance.
 static COLORS: Mutex<(u32, u32)> = Mutex::new((0x090401, 0xf3ede6));
+static APP: std::sync::OnceLock<tauri::AppHandle> = std::sync::OnceLock::new();
 
 // Like Windows Terminal: 46px wide caption buttons spanning the whole strip height, so their glyphs
 // centre on the tab labels.
@@ -48,6 +49,7 @@ pub fn set_colors(app: &tauri::AppHandle, light: bool, strip: &str) {
 
 pub fn attach(window: &tauri::Window) {
   let Ok(hwnd) = window.hwnd() else { return };
+  let _ = APP.set(tauri::Manager::app_handle(window).clone());
   let state = Box::into_raw(Box::new((0u32, 0u32))) as usize; // (hovered, pressed) hit-test codes
   unsafe {
     SetWindowSubclass(hwnd.0 as HWND, Some(subclass), 1, state);
@@ -190,6 +192,13 @@ unsafe extern "system" fn subclass(hwnd: HWND, msg: u32, wparam: WPARAM, lparam:
     WM_PAINT | WM_ERASEBKGND | WM_NCACTIVATE | WM_ACTIVATE | WM_SIZE => {
       let result = DefSubclassProc(hwnd, msg, wparam, lparam);
       if msg == WM_PAINT { paint(hwnd, *state) } else { redraw(hwnd) }
+      return result;
+    }
+    WM_SETFOCUS => {
+      let result = DefSubclassProc(hwnd, msg, wparam, lparam);
+      use tauri::Manager;
+      let window = APP.get().and_then(|app| app.windows().into_values().find(|w| w.hwnd().is_ok_and(|h| h.0 as HWND == hwnd)));
+      if let Some(window) = window { crate::macos_tabs::focus_selected(&window); }
       return result;
     }
     WM_NCDESTROY => drop(Box::from_raw(data as *mut (u32, u32))),
