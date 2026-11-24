@@ -17,15 +17,16 @@ function invoke(command, args) {
 
 // Shortcuts that the macOS menu cannot express reliably (digits, Shift+brackets, Ctrl+Tab).
 // Windows has no menu: Ctrl replaces Cmd and Ctrl+T/W/N are handled here, except in the terminal (readline
-// keys); non-Latin layouts match the key position.
+// keys, also Ctrl+digits); non-Latin layouts match the key position.
 export function tabShortcut(event, windows = false) {
   if (event.isComposing || event.defaultPrevented || event.altKey) return null;
   if (event.ctrlKey && !event.metaKey && event.key === 'Tab') {
     return ['macos_tabs_step', { delta: event.shiftKey ? -1 : 1 }];
   }
   if (windows ? !event.ctrlKey || event.metaKey : !event.metaKey || event.ctrlKey) return null;
-  const letter = windows && !event.shiftKey && !event.target?.closest?.('.xterm')
-    && (/^[a-z]$/i.test(event.key) ? event.key.toLowerCase() : /^Key([A-Z])$/.exec(event.code)?.[1].toLowerCase());
+  const terminal = windows && event.target?.closest?.('.xterm');
+  const letter = windows && !event.shiftKey && !terminal
+    && (/^[a-z]$/i.test(event.key) ? event.key.toLowerCase() : /[^\x00-\x7f]/.test(event.key) && /^Key([A-Z])$/.exec(event.code)?.[1].toLowerCase());
   if (letter === 't') return ['macos_tabs_new'];
   if (letter === 'w') return ['macos_tabs_close'];
   if (letter === 'n') return ['macos_tabs_new_window'];
@@ -33,7 +34,7 @@ export function tabShortcut(event, windows = false) {
     return ['macos_tabs_step', { delta: event.code === 'BracketRight' ? 1 : -1 }];
   }
   const digit = /^Digit([1-9])$/.exec(event.code);
-  if (!event.shiftKey && digit) {
+  if (!event.shiftKey && digit && !terminal) {
     return ['macos_tabs_select_index', { index: digit[1] === '9' ? -1 : Number(digit[1]) - 1 }];
   }
   return null;
