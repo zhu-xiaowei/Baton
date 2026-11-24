@@ -15,9 +15,10 @@ const BUTTONS: [u32; 3] = [HTMINBUTTON, HTMAXBUTTON, HTCLOSE];
 // Strip colour, glyph colour (0x00BBGGRR); set from the app's appearance.
 static COLORS: Mutex<(u32, u32)> = Mutex::new((0x090401, 0xf3ede6));
 
-// Windows 11 caption buttons are 46×32; the column spans the 41px strip.
-fn metrics(scale: f64) -> (i32, i32, i32) {
-  ((46.0 * scale).round() as i32, (32.0 * scale).round() as i32, (crate::macos_tabs::STRIP_HEIGHT * scale).round() as i32)
+// Like Windows Terminal: 46px wide caption buttons spanning the whole strip height, so their glyphs
+// centre on the tab labels.
+fn metrics(scale: f64) -> (i32, i32) {
+  ((46.0 * scale).round() as i32, (crate::macos_tabs::STRIP_HEIGHT * scale).round() as i32)
 }
 
 pub fn width(scale: f64) -> u32 {
@@ -60,11 +61,11 @@ pub fn top_border(window: &tauri::Window) -> u32 {
   window.hwnd().map(|hwnd| unsafe { border(hwnd.0 as HWND) } as u32).unwrap_or(0)
 }
 
-unsafe fn layout(hwnd: HWND) -> (RECT, i32, i32) {
+unsafe fn layout(hwnd: HWND) -> (RECT, i32) {
   let mut client = RECT { left: 0, top: 0, right: 0, bottom: 0 };
   GetClientRect(hwnd, &mut client);
-  let (bw, bh, sh) = metrics(GetDpiForWindow(hwnd) as f64 / 96.0);
-  (RECT { left: client.right - bw * 3, top: 0, right: client.right, bottom: sh }, bw, bh)
+  let (bw, sh) = metrics(GetDpiForWindow(hwnd) as f64 / 96.0);
+  (RECT { left: client.right - bw * 3, top: 0, right: client.right, bottom: sh }, bw)
 }
 
 fn point(lparam: LPARAM) -> POINT {
@@ -73,21 +74,21 @@ fn point(lparam: LPARAM) -> POINT {
 
 // `point` is in client coordinates.
 unsafe fn hit(hwnd: HWND, point: POINT) -> Option<u32> {
-  let (column, bw, bh) = layout(hwnd);
+  let (column, bw) = layout(hwnd);
+  // The top resize row stays above the buttons too, as on native and Terminal windows.
   if point.y >= 0 && point.y < border(hwnd) {
     return Some(if point.x < bw / 2 { HTTOPLEFT } else if point.x >= column.right - bw / 2 { HTTOPRIGHT } else { HTTOP });
   }
   if point.x < column.left || point.x >= column.right || point.y < 0 || point.y >= column.bottom { return None; }
-  Some(if point.y < bh { BUTTONS[((point.x - column.left) / bw).clamp(0, 2) as usize] } else { HTCAPTION })
+  Some(BUTTONS[((point.x - column.left) / bw).clamp(0, 2) as usize])
 }
 
 unsafe fn paint(hwnd: HWND, (hovered, pressed): (u32, u32)) {
-  let (column, bw, bh) = layout(hwnd);
+  let (column, bw) = layout(hwnd);
   let (strip, fg) = *COLORS.lock().unwrap_or_else(|e| e.into_inner());
   let fg = if GetForegroundWindow() == hwnd { fg } else { mix(strip, fg, 0.45) };
   let hdc = GetDC(hwnd);
   let fill = |rect: &RECT, color: u32| { let brush = CreateSolidBrush(color); FillRect(hdc, rect, brush); DeleteObject(brush); };
-  fill(&RECT { top: bh, ..column }, strip);
   fill(&RECT { left: 0, top: 0, right: column.right, bottom: border(hwnd) }, strip);
   let font = |face: &str| {
     let face: Vec<u16> = face.encode_utf16().chain([0]).collect();
@@ -107,7 +108,7 @@ unsafe fn paint(hwnd: HWND, (hovered, pressed): (u32, u32)) {
   }
   SetBkMode(hdc, TRANSPARENT as i32);
   for (i, code) in BUTTONS.iter().enumerate() {
-    let mut rect = RECT { left: column.left + bw * i as i32, top: 0, right: column.left + bw * (i as i32 + 1), bottom: bh };
+    let mut rect = RECT { left: column.left + bw * i as i32, top: 0, right: column.left + bw * (i as i32 + 1), bottom: column.bottom };
     let close = *code == HTCLOSE;
     let (back, color) = match (hovered == *code, pressed == *code) {
       (true, true) if close => (0x1a27b3, 0xffffff),
@@ -127,7 +128,7 @@ unsafe fn paint(hwnd: HWND, (hovered, pressed): (u32, u32)) {
 }
 
 unsafe fn redraw(hwnd: HWND) {
-  let (column, _, _) = layout(hwnd);
+  let (column, _) = layout(hwnd);
   InvalidateRect(hwnd, &RECT { left: 0, ..column }, 0);
 }
 
