@@ -42,13 +42,15 @@ pub fn set_colors(app: &tauri::AppHandle, light: bool, strip: tauri::webview::Co
   }
 }
 
+// Subclassing only works from the window's own thread; a new window is built from a command thread.
 pub fn attach(window: &tauri::Window) {
   let Ok(hwnd) = window.hwnd() else { return };
-  unsafe {
-    SetWindowSubclass(hwnd.0 as HWND, Some(subclass), 1, Box::into_raw(Box::<State>::new((0, 0, window.clone()))) as usize);
+  let (hwnd, state) = (hwnd.0 as usize, Box::<State>::new((0, 0, window.clone())));
+  let _ = window.run_on_main_thread(move || unsafe {
+    SetWindowSubclass(hwnd as HWND, Some(subclass), 1, Box::into_raw(state) as usize);
     // Rounded corners like Windows 11's own frames (Windows 10 rejects the attribute).
-    DwmSetWindowAttribute(hwnd.0 as HWND, DWMWA_WINDOW_CORNER_PREFERENCE as u32, &DWMWCP_ROUND as *const i32 as _, 4);
-  }
+    DwmSetWindowAttribute(hwnd as HWND, DWMWA_WINDOW_CORNER_PREFERENCE as u32, &DWMWCP_ROUND as *const i32 as _, 4);
+  });
 }
 
 // Left/right/bottom resize borders are tao's invisible frame; the top one is a row above the strip
