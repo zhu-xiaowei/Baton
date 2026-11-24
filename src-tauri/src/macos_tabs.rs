@@ -261,6 +261,9 @@ mod imp {
       }
       _ => {}
     });
+    // The strip webview, created last, would otherwise keep the focus.
+    #[cfg(target_os = "windows")]
+    focus_selected(window);
     Ok(())
   }
 
