@@ -85,6 +85,8 @@ pub fn run() {
       macos_tabs::macos_tabs_move,
       macos_tabs::macos_tabs_close,
       macos_tabs::macos_tabs_set_title,
+      macos_tabs::macos_tabs_set_session,
+      macos_tabs::macos_tabs_open_session,
       preview_proxy::preview_start,
       preview_proxy::preview_credit,
       preview_proxy::preview_write,

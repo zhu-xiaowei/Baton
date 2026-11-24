@@ -2,6 +2,7 @@ import { state } from './state.js';
 import { showToast } from './components/toast.js';
 import { dismissInAppNotifications, showInAppNotification } from './components/inapp-notification.js';
 import { devices, notifyKey, onPush, openAlert, request } from './v2/direct-transport.js';
+import { openSessionInTab, setNativeTabSession } from './macos-tabs.js';
 
 // iOS: APNs. Android: a foreground service polling the event feed (hosted: holding a socket). Both work while
 // Baton is in the background; the local push plugin owns notification taps.
@@ -132,6 +133,11 @@ async function initialize() {
     let target = null;
     try { target = JSON.parse(sessionStorage.getItem(TARGET) || 'null'); } catch {}
     sessionStorage.removeItem(TARGET);
+    // A tab the macOS app opened for a tapped notification (macos_tabs open_session): once, not again on reload.
+    if (!target && window.__BATON_NOTIFY__ && !sessionStorage.getItem('baton-notify-tab')) {
+      target = window.__BATON_NOTIFY__;
+      sessionStorage.setItem('baton-notify-tab', '1');
+    }
     if (target && window.openNotificationSession) await window.openNotificationSession(target);
     return;
   }
@@ -214,13 +220,14 @@ onPush(event => {
   checked.add(event.eventId);
   if (checked.size > 100) checked.delete(checked.values().next().value);
   if (event.rootSessionId !== state.wsRootSessionId
-    && !(enabled() && showInAppNotification(event, window.openNotificationSession || goToIndex))) return;
+    && !(enabled() && showInAppNotification(event, (alert) => openSessionInTab(alert) || (window.openNotificationSession || goToIndex)(alert)))) return;
   request(event.device, 'notify_seen', { eventId: event.eventId }, { oneWay: true }).catch(() => {});
 });
 
 // The device itself never shows an alert for the session it has open in the foreground.
 window.setOpenNotificationSession = sessionId => {
   if (sessionId) dismissInAppNotifications(sessionId);
+  setNativeTabSession(sessionId);
   if (mobilePlatform()) void invoke('plugin:push|set_open', { sessionId: sessionId || '' }).catch(() => {});
 };
 window.unregisterMobileNotifications = unregisterMobileNotifications;
