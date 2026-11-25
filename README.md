@@ -108,10 +108,10 @@ Run your own server in your AWS account instead of the hosted service.
 
 ### 1. Deploy Server
 
-Requires [AWS CLI](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html) with permissions to create CloudFormation stacks.
+Requires [AWS CLI](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html) with permissions to create CloudFormation stacks, plus `git`, `zip` and `openssl`.
 
 ```bash
-curl -fsSL https://github.com/agentbaton/baton/releases/latest/download/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/agentbaton/baton/main/server/install.sh | bash
 ```
 
 Takes ~6-8 minutes. Prints a **Start URL** and QR code on success. Supports `--region`, `--stack`, `--profile` options (pass after `bash -s --`).
