@@ -22,6 +22,7 @@ export async function maybeAskForStar(turnId) {
   const s = load(), shown = s.shown || 0;
   if (!sentHere.delete(turnId) || checking || s.done || shown >= 3 || (s.sent || 0) < 5 * 2 ** shown || Date.now() - (s.at || 0) < 3 * 864e5) return;
   checking = true;
+  const session = state.wsSessionId;
   try {
     await new Promise((resolve) => setTimeout(resolve, 2000));
     if (document.getElementById('msg-input')?.value.trim() || document.querySelector('.has-permission-prompt, .star-card')) return;
@@ -31,6 +32,7 @@ export async function maybeAskForStar(turnId) {
       if (reply?.starred) return save({ done: true });
       if (reply?.gh) { device = d; break; }
     }
+    if (state.wsSessionId !== session) return;
     save({ shown: shown + 1, at: Date.now() });
     show(device);
   } finally {

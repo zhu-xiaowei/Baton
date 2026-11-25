@@ -679,7 +679,7 @@ html[data-theme="light"] .d2h-info { background-color: var(--surface-info); }
 .star-card-actions { display: flex; gap: 8px; }
 .star-card .ext-link { flex: 1; text-decoration: none; color: var(--text-primary); background: rgba(var(--warning-rgb), 0.15); border-color: rgba(var(--warning-rgb), 0.6); }
 .star-card .ext-link svg { fill: none; }
-.star-card .spinner { border-color: rgba(var(--warning-rgb), 0.3); border-top-color: var(--warning); }
+.star-card .modal-btn .spinner { border-color: rgba(var(--warning-rgb), 0.3); border-top-color: var(--warning); }
 @media (hover: hover) and (pointer: fine) { .modal-btn.confirm.danger:hover { background: var(--danger); } }
 
 /* ---- Batch-delete selection ---- */
