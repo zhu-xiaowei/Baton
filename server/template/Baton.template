@@ -138,7 +138,6 @@
         },
         "MemorySize": 1024,
         "PackageType": "Image",
-        "ReservedConcurrentExecutions": 10,
         "Role": { "Fn::GetAtt": ["LambdaExecutionRole", "Arn"] },
         "Timeout": 30
       },
@@ -764,6 +763,11 @@
           ],
           "CacheBehaviors": [
             {
+              "PathPattern": "/assets/*", "TargetOriginId": "api", "ViewerProtocolPolicy": "redirect-to-https",
+              "AllowedMethods": ["GET", "HEAD"], "CachedMethods": ["GET", "HEAD"], "Compress": true,
+              "CachePolicyId": { "Ref": "AssetCachePolicy" }
+            },
+            {
               "PathPattern": "/ws", "TargetOriginId": "ws", "ViewerProtocolPolicy": "https-only",
               "AllowedMethods": ["GET", "HEAD"], "CachedMethods": ["GET", "HEAD"], "Compress": false,
               "CachePolicyId": "4135ea2d-6df8-44a3-9df3-4b5a84be39ad",
@@ -786,6 +790,21 @@
             "Compress": true,
             "CachePolicyId": "4135ea2d-6df8-44a3-9df3-4b5a84be39ad",
             "OriginRequestPolicyId": "b689b0a8-53d0-40ab-baf2-68738e2966ac"
+          }
+        }
+      }
+    },
+    "AssetCachePolicy": {
+      "Type": "AWS::CloudFront::CachePolicy",
+      "Properties": {
+        "CachePolicyConfig": {
+          "Name": { "Fn::Sub": "${AWS::StackName}-assets" },
+          "Comment": "Hashed chunks are immutable; files without cache-control stay uncached",
+          "DefaultTTL": 0, "MinTTL": 0, "MaxTTL": 31536000,
+          "ParametersInCacheKeyAndForwardedToOrigin": {
+            "EnableAcceptEncodingGzip": true, "EnableAcceptEncodingBrotli": true,
+            "HeadersConfig": { "HeaderBehavior": "none" }, "CookiesConfig": { "CookieBehavior": "none" },
+            "QueryStringsConfig": { "QueryStringBehavior": "none" }
           }
         }
       }

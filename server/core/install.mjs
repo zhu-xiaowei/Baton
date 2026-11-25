@@ -469,6 +469,8 @@ export async function installScript({ headers }, apiKey, name, platform, presign
     '#!/bin/bash\n' +
     'set -e\n' +
     '\n' +
+    '# SSM run-command and cloud-init run without HOME.\n' +
+    'export HOME="${HOME:-$(getent passwd "$(id -un)" | cut -d: -f6)}"\n' +
     'DIR="$HOME/.baton-bridge"\n' +
     'USER_NODE=$(command -v node || true)\n' +
     'USER_NODE_DIR=${USER_NODE:+$(dirname "$USER_NODE")}\n' +
