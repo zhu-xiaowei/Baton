@@ -128,6 +128,178 @@ function followBottomAfterLayout() {
   }
 }
 
+// iOS app: main.mm stops WebKit from reacting to the keyboard and reports its final overlap
+// before UIKit animates it, then the committed begin time and spring. The page lays out for the
+// keyboard once and slides the moved elements with a transform animation on that same spring and
+// begin time; WebKit runs it in the UI process next to the keyboard's own animation, so they stay
+// together frame by frame. The visual viewport is emulated for every other consumer.
+// iPhone only; iPad keeps WebKit's own keyboard handling (see main.mm).
+var _nativeKeyboard = /iPhone|iPod/.test(navigator.userAgent) && !!window.__BATON_NATIVE_MOBILE__ && !!window.VisualViewport;
+var _kbInset = 0;
+var _kbTarget = 0;
+if (_nativeKeyboard) {
+  var _vvHeight = Object.getOwnPropertyDescriptor(VisualViewport.prototype, 'height');
+  Object.defineProperty(VisualViewport.prototype, 'height', {
+    configurable: true,
+    get: function () { return Math.max(0, _vvHeight.get.call(this) - _kbInset); },
+  });
+  // The keyboard follows a critically damped spring with UIKit's stiffness and mass (measured on
+  // iOS 26 and 18; iOS 18 reports damping 500 but does not move that way). iOS 26 default.
+  var _kbOmega = 0.0236;
+  try { _kbOmega = +localStorage.getItem('baton-kb-omega') || _kbOmega; } catch (e) {}
+  var keyboardEase = function (ms) {
+    var u = Math.max(0, ms) * _kbOmega;
+    return u > 12 ? 1 : 1 - (1 + u) * Math.exp(-u);
+  };
+  var _kbStart = 0;
+  var _kbSlides = [];
+  var _kbAnims = [];
+  var _kbLayout = null; // an opening Session lays out once its slide has finished
+  var setKeyboardInset = function (inset) {
+    _kbInset = inset;
+    window.visualViewport.dispatchEvent(new Event('resize'));
+  };
+  // Each slide starts running at once and holds still until the keyboard begins: an animation
+  // whose start lies ahead would only be handed to the UI process a frame after that start.
+  var slideFrames = function (slide, delay) {
+    var spring = 11 / _kbOmega, total = delay + spring, frames = [{ offset: 0, transform: 'translateY(' + slide.value(0) + 'px)' }];
+    for (var i = 0; i <= 60; i++) {
+      var y = slide.value(i === 60 ? 1 : keyboardEase(i / 60 * spring));
+      frames.push({ offset: (delay + i / 60 * spring) / total, transform: 'translateY(' + y + 'px)' });
+    }
+    return frames;
+  };
+  // Measured on device: the composited slide otherwise trails the keyboard by a few ms.
+  var slideStart = function () { return _kbStart - (_kbTarget > 0 ? 3 : 8); };
+  var timeSlide = function (a, slide) {
+    var anchor = Math.min(a.startTime == null ? document.timeline.currentTime : a.startTime, slideStart());
+    var delay = slideStart() - anchor;
+    a.effect.setKeyframes(slideFrames(slide, delay));
+    a.effect.updateTiming({ duration: delay + 11 / _kbOmega });
+    a.startTime = anchor;
+  };
+  var playKeyboardSlides = function () {
+    _kbAnims = _kbSlides.map(function (slide) {
+      var a = slide.el.animate(null, { easing: 'linear', fill: 'forwards' });
+      timeSlide(a, slide);
+      return a;
+    });
+    var all = _kbAnims;
+    Promise.all(all.map(function (a) { return a.finished; })).then(function () {
+      if (all === _kbAnims) settleKeyboard();
+    }, function () {});
+  };
+  // Retime the running slides in place: recreating them would leave a frame without them.
+  var retimeKeyboardSlides = function (start, omega) {
+    var reshape = omega > 0 && Math.abs(omega - _kbOmega) > 1e-6;
+    if (!reshape && Math.abs(start - _kbStart) < 4) return;
+    _kbStart = start;
+    if (reshape) _kbOmega = omega;
+    _kbAnims.forEach(function (a, i) { timeSlide(a, _kbSlides[i]); });
+  };
+  var settleKeyboard = function () {
+    if (_kbLayout) { var layout = _kbLayout; _kbLayout = null; layout(); }
+    _kbAnims.forEach(function (a) { a.cancel(); });
+    _kbSlides.forEach(function (s) { s.el.style.transform = ''; });
+    _kbAnims = [];
+    _kbSlides = [];
+  };
+  window.__batonKeyboardSettle = settleKeyboard;
+  var _kbPredicted = null; // a slide started from focus/blur, before main.mm's notification
+  var startKeyboardSlide = function (overlap, start, focusing) {
+    settleKeyboard();
+    var from = _kbInset;
+    _kbTarget = overlap;
+    _kbStart = start;
+    if (overlap === from
+      || document.querySelector('#projectTerminalPage, #gitStatusPage:not([hidden]), #internalBrowserPage:not([hidden])')) {
+      setKeyboardInset(overlap);
+      return;
+    }
+    var content = document.getElementById('content');
+    var bar = document.getElementById('input-bar');
+    var messages = content && content.querySelector('.messages');
+    var newSession = document.body.classList.contains('new-session');
+    var sab = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--sab')) || 0;
+    // The composer rides on the keyboard once it has risen past the home-indicator padding.
+    var lift = function (f) { return layoutPixels(Math.max(0, from + (overlap - from) * f - sab)); };
+    if (!newSession && overlap > from && bar) {
+      // Shrinking first would clip the messages above the still-low composer: slide, then lay out.
+      var follow = messages && state.appState.session && state.appState.session !== '__new__'
+        && (focusing || _inputFocusRequestsBottom || content.scrollHeight - content.scrollTop - content.clientHeight < 100);
+      var rise = lift(1) - lift(0);
+      var scroll = follow ? Math.min(rise, content.scrollHeight - content.clientHeight + rise - content.scrollTop) : 0;
+      _kbSlides = [{ el: bar, value: function (f) { return lift(0) - lift(f); } }];
+      if (scroll > 0) _kbSlides.push({ el: messages, value: function (f) { return -Math.min(scroll, lift(f) - lift(0)); } });
+      _kbLayout = function () { setKeyboardInset(overlap); };
+    } else {
+      // Lay out for the keyboard now and slide the moved elements from where they were.
+      var moved = (newSession ? [content && content.querySelector('.new-session-hero'), bar] : [bar, messages])
+        .filter(Boolean);
+      var before = moved.map(function (el) { return el.getBoundingClientRect().top; });
+      setKeyboardInset(overlap);
+      _kbSlides = moved.map(function (el, i) {
+        var offset = layoutPixels(before[i] - el.getBoundingClientRect().top);
+        var span = lift(0) - lift(1);
+        // Hold the old position in the same frame as the new layout, before the slide is composited.
+        el.style.transform = 'translateY(' + offset + 'px)';
+        return { el: el, value: newSession || !span
+          ? function (f) { return offset * (1 - f); }
+          : function (f) { return offset * (lift(f) - lift(1)) / span; } };
+      });
+    }
+    playKeyboardSlides();
+  };
+  window.__batonKeyboard = function (overlap, duration, sentAt) {
+    var predicted = _kbPredicted;
+    _kbPredicted = null;
+    if (predicted) clearTimeout(predicted.timer);
+    if (overlap > 0) try { localStorage.setItem('baton-kb-overlap-' + innerWidth, overlap); } catch (e) {}
+    // Until main.mm reports the committed begin time, assume the usual delay.
+    var start = document.timeline.currentTime - (Date.now() - sentAt) + 10;
+    // A matching prediction is closer to the keyboard's begin than this estimate.
+    if (predicted && predicted.overlap === overlap && _kbTarget === overlap) return;
+    if (!(duration > 0)) {
+      settleKeyboard();
+      _kbTarget = overlap;
+      setKeyboardInset(overlap);
+      return;
+    }
+    startKeyboardSlide(overlap, start, false);
+  };
+  window.__batonKeyboardBegin = function (beganAt, spring) {
+    var omega = spring && spring.mass > 0 && spring.stiffness > 0 ? Math.sqrt(spring.stiffness / spring.mass) / 1000 : 0;
+    if (omega) try { localStorage.setItem('baton-kb-omega', omega); } catch (e) {}
+    retimeKeyboardSlides(document.timeline.currentTime - (Date.now() - beganAt), omega);
+  };
+  // The composer's focus and blur come before UIKit even posts the keyboard notification: start
+  // sliding then, so the slide is already composited when the keyboard begins to move.
+  var predictKeyboard = function (overlap, focusing) {
+    if (_kbPredicted) clearTimeout(_kbPredicted.timer);
+    var previous = _kbTarget;
+    // Measured: the keyboard begins ~40 ms after the composer's focus and ~20 ms after its blur.
+    startKeyboardSlide(overlap, document.timeline.currentTime + (focusing ? 40 : 20), focusing);
+    _kbPredicted = { overlap: overlap, timer: setTimeout(function () {
+      // No keyboard after all (e.g. a hardware keyboard): go back.
+      if (_kbPredicted) { _kbPredicted = null; startKeyboardSlide(previous, document.timeline.currentTime, false); }
+    }, 600) };
+  };
+  var composer = document.getElementById('msg-input');
+  if (composer) {
+    composer.addEventListener('focus', function () {
+      var overlap = 0;
+      try { overlap = +localStorage.getItem('baton-kb-overlap-' + innerWidth) || 0; } catch (e) {}
+      if (_kbTarget === 0 && overlap > 0) predictKeyboard(overlap, true);
+    });
+    composer.addEventListener('blur', function (event) {
+      var next = event.relatedTarget;
+      if (_kbTarget > 0 && !(next && (next.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(next.tagName)))) {
+        predictKeyboard(0, false);
+      }
+    });
+  }
+}
+
 if (window.visualViewport && _isMobile) {
   var _chromeShown = 0; // top bar + breadcrumb height translated off screen
   var _chromeTarget = 0;
@@ -136,7 +308,11 @@ if (window.visualViewport && _isMobile) {
     var vv = window.visualViewport;
     document.body.style.bottom = 'auto';
     document.body.style.top = layoutPixels(_isIOS ? vv.offsetTop : 0) + 'px';
-    document.body.style.height = (layoutPixels(vv.height) + _chromeShown) + 'px';
+    // The composer's home-indicator padding stays; the keyboard covers it as it rises.
+    var safeBottom = _nativeKeyboard
+      ? Math.min(layoutPixels(_kbInset), parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--sab')) || 0)
+      : 0;
+    document.body.style.height = (layoutPixels(vv.height) + safeBottom + _chromeShown) + 'px';
     document.body.style.transform = _chromeShown ? 'translateY(-' + _chromeShown + 'px)' : '';
   };
   var syncMobileViewport = function () {
@@ -156,7 +332,7 @@ if (window.visualViewport && _isMobile) {
       && content.scrollHeight - content.scrollTop - content.clientHeight < 100;
 
     _vpBaseHeight = Math.max(_vpBaseHeight, vv.height, window.innerHeight);
-    var kbUp = vv.height < _vpBaseHeight * 0.75;
+    var kbUp = _nativeKeyboard ? _kbTarget > 0 : vv.height < _vpBaseHeight * 0.75;
     var keyboardClosing = _mobileKeyboardOpen && !kbUp;
     var focusOpenedKeyboard = viewportShrinking && kbUp && _inputFocusRequestsBottom;
     if (viewportShrinking && (wasAtBottom || focusOpenedKeyboard)) {
@@ -179,7 +355,7 @@ if (window.visualViewport && _isMobile) {
       });
     }
     var chromeHeight = 0;
-    if (_isIOS && kbUp
+    if (_isIOS && !_nativeKeyboard && kbUp
       && !document.querySelector('#projectTerminalPage, #gitStatusPage:not([hidden]), #internalBrowserPage:not([hidden])')) {
       var topBar = document.querySelector('.top-bar');
       var breadcrumb = document.getElementById('breadcrumb');
@@ -209,9 +385,15 @@ if (window.visualViewport && _isMobile) {
     applyMobileViewport();
     if (_isIOS) {
       var bar = document.getElementById('input-bar');
-      if (bar) bar.classList.toggle('kb-up', kbUp);
+      if (bar) bar.classList.toggle('kb-up', kbUp && !_nativeKeyboard);
     }
     if (window.positionScrollBtn) window.positionScrollBtn();
+    if (_followKeyboardOpen && _nativeKeyboard) {
+      // Follow within the same frame as the composer, not one frame behind it.
+      _followKeyboardOpen = false;
+      state.stickBottom = true;
+      if (content) content.scrollTop = content.scrollHeight;
+    }
     if (_followKeyboardOpen && _keyboardOpenFrame === null) {
       _keyboardOpenFrame = requestAnimationFrame(function () {
         _keyboardOpenFrame = null;
@@ -2321,7 +2503,7 @@ function onSendBtnClick() {
   if (input.value.trim() || state.stagedImages.length) {
     if (isMobile && kbWasUp && isFirstNewSessionSend) {
       input.blur();
-      var doSendAfterKbDown = function () { sendMessage(); updateSendBtn(); };
+      var doSendAfterKbDown = function () { window.__batonKeyboardSettle?.(); sendMessage(); updateSendBtn(); };
       if (window.visualViewport) {
         var onResize = function () {
           if (window.visualViewport.height >= _vpBaseHeight * 0.95) {

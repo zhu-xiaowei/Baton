@@ -432,6 +432,91 @@ static void baton_inject_safe_area(WKWebView *wv, UIEdgeInsets sa) {
     [wv evaluateJavaScript:js completionHandler:nil];
 }
 
+// WebKit reacts to the keyboard by scrolling the page and shrinking the visual viewport in one
+// step, which moves the fixed header. Detach WKWebView from the keyboard notifications (as
+// Capacitor's Keyboard plugin does) and report the keyboard's final overlap to the page before
+// UIKit animates it; ws.js moves the composer along the keyboard's curve.
+static char _baton_keyboard_bridge_key;
+
+@interface BatonKeyboardBridge : NSObject
+@property (nonatomic, weak) WKWebView *webView;
+@property (nonatomic, strong) UIView *probe; // pinned to keyboardLayoutGuide, animates with the keyboard
+@end
+
+@implementation BatonKeyboardBridge
+- (void)keyboardWillChangeFrame:(NSNotification *)note {
+    WKWebView *wv = self.webView;
+    if (!wv.window) return;
+    NSDictionary *info = note.userInfo;
+    CGRect end = [wv convertRect:[info[UIKeyboardFrameEndUserInfoKey] CGRectValue]
+             fromCoordinateSpace:wv.window.screen.coordinateSpace];
+    CGFloat overlap = CGRectIntersectsRect(wv.bounds, end)
+        ? MAX(0, CGRectGetMaxY(wv.bounds) - CGRectGetMinY(end)) : 0;
+    double duration = [info[UIKeyboardAnimationDurationUserInfoKey] doubleValue];
+    [wv evaluateJavaScript:[NSString stringWithFormat:
+        @"window.__batonKeyboard&&window.__batonKeyboard(%.1f,%.3f,%.1f)",
+        overlap, duration, [[NSDate date] timeIntervalSince1970] * 1000] completionHandler:nil];
+    [self reportBegin:0 since:CACurrentMediaTime()];
+}
+
+// The keyboard starts 5-50 ms after the notification, when UIKit commits it, and its curve
+// differs between iOS versions. Once committed, the probe's animation (same transaction)
+// carries the exact begin time and the spring's stiffness and mass.
+- (void)reportBegin:(int)attempt since:(CFTimeInterval)since {
+    CALayer *layer = self.probe.layer;
+    CAAnimation *animation = nil;
+    for (NSString *key in layer.animationKeys) {
+        CAAnimation *candidate = [layer animationForKey:key];
+        if (candidate.beginTime >= since) { animation = candidate; break; }
+    }
+    if (!animation) {
+        if (layer && attempt < 12) dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.008 * NSEC_PER_SEC)),
+                                                  dispatch_get_main_queue(), ^{ [self reportBegin:attempt + 1 since:since]; });
+        return;
+    }
+    NSString *spring = @"null";
+    if ([animation isKindOfClass:[CASpringAnimation class]]) {
+        CASpringAnimation *a = (CASpringAnimation *)animation;
+        spring = [NSString stringWithFormat:@"{mass:%g,stiffness:%g}", a.mass, a.stiffness];
+    }
+    [self.webView evaluateJavaScript:[NSString stringWithFormat:
+        @"window.__batonKeyboardBegin&&window.__batonKeyboardBegin(%.1f,%@)",
+        [[NSDate date] timeIntervalSince1970] * 1000 - (CACurrentMediaTime() - animation.beginTime) * 1000,
+        spring] completionHandler:nil];
+}
+@end
+
+static void baton_install_keyboard_bridge(WKWebView *wv) {
+    if (objc_getAssociatedObject(wv, &_baton_keyboard_bridge_key)
+        || UIDevice.currentDevice.userInterfaceIdiom != UIUserInterfaceIdiomPhone) return;
+    NSNotificationCenter *center = [NSNotificationCenter defaultCenter];
+    for (NSString *name in @[UIKeyboardWillShowNotification, UIKeyboardDidShowNotification,
+                             UIKeyboardWillHideNotification, UIKeyboardDidHideNotification,
+                             UIKeyboardWillChangeFrameNotification, UIKeyboardDidChangeFrameNotification]) {
+        [center removeObserver:wv name:name object:nil];
+    }
+    BatonKeyboardBridge *bridge = [[BatonKeyboardBridge alloc] init];
+    bridge.webView = wv;
+    UIView *root = wv.superview;
+    if (@available(iOS 15.0, *)) {
+        if (root) {
+            bridge.probe = [[UIView alloc] init];
+            bridge.probe.userInteractionEnabled = NO;
+            bridge.probe.translatesAutoresizingMaskIntoConstraints = NO;
+            [root addSubview:bridge.probe];
+            [NSLayoutConstraint activateConstraints:@[
+                [bridge.probe.leadingAnchor constraintEqualToAnchor:root.leadingAnchor],
+                [bridge.probe.widthAnchor constraintEqualToConstant:1],
+                [bridge.probe.heightAnchor constraintEqualToConstant:1],
+                [bridge.probe.bottomAnchor constraintEqualToAnchor:root.keyboardLayoutGuide.topAnchor],
+            ]];
+        }
+    }
+    [center addObserver:bridge selector:@selector(keyboardWillChangeFrame:)
+                   name:UIKeyboardWillChangeFrameNotification object:nil];
+    objc_setAssociatedObject(wv, &_baton_keyboard_bridge_key, bridge, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+}
+
 static void baton_fix_viewport(void) {
 
     UIWindow *kw = nil;
@@ -471,6 +556,7 @@ static void baton_fix_viewport(void) {
     checkWv.scrollView.scrollEnabled = NO;
     checkWv.scrollView.bounces = NO;
     checkWv.scrollView.alwaysBounceVertical = NO;
+    baton_install_keyboard_bridge(checkWv);
 
     CGFloat contentH = checkWv.scrollView.contentSize.height;
     CGFloat windowH = kw.bounds.size.height;
