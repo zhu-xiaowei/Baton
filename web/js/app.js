@@ -1972,6 +1972,7 @@ async function startNewSession(projectHash) {
   state.wsLoadingOlder = false;
   disconnectWs();
   state.pendingSentMessages = [];
+  document.querySelector('.star-card')?.remove(); // it belongs to the Session it was shown in
   var content = document.getElementById('content');
   var bar = document.getElementById('input-bar');
   if (bar && bar.parentElement !== document.body) document.body.appendChild(bar);
@@ -2124,6 +2125,7 @@ async function loadMessages(sessionId, preview, options) {
   // Switching sessions: drop the prior session's optimistic bubbles + orphan
   // state so they cannot match messages from the newly opened session.
   state.pendingSentMessages = [];
+  document.querySelector('.star-card')?.remove(); // it belongs to the Session it was shown in
   // The first history reply says whether the root has subagents; `threads` is asked only then.
   if (!options.preserveThreads) state.threadsPendingRoot = rootSessionId;
   startWs(sessionId);

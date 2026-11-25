@@ -10,15 +10,17 @@ const STAR = '<svg viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" st
 const load = () => { try { return JSON.parse(localStorage.getItem(KEY)) || {}; } catch { return { done: true }; } };
 const save = (patch) => { try { localStorage.setItem(KEY, JSON.stringify({ ...load(), ...patch })); } catch {} };
 let checking = false;
+const sentHere = new Set(); // turns this App started: only their replies count
 
-export function noteStarSend() {
+export function noteStarSend(turnId) {
   const s = load();
   if (!s.done) save({ sent: (s.sent || 0) + 1 });
+  sentHere.add(turnId);
 }
 
-export async function maybeAskForStar() {
+export async function maybeAskForStar(turnId) {
   const s = load(), shown = s.shown || 0;
-  if (checking || s.done || shown >= 3 || (s.sent || 0) < 5 * 2 ** shown || Date.now() - (s.at || 0) < 3 * 864e5) return;
+  if (!sentHere.delete(turnId) || checking || s.done || shown >= 3 || (s.sent || 0) < 5 * 2 ** shown || Date.now() - (s.at || 0) < 3 * 864e5) return;
   checking = true;
   try {
     await new Promise((resolve) => setTimeout(resolve, 2000));

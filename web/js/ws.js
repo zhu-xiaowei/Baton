@@ -1355,7 +1355,7 @@ function handleStrictTurnEnd(message) {
   );
   updateSendBtn();
   if (!message.error && message.continued !== true && !hasOutstandingTurns()
-    && !endMessages.some(function (row) { return row?.uuid === 'live_interrupt_' + message.turnId; })) void maybeAskForStar();
+    && !endMessages.some(function (row) { return row?.uuid === 'live_interrupt_' + message.turnId; })) void maybeAskForStar(message.turnId);
 }
 
 function scheduleTurnEndRecovery(sessionId, attempt) {
@@ -2460,7 +2460,6 @@ var _sendOrder = 0;
 var _turnSendOrder = new Map();
 
 function doSend(fullText, displayText, images) {
-  noteStarSend();
   prewarmed = { key: '', at: 0 }; // typing the next message prewarms at once
   if (restoreScrollFrame !== null) {
     cancelAnimationFrame(restoreScrollFrame);
@@ -2478,6 +2477,7 @@ function doSend(fullText, displayText, images) {
     ? crypto.randomUUID()
     : sentAt + '-' + Math.random().toString(36).slice(2));
   rememberLatestSend(msgId, false, seq);
+  noteStarSend(msgId);
   _turnSendOrder.set(msgId, seq);
   _queuedTurnIds.add(msgId);
   var sendPayload;
