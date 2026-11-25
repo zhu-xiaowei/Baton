@@ -6,6 +6,7 @@ import path from 'path';
 import os from 'os';
 import crypto from 'crypto';
 import { spawn } from 'child_process';
+import { githubStar } from './github-star.mjs';
 import { extractForApp, hasPendingImages, rowsWithImageKeys, synced, countJsonlLines } from './extract.mjs';
 import { toolPreviews } from './tool-preview.mjs';
 import {
@@ -863,6 +864,7 @@ function connect() {
         // Pairing on behalf of an App, which never holds K in a form it could seal itself (plan D2).
         // Caught up first, so the key it seals is the account's current one (`head`).
         pair_invite: async () => { await catchUpAccountKey(); return createInvite(_config); },
+        github_star: params => githubStar(params),
         update_now: () => { void _checkUpdate?.(true); return { ok: true }; }, // the App's Update: even while busy
         pair_approve: async params => { await catchUpAccountKey(); return approveJoin(_config, params.link); },
         // The recovery phrase is K: shown to an App of the account only (sealed like every reply).

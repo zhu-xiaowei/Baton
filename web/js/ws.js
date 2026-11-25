@@ -39,6 +39,7 @@ import {
   TurnEventQueue,
 } from './streaming.js';
 import { showToast } from './components/toast.js';
+import { maybeAskForStar, noteStarSend } from './components/star-prompt.js';
 import * as directTransport from './v2/direct-transport.js';
 import { ExecutionEventQueue } from './execution-events.js';
 
@@ -1353,6 +1354,8 @@ function handleStrictTurnEnd(message) {
     hasOutstandingTurns() ? 'running' : 'completed',
   );
   updateSendBtn();
+  if (!message.error && message.continued !== true && !hasOutstandingTurns()
+    && !endMessages.some(function (row) { return row?.uuid === 'live_interrupt_' + message.turnId; })) void maybeAskForStar();
 }
 
 function scheduleTurnEndRecovery(sessionId, attempt) {
@@ -2457,6 +2460,7 @@ var _sendOrder = 0;
 var _turnSendOrder = new Map();
 
 function doSend(fullText, displayText, images) {
+  noteStarSend();
   prewarmed = { key: '', at: 0 }; // typing the next message prewarms at once
   if (restoreScrollFrame !== null) {
     cancelAnimationFrame(restoreScrollFrame);

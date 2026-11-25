@@ -672,6 +672,13 @@ html[data-theme="light"] .d2h-info { background-color: var(--surface-info); }
 }
 .modal-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .modal-btn.confirm.danger { background: var(--danger-solid); }
+.star-card { margin-bottom: 8px; padding: 12px 14px; background: var(--surface-elevated); border: 1px solid var(--border); border-radius: 12px; font-size: 14px; }
+.star-card-title { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+.star-card svg { width: 16px; height: 16px; flex-shrink: 0; color: var(--warning); fill: rgba(var(--warning-rgb), 0.6); }
+.star-card p { margin: 6px 0 10px; color: var(--text-secondary); font-size: 13px; }
+.star-card-actions { display: flex; gap: 8px; }
+.star-card .ext-link { flex: 1; text-decoration: none; color: var(--text-primary); background: rgba(var(--warning-rgb), 0.15); border-color: rgba(var(--warning-rgb), 0.6); }
+.star-card .ext-link svg { fill: none; }
 @media (hover: hover) and (pointer: fine) { .modal-btn.confirm.danger:hover { background: var(--danger); } }
 
 /* ---- Batch-delete selection ---- */
