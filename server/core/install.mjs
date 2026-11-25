@@ -140,7 +140,8 @@ if [ -n "$EXISTING_NAME" ]; then
     DEVICE_DISPLAY_NAME="$DEFAULT_NAME"
   fi
 else
-  DEFAULT_NAME="\${REQUESTED_NAME:-$(hostname)}"
+  # The short host name: EC2's FQDN (ip-…compute.internal) is longer than the 32-character limit.
+  DEFAULT_NAME="\${REQUESTED_NAME:-$( (hostname -s || hostname) 2>/dev/null | cut -c1-32)}"
   if tty -s 2>/dev/null < /dev/tty; then
     while true; do
       printf "Device name [%s]: " "$DEFAULT_NAME" > /dev/tty
@@ -468,6 +469,8 @@ export async function installScript({ headers }, apiKey, name, platform, presign
     '#!/bin/bash\n' +
     'set -e\n' +
     '\n' +
+    '# SSM run-command and cloud-init run without HOME.\n' +
+    'export HOME="${HOME:-$(getent passwd "$(id -un)" | cut -d: -f6)}"\n' +
     'DIR="$HOME/.baton-bridge"\n' +
     'USER_NODE=$(command -v node || true)\n' +
     'USER_NODE_DIR=${USER_NODE:+$(dirname "$USER_NODE")}\n' +

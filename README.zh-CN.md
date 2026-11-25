@@ -108,13 +108,13 @@ irm https://agentbaton.app/install.ps1 | iex
 
 ### 1. 部署服务器
 
-需要安装 [AWS CLI](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html)，并具备创建 CloudFormation 堆栈的权限。
+需要安装 [AWS CLI](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html)，并具备创建 CloudFormation 堆栈的权限；另需 `git`、`zip` 和 `openssl`。
 
 ```bash
-curl -fsSL https://github.com/agentbaton/baton/releases/latest/download/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/agentbaton/baton/main/server/install.sh | bash
 ```
 
-部署约需 6–8 分钟，成功后会输出 **Start URL** 和二维码。支持 `--region`、`--stack`、`--profile` 选项（通过 `bash -s --` 传入）。
+部署约需 6–8 分钟，成功后会输出 **Start URL**（装有 Node.js 时还会输出二维码）。支持 `--region`、`--stack`、`--profile` 选项（通过 `bash -s --` 传入）。
 
 
 ### 2. 安装 Bridge

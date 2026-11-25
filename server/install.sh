@@ -2,7 +2,7 @@
 # Baton Server — one-command deploy
 #
 # Usage:
-#   curl -fsSL https://github.com/agentbaton/baton/releases/latest/download/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/agentbaton/baton/main/server/install.sh | bash
 #   curl ... | bash -s -- --region us-west-2
 #   ./install.sh                                 # from cloned repo
 #   ./install.sh --region us-west-2
@@ -135,7 +135,6 @@ wait_stack() {
 REGION=""
 STACK_NAME="Baton"
 PROFILE=""
-REPO_NAME="baton-api"
 TAG="latest"
 ROTATE_KEY=false
 
@@ -181,6 +180,8 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 TEMPLATE="$SCRIPT_DIR/template/Baton.template"
 WEB_DIR="$SCRIPT_DIR/../web"
 ROOT_DIR="$SCRIPT_DIR/.."
+# One image repository per stack (the default stack keeps baton-api), so stacks never move each other's :latest.
+REPO_NAME="$(echo "$STACK_NAME" | tr '[:upper:]' '[:lower:]')-api"
 REPO_URI="${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com/${REPO_NAME}"
 S3_BUCKET="$(echo "$STACK_NAME" | tr '[:upper:]' '[:lower:]')-${REGION}-images-${ACCOUNT_ID}"
 CODEBUILD_PROJECT="${STACK_NAME}-build"
@@ -192,7 +193,7 @@ aws s3 mb "s3://${S3_BUCKET}" --region "$REGION" >/dev/null 2>&1 || true
 aws s3api put-bucket-cors --bucket "$S3_BUCKET" --region "$REGION" --cors-configuration \
   '{"CORSRules":[{"AllowedOrigins":["*"],"AllowedMethods":["GET","PUT","HEAD"],"AllowedHeaders":["*"],"ExposeHeaders":["ETag","Content-Length","Content-Type","x-amz-checksum-sha256","x-amz-meta-filename","x-amz-meta-content-type","x-amz-meta-sealed"],"MaxAgeSeconds":3600}]}'
 # t/<account>/ is a transfer channel, emptied after 7 days; the pre-v2 file prefixes empty out once.
-aws s3api put-bucket-lifecycle-configuration --bucket "$S3_BUCKET" --region "$REGION" --lifecycle-configuration \
+aws s3api put-bucket-lifecycle-configuration --bucket "$S3_BUCKET" --region "$REGION" >/dev/null --lifecycle-configuration \
   '{"Rules":[{"ID":"transfer","Status":"Enabled","Filter":{"Prefix":"t/"},"Expiration":{"Days":7}},
     {"ID":"images","Status":"Enabled","Filter":{"Prefix":"images/"},"Expiration":{"Days":1}},
     {"ID":"files","Status":"Enabled","Filter":{"Prefix":"files/"},"Expiration":{"Days":1}},
@@ -238,7 +239,7 @@ cp -r "$SCRIPT_DIR/core" "$SCRIPT_DIR/aws" "$BUILD_CTX/server/"
 cp -r "$WEB_DIR" "$BUILD_CTX/web"
 mkdir -p "$BUILD_CTX/bridge"
 cp "$ROOT_DIR/bridge/preview-protocol.mjs" \
-  "$ROOT_DIR/bridge/direct-rpc-protocol.mjs" "$ROOT_DIR/bridge/transfer-store.mjs" "$ROOT_DIR/bridge/e2ee.mjs" "$BUILD_CTX/bridge/"
+  "$ROOT_DIR/bridge/direct-rpc-protocol.mjs" "$ROOT_DIR/bridge/transfer-store.mjs" "$ROOT_DIR/bridge/e2ee.mjs" "$ROOT_DIR/bridge/entry.mjs" "$BUILD_CTX/bridge/"
 rm -f "$BUILD_CTX/web/test_api.py" 2>/dev/null || true
 cp "$ROOT_DIR/package.json" "$ROOT_DIR/package-lock.json" "$ROOT_DIR/vite.config.js" "$BUILD_CTX/"
 

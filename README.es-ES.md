@@ -108,13 +108,13 @@ Ejecuta tu propio servidor en tu cuenta de AWS en lugar de usar el servicio aloj
 
 ### 1. Desplegar el servidor
 
-Requiere [AWS CLI](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html) con permisos para crear pilas de CloudFormation.
+Requiere [AWS CLI](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html) con permisos para crear pilas de CloudFormation, además de `git`, `zip` y `openssl`.
 
 ```bash
-curl -fsSL https://github.com/agentbaton/baton/releases/latest/download/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/agentbaton/baton/main/server/install.sh | bash
 ```
 
-Tarda unos 6–8 minutos. Al finalizar, muestra una **Start URL** y un código QR. Admite las opciones `--region`, `--stack` y `--profile` (añádelas después de `bash -s --`).
+Tarda unos 6–8 minutos. Al finalizar, muestra una **Start URL** (y un código QR si Node.js está instalado). Admite las opciones `--region`, `--stack` y `--profile` (añádelas después de `bash -s --`).
 
 
 ### 2. Instalar el Bridge
