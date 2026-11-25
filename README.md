@@ -114,7 +114,7 @@ Requires [AWS CLI](https://docs.aws.amazon.com/cli/latest/userguide/getting-star
 curl -fsSL https://raw.githubusercontent.com/agentbaton/baton/main/server/install.sh | bash
 ```
 
-Takes ~6-8 minutes. Prints a **Start URL** and QR code on success. Supports `--region`, `--stack`, `--profile` options (pass after `bash -s --`).
+Takes ~6-8 minutes. Prints a **Start URL** (and a QR code when Node.js is installed) on success. Supports `--region`, `--stack`, `--profile` options (pass after `bash -s --`).
 
 
 ### 2. Install Bridge

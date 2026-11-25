@@ -114,7 +114,7 @@ irm https://agentbaton.app/install.ps1 | iex
 curl -fsSL https://raw.githubusercontent.com/agentbaton/baton/main/server/install.sh | bash
 ```
 
-部署约需 6–8 分钟，成功后会输出 **Start URL** 和二维码。支持 `--region`、`--stack`、`--profile` 选项（通过 `bash -s --` 传入）。
+部署约需 6–8 分钟，成功后会输出 **Start URL**（装有 Node.js 时还会输出二维码）。支持 `--region`、`--stack`、`--profile` 选项（通过 `bash -s --` 传入）。
 
 
 ### 2. 安装 Bridge
