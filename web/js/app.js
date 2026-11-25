@@ -948,6 +948,7 @@ function switchAgentThread(sessionId) {
 }
 
 function showInputBar(visible) {
+  document.querySelector('.star-card')?.remove(); // it belongs to the Session it was shown in
   var bar = document.getElementById('input-bar');
   var scrollButton = document.getElementById('scroll-bottom-btn');
   bar.style.display = visible ? 'flex' : 'none';
