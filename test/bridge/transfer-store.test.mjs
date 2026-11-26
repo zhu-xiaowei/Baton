@@ -31,8 +31,8 @@ test('stored content is reused only while it outlives the hours its writer remem
   const prepare = (ageMs) => createTransferStore(access, async () => new Response(null, { status: 200, headers: {
     'content-length': '5', 'x-amz-checksum-sha256': checksum, 'last-modified': new Date(Date.now() - ageMs).toUTCString() } }))
     .prepareUpload({ name: 'a.txt', size: 5, contentHash });
-  assert.deepEqual(await prepare(7 * hour), { key: 'c'.repeat(32) + '.txt', exists: true });
-  const old = await prepare(9 * hour);
+  assert.deepEqual(await prepare(21 * hour), { key: 'c'.repeat(32) + '.txt', exists: true });
+  const old = await prepare(22 * hour);
   assert.equal(old.key, 'c'.repeat(32) + '.txt');
   assert.ok(old.url && !old.exists, 'an object near its expiry is written again under the same key');
 });

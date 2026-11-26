@@ -18,7 +18,7 @@ export function countJsonlLines(filePath) {
 // Fixed timestamp for uuid/timestamp-less metadata rows — keeps them identical across reads.
 const META_EPOCH_TS = '1970-01-01T00:00:00.000Z';
 
-// History pages are read again and again: each image is compressed and uploaded once per reuse window.
+// History pages are read again and again: each image is compressed at most every 30 minutes.
 const imageKeys = transferKeys(500); // sha1(base64) → Promise<key>
 
 function processImage(base64Data) {

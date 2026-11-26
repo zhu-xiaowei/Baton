@@ -7,10 +7,12 @@ const encoder = new TextEncoder();
 const KEY = /^[0-9a-f]{8,64}(?:\.[a-z0-9]{1,16})?$/;
 const MAX_EXPIRES = 3600;
 // Objects expire 1 day after they were written on Cloudflare. One older than REUSE_MS is written again,
-// and a key is remembered no longer (`transferKeys`), so a key handed out is at most 16 h old.
-const REUSE_MS = 8 * 3600_000;
+// and a key is remembered for REMEMBER_MS (`transferKeys`), so a key handed out still has 2 h for
+// the App to read it (videos and PDFs keep reading ranges while open).
+const REUSE_MS = 21.5 * 3600_000;
+const REMEMBER_MS = 30 * 60_000;
 export const reusable = (object) => !!object && Date.now() - object.modified < REUSE_MS;
-export const transferKeys = (limit) => recentKeys(limit, REUSE_MS);
+export const transferKeys = (limit) => recentKeys(limit, REMEMBER_MS);
 
 export const IMAGE_TYPES = {
   png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp',
