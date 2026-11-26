@@ -85,13 +85,15 @@ setNativeTabTitle('Settings');
   var paired = state.KEY.indexOf('bt_') === 0;
   var listing = null;
   var installBase = '';  // the hosted service's short install address (agentbaton.app), if it has one
+  // The first frame uses what /devices said last time (or the hosted service's known values); it only corrects.
+  var accountStore = 'baton-settings-account';  // cleared with the account (api.js)
+  var account = state.SERVER === 'https://api.agentbaton.app' ? { hosted: true, install: 'https://agentbaton.app' } : null;
+  try { account = JSON.parse(localStorage.getItem(accountStore)) || account; } catch (_) {}
   if (paired) devices().then(function (body) {
     listing = body;
-    installBase = body.install || '';
-    if (installBase) document.querySelector('[data-panel="install"] .text').textContent = connectText('install', '');
-    document.querySelectorAll('.hosted-only').forEach(function (row) { row.hidden = !body.hosted; });
-    // A paired App of a self-hosted stack has no install command it could show (the public one is hosted only).
-    if (!body.hosted) { document.querySelector('[data-tab="install"]').hidden = true; window.selectConnectTab('url'); }
+    account = { hosted: !!body.hosted, install: body.install || '' };
+    try { localStorage.setItem(accountStore, JSON.stringify(account)); } catch (_) {}
+    applyAccount();
   }, function () {});
 
   // Text content only (the device's own name); never inside an attribute.
@@ -269,14 +271,6 @@ setNativeTabTitle('Settings');
     else copyText(button, block.querySelector('.text').textContent);
   };
 
-  // A paired account's install command is public (this server's /install, no credential): shown as it is.
-  if (paired) {
-    var install = document.querySelector('[data-panel="install"]');
-    install.querySelector('.text').textContent = connectText('install', '');
-    install.classList.remove('masked');
-    install.querySelector('.code-btn').innerHTML = COPY_ICON;
-  }
-
   window.selectConnectTab = function (tab) {
     document.querySelectorAll('.connect-tabs .platform-option').forEach(function (button) {
       button.classList.toggle('active', button.dataset.tab === tab);
@@ -284,6 +278,25 @@ setNativeTabTitle('Settings');
     document.querySelectorAll('.connect [data-panel]').forEach(function (panel) { panel.hidden = panel.dataset.panel !== tab; });
     if (tab === 'qr' && !document.querySelector('.connect .qr-frame.ready')) reveal(null);
   };
+
+  // A paired account's install command is public (no credential): shown as it is.
+  function applyAccount() {
+    installBase = account && account.install || '';
+    var install = document.querySelector('[data-panel="install"]');
+    var text = connectText('install', '');
+    if (install.querySelector('.text').textContent !== text) install.querySelector('.text').textContent = text;
+    if (install.classList.contains('masked')) {
+      install.classList.remove('masked');
+      install.querySelector('.code-btn').innerHTML = COPY_ICON;
+    }
+    if (!account) return;
+    document.querySelectorAll('.hosted-only').forEach(function (row) { row.hidden = !account.hosted; });
+    // A paired App of a self-hosted stack has no install command it could show (the public one is hosted only).
+    var tab = document.querySelector('[data-tab="install"]');
+    tab.hidden = !account.hosted;
+    if (tab.hidden && tab.classList.contains('active')) window.selectConnectTab('url');
+  }
+  if (paired) applyAccount();
 
   function drawQr(startUrl) {
     var qr = qrcode(0, 'M');

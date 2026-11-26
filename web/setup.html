@@ -32,7 +32,7 @@
     display: flex; flex-direction: column;
   }
   .setup-bar { display: flex; align-items: center; min-height: 44px; padding: 6px 8px; padding-top: max(var(--sat, env(safe-area-inset-top, 0px)), 6px); background: var(--surface-elevated); border-bottom: 1px solid var(--border); flex-shrink: 0; }
-  .setup-content { flex: 1; overflow-y: auto; padding: 24px 16px; padding-bottom: calc(var(--sab, env(safe-area-inset-bottom, 0px)) + 24px); display: flex; flex-direction: column; align-items: center; background: var(--canvas); }
+  .setup-content { flex: 1; overflow-y: scroll; scrollbar-gutter: stable; padding: 24px 16px; padding-bottom: calc(var(--sab, env(safe-area-inset-bottom, 0px)) + 24px); display: flex; flex-direction: column; align-items: center; background: var(--canvas); }
   /* Add device's swipe-back underlay (cloned with inset: 0) keeps the page's own layout. */
   .edge-back-underlay > :is(.setup-bar, .setup-content) { position: relative !important; inset: auto !important; }
   .setup-back-slot { width: 28px; height: 28px; flex: 0 0 28px; display: flex; }
@@ -133,6 +133,7 @@
 </style>
 </head>
 <body>
+<script>if(/Mac/.test(navigator.platform)&&navigator.maxTouchPoints<2)document.body.classList.add('is-macos');</script>
 
 <div class="setup-bar">
   <span id="setupBackButton" class="setup-back-slot"></span>
