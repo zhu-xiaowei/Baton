@@ -160,7 +160,7 @@ Baton alude tanto al testigo de una carrera de relevos como a la batuta de un di
 
 ### Relay alojado
 
-- **Mover un ordenador a otra cuenta**: ejecuta `node ~/.baton-bridge/bridge.mjs pair --leave` en él.
+- **Mover un ordenador a otra cuenta**: ejecuta `node ~/.baton-bridge/bridge.mjs leave` en él.
 - **Quitar un ordenador**: mantenlo pulsado en la pantalla de inicio de la App y elige **Remove**; su Bridge se detiene y desactiva el inicio automático.
 - **Eliminar la cuenta**: **Settings** → **Delete account**.
 

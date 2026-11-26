@@ -69,3 +69,13 @@ test('logging out closes every socket of that token, though the role index has n
   await accounts.routes.find((route) => route.path === '/api/tokens/revoke').handler({ body: {}, auth: { accountId: 'a', tokenHash: 'mine' } });
   assert.deepEqual(closed, ['app_data']);
 });
+
+test('a computer logging out (leave) leaves the device list too', async () => {
+  const { createAccounts } = await import('../../server/core/accounts.mjs');
+  const gone = [];
+  const accounts = createAccounts({ env: {}, table: { query: async () => ({ Items: [] }), deleteItem: async () => {} },
+    devices: { delete: async (account, name) => gone.push(`${account}/${name}`) }, sockets: {}, log: () => {} });
+  await accounts.routes.find((route) => route.path === '/api/tokens/revoke').handler({ body: {},
+    auth: { accountId: 'a', kind: 'bridge', deviceName: 'pc-1', tokenHash: 'mine' } });
+  assert.deepEqual(gone, ['a/pc-1']);
+});

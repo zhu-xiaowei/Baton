@@ -160,7 +160,7 @@ Baton 既是接力棒，也是指挥棒：你可以在另一台设备上接着�
 
 ### 托管中继
 
-- **把电脑换到另一个账户**：在这台电脑上运行 `node ~/.baton-bridge/bridge.mjs pair --leave`。
+- **把电脑换到另一个账户**：在这台电脑上运行 `node ~/.baton-bridge/bridge.mjs leave`。
 - **移除一台电脑**：在 App 首页长按这台电脑，选择 **Remove**；它的 Bridge 会停止运行并关闭开机自启。
 - **删除账户**：**Settings** → **Delete account**。
 
