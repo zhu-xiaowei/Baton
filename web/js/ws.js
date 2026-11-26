@@ -198,9 +198,11 @@ if (window.visualViewport && _isMobile) {
     document.body.style.top = top + 'px';
     document.body.style.height = (layoutPixels(_webKitPans ? _vpBaseHeight : vv.height) + chromeHeight) + 'px';
     document.body.style.transform = chromeHeight ? 'translateY(-' + chromeHeight + 'px)' : '';
-    // Slide it while WebKit's keyboard scroll is fastest, so the page keeps moving one way.
+    // Slide it while WebKit's keyboard scroll is fastest, so the page keeps moving one way;
+    // composited, so a busy main thread cannot turn the slide into a jump.
     if (wasPanning !== _webKitPans && Math.abs(top - previousTop) >= 1) {
-      document.body.animate({ top: [previousTop + 'px', top + 'px'] }, { duration: 80, delay: 50, fill: 'backwards' });
+      document.body.animate({ transform: ['translateY(' + (previousTop - top) + 'px)', 'none'] },
+        { duration: 80, delay: 50, fill: 'backwards' });
     }
     if (window.positionScrollBtn) window.positionScrollBtn();
     if (_followKeyboardOpen && _keyboardOpenFrame === null) {
