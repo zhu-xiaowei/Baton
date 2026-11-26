@@ -29,7 +29,6 @@ test('failed file deletion stays visible in the modal', async () => {
   Object.assign(h.context, {
     state: { selected: new Set(['session']), selectType: 'session', appState: { device: 'device' } },
     document: { getElementById: (id) => id === 'deleteError' ? error : {} },
-    _deleteCountdownTimer: null,
     setButtonLoading() {},
     closeDeleteModal: () => { closed = true; },
   });
