@@ -311,11 +311,19 @@ async function deleteSession(id) {
   const d = deleter ||= { c: connect(os.homedir()), n: 0 };
   d.n++;
   clearTimeout(d.timer);
+  const del = () => d.c.rpc.request('session/delete', { sessionId: id }, { timeoutMs: 30_000 });
   try {
     await d.c.ready;
-    await d.c.rpc.request('session/delete', { sessionId: id }, { timeoutMs: 30_000 });
-  } catch {
+    await del().catch(async (e) => {
+      // Kiro refuses to delete a Session owning unfinished workflow runs; they go with it (a live one Kiro still refuses).
+      const runs = e.rpc?.data?.errorType === 'SessionOwnsLiveWorkflowsError' && e.rpc.data.workflowIds;
+      if (!runs) throw e;
+      for (const workflowId of runs) await d.c.rpc.request('_kiro/workflow/delete', { workflowId }, { timeoutMs: 30_000 });
+      await del();
+    });
+  } catch (e) {
     if (deleter === d && (!d.c.rpc || d.c.rpc.error)) deleter = null; // the process failed: the next delete starts another
+    if (e.rpc && e.rpc.code !== -32601) throw e; // Kiro's own reason; the CLI only finds Sessions of its cwd
     // kiro-cli without ACP session/delete
     await promisify(execFile)(await kiroBin(), ['chat', '--delete-session', id], { timeout: 30_000 });
   } finally {

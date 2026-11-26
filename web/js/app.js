@@ -1769,7 +1769,6 @@ function openDeleteModal() {
     : (n > 1 ? 'They' : 'It') + ' will be permanently deleted from the device.';
   var err = document.getElementById('deleteError'); if (err) err.textContent = '';
   resetDeleteBtn();
-  armDeleteCountdown('Delete');
   showCenteredModal(modal);
 }
 
@@ -1780,7 +1779,7 @@ function resetDeleteBtn() {
   btn.textContent = 'Delete';
 }
 
-// A 5s countdown before the confirm button is clickable (guards misfires).
+// Removing a device uninstalls its Bridge: a 5s countdown before the button is clickable (guards misfires).
 function armDeleteCountdown(label) {
   var btn = document.getElementById('deleteConfirmBtn');
   var left = 5;
@@ -1858,7 +1857,6 @@ async function submitDelete() {
   if (!ids.length) return;
   var device = state.appState.device || '';
   var isProject = state.selectType === 'project';
-  if (_deleteCountdownTimer) { clearInterval(_deleteCountdownTimer); _deleteCountdownTimer = null; }
   setButtonLoading(btn, 'Deleting');
   try {
     await performDelete(device, isProject, ids);
