@@ -86,7 +86,7 @@ setNativeTabTitle('Settings');
   var listing = null;
   var installBase = '';  // the hosted service's short install address (agentbaton.app), if it has one
   // The first frame uses what /devices said last time (or the hosted service's known values); it only corrects.
-  var accountStore = 'baton-settings-account:' + state.SERVER;
+  var accountStore = 'baton-settings-account';  // cleared with the account (api.js)
   var account = state.SERVER === 'https://api.agentbaton.app' ? { hosted: true, install: 'https://agentbaton.app' } : null;
   try { account = JSON.parse(localStorage.getItem(accountStore)) || account; } catch (_) {}
   if (paired) devices().then(function (body) {
