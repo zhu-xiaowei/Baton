@@ -173,6 +173,7 @@ if (window.visualViewport && _isMobile) {
     // WebKit scrolls the page itself, in step with the keyboard, to reveal the composer;
     // also moving the body to the visual viewport fights that animation. Kept until the
     // keyboard is gone, since blur comes before the closing resize.
+    var wasPanning = _webKitPans;
     _webKitPans = _isIOS && kbUp && (_webKitPans || document.activeElement?.id === 'msg-input');
     var chromeHeight = 0;
     if (_isIOS && kbUp && !_webKitPans
@@ -184,13 +185,22 @@ if (window.visualViewport && _isMobile) {
         chromeHeight += breadcrumb.offsetHeight;
       }
     }
+    var bar = _isIOS && document.getElementById('input-bar');
+    if (bar) {
+      bar.classList.toggle('kb-up', kbUp);
+      bar.classList.toggle('kb-pan', _webKitPans);
+    }
+    // The composer keeps its safe-area padding; the page drops by it instead, without resizing.
+    var shift = _webKitPans && bar ? Math.max(0, parseFloat(getComputedStyle(bar).paddingBottom) - 8) : 0;
+    var top = layoutPixels(_isIOS && !_webKitPans ? vv.offsetTop : 0) + shift;
+    var previousTop = parseFloat(document.body.style.top) || 0;
     document.body.style.bottom = 'auto';
-    document.body.style.top = layoutPixels(_isIOS && !_webKitPans ? vv.offsetTop : 0) + 'px';
+    document.body.style.top = top + 'px';
     document.body.style.height = (layoutPixels(_webKitPans ? _vpBaseHeight : vv.height) + chromeHeight) + 'px';
     document.body.style.transform = chromeHeight ? 'translateY(-' + chromeHeight + 'px)' : '';
-    if (_isIOS) {
-      var bar = document.getElementById('input-bar');
-      if (bar) bar.classList.toggle('kb-up', kbUp);
+    // Slide it while WebKit's keyboard scroll is fastest, so the page keeps moving one way.
+    if (wasPanning !== _webKitPans && Math.abs(top - previousTop) >= 1) {
+      document.body.animate({ top: [previousTop + 'px', top + 'px'] }, { duration: 80, delay: 50, fill: 'backwards' });
     }
     if (window.positionScrollBtn) window.positionScrollBtn();
     if (_followKeyboardOpen && _keyboardOpenFrame === null) {
