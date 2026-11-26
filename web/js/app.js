@@ -33,6 +33,7 @@ import { savedTerminalFolder, saveTerminalView } from './terminal-view-state.js'
 import { homeProject } from './project/home.js';
 import { showToast } from './components/toast.js';
 import { removeDevice } from './v2/pairing.js';
+import { knownDeviceNames } from './v2/direct-transport.js';
 import { parsePreviewTarget } from './preview-link.js';
 import { openExternalLink, previewNativeAvailable } from './native-shell.js';
 import { CHECK_ICON_SVG, FOLDER_ICON_SVG, GIT_BRANCH_ICON_SVG, TERMINAL_ICON_SVG } from './components/icons.js';
@@ -1396,7 +1397,6 @@ function shortModel(m) {
 function rememberDevices(data) {
   (data?.devices || []).forEach(function (device) {
     state.deviceOnlineMap[device.deviceName] = device.online;
-    state.deviceDisplayNameMap[device.deviceName] = device.deviceDisplayName || device.deviceName;
   });
   window.__deviceDisplayNames = state.deviceDisplayNameMap;
 }
@@ -2389,6 +2389,9 @@ attachLongPress(document.getElementById('content'), 'device', openDeviceDeleteMo
 // Auto-connect + restore last session
 (function () {
   if (!state.KEY) return; // auth guard in index.html handles redirect
+  // Names come from /devices (direct-transport.js devices()); until it answers, the ones last known here.
+  Object.assign(state.deviceDisplayNameMap, knownDeviceNames());
+  window.__deviceDisplayNames = state.deviceDisplayNameMap;
   // Inline shell already painted + replayed navigation — skip to avoid clearing its state.
   if (window.__inlineRendered) return;
 

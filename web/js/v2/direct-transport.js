@@ -668,6 +668,11 @@ function reconcile() {
   }
 }
 
+const DEVICE_NAMES = 'baton-device-names:';
+export function knownDeviceNames() {
+  try { return JSON.parse(localStorage.getItem(DEVICE_NAMES + state.SERVER) || '{}'); } catch { return {}; }
+}
+
 // GET /devices; its routes reach pending requests at once. Concurrent callers share one request.
 export function devices() {
   devicesAt = performance.now();
@@ -681,18 +686,22 @@ export function devices() {
     const body = await response.json();
     if (body.protocol === 2) updateRoutes(body);
     if (body.rotations?.length) await followRotations(body.rotations);
-    // A hosted computer's display name is sealed under K (bridge/e2ee-node.mjs sealDeviceName). One sealed under a K
-    // replaced while it was offline keeps the name last opened here until it seals it again; else its ID.
-    if (body.devices?.some((device) => device.nameSealed)) {
+    // A hosted computer's display name is sealed under K (bridge/e2ee-node.mjs sealDeviceName); one sealed under
+    // another K shows its ID, one not opened without K here the name last known here; unsealed names are in clear.
+    if (body.devices) {
       await accountKeys();
-      const store = 'baton-device-names:' + state.SERVER, known = JSON.parse(localStorage.getItem(store) || '{}');
-      if (keys) await Promise.all(body.devices.map(async (device) => {
-        if (!device.nameSealed) return;
-        const name = await keys.openName(device.nameSealed, device.deviceName);
-        if (name) known[device.deviceName] = name;
-        device.deviceDisplayName = name || known[device.deviceName] || device.deviceDisplayName;
+      const known = knownDeviceNames();
+      let changed = false;
+      await Promise.all(body.devices.map(async (device) => {
+        const opened = device.nameSealed && keys ? await keys.openName(device.nameSealed, device.deviceName) : '';
+        if (device.nameSealed && keys && !opened) delete known[device.deviceName];
+        else if (opened || !device.nameSealed) known[device.deviceName] = opened || device.deviceDisplayName || device.deviceName;
+        device.deviceDisplayName = known[device.deviceName] || device.deviceName;
+        changed ||= device.deviceName === state.appState.device && state.deviceDisplayNameMap[device.deviceName] !== device.deviceDisplayName;
+        state.deviceDisplayNameMap[device.deviceName] = device.deviceDisplayName;
       }));
-      localStorage.setItem(store, JSON.stringify(known));
+      try { localStorage.setItem(DEVICE_NAMES + state.SERVER, JSON.stringify(known)); } catch {}
+      if (changed) window.updateBreadcrumb?.();
     }
     return body;
   })().finally(() => { devicesInflight = null; });

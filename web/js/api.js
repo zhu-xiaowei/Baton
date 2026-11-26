@@ -41,6 +41,7 @@ function clearCachedAccountData() {
   window.disconnectWs?.();
   localStorage.removeItem('apeek_home_cache');
   localStorage.removeItem('apeek_v2_home_devices');
+  localStorage.removeItem('baton-device-names:' + state.SERVER);
   resetDirectTransport();
   answers.clear();
   localStorage.removeItem('baton-preview-ports');
