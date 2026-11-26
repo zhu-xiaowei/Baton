@@ -52,7 +52,7 @@ header.scrolled{border-color:var(--border2)}
 .gh:hover{color:var(--text);background:var(--surface)}
 .gh svg{width:20px;height:20px}
 /* hero */
-.hero{position:relative;padding:76px 0 40px;text-align:center;isolation:isolate}
+.hero{position:relative;padding:76px 0 0;text-align:center;isolation:isolate}
 .hero:before{content:"";position:absolute;inset:-60px 0 auto;height:720px;z-index:-1;background:radial-gradient(600px 320px at 50% 18%,var(--glow),transparent 70%),radial-gradient(420px 260px at 72% 46%,var(--glow2),transparent 70%);pointer-events:none}
 .hero:after{content:"";position:absolute;inset:0 0 auto;height:640px;z-index:-2;background-image:linear-gradient(var(--border2) 1px,transparent 1px),linear-gradient(90deg,var(--border2) 1px,transparent 1px);background-size:56px 56px;-webkit-mask-image:radial-gradient(ellipse 60% 55% at 50% 30%,#000 10%,transparent 75%);mask-image:radial-gradient(ellipse 60% 55% at 50% 30%,#000 10%,transparent 75%);opacity:.55;pointer-events:none}
 
@@ -93,7 +93,8 @@ html[lang|=zh] .agents p{letter-spacing:.2em}
 @media (hover:hover) and (max-width:767px){.ag[data-n]:after{content:attr(data-n);position:absolute;bottom:calc(100% + 8px);left:50%;transform:translate(-50%,4px);padding:4px 9px;border-radius:7px;background:var(--btn);color:var(--on-btn);font-size:12px;font-weight:600;white-space:nowrap;opacity:0;pointer-events:none;transition:opacity .15s,transform .15s}
 .ag[data-n]:hover:after,.ag[data-n]:focus-visible:after{opacity:1;transform:translate(-50%,0)}}
 #start{scroll-margin-top:64px}
-@media (min-width:768px){#start .rv{text-align:center}#start .go{margin:36px auto 0}}
+@media (min-width:768px){#start .go{max-width:none;margin-top:40px;padding:28px;border:1px solid var(--border);border-radius:18px;background:linear-gradient(180deg,var(--surface),color-mix(in srgb,var(--surface) 40%,var(--bg)))}
+#start .gs+.gs{margin-top:24px;padding-top:24px;border-top:1px solid var(--border2)}}
 /* stage: Claude Code terminal + Baton App, same Session */
 .views{display:none}
 .stage{position:relative;height:609px;display:flex;justify-content:center;align-items:center;gap:40px;max-width:1000px;margin:56px auto 0;text-align:left;transition:opacity .35s}
