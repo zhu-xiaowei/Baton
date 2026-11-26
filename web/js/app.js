@@ -1753,6 +1753,7 @@ async function submitNewProject() {
   err.textContent = result.error || 'Could not create project.';
 }
 
+var _deleteCountdownTimer = null;
 var _deviceToDelete = null;
 
 function openDeleteModal() {
@@ -1772,9 +1773,22 @@ function openDeleteModal() {
 }
 
 function resetDeleteBtn() {
+  if (_deleteCountdownTimer) { clearInterval(_deleteCountdownTimer); _deleteCountdownTimer = null; }
   var btn = document.getElementById('deleteConfirmBtn');
   setButtonLoading(btn);
   btn.textContent = 'Delete';
+}
+
+// Removing a device uninstalls its Bridge: a 5s countdown before the button is clickable (guards misfires).
+function armDeleteCountdown(label) {
+  var btn = document.getElementById('deleteConfirmBtn');
+  var left = 5;
+  btn.disabled = true; btn.textContent = label + ' (' + left + ')';
+  _deleteCountdownTimer = setInterval(function () {
+    left--;
+    if (left <= 0) { clearInterval(_deleteCountdownTimer); _deleteCountdownTimer = null; btn.disabled = false; btn.textContent = label; }
+    else btn.textContent = label + ' (' + left + ')';
+  }, 1000);
 }
 
 function closeDeleteModal() {
@@ -1792,7 +1806,7 @@ function openDeviceDeleteModal(device) {
     + 'Its Bridge stops and no longer starts automatically; files on the device are kept. To add it again, run a new install command from Setup.';
   var err = document.getElementById('deleteError'); if (err) err.textContent = '';
   resetDeleteBtn();
-  document.getElementById('deleteConfirmBtn').textContent = 'Remove';
+  armDeleteCountdown('Remove');
   showCenteredModal(document.getElementById('deleteModal'));
 }
 
