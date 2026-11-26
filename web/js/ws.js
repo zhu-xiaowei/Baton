@@ -130,16 +130,7 @@ function followBottomAfterLayout() {
 }
 
 if (window.visualViewport && _isMobile) {
-  var _chromeShown = 0; // top bar + breadcrumb height translated off screen
-  var _chromeTarget = 0;
-  var _chromeSlide = null;
-  var applyMobileViewport = function () {
-    var vv = window.visualViewport;
-    document.body.style.bottom = 'auto';
-    document.body.style.top = layoutPixels(_isIOS ? vv.offsetTop : 0) + 'px';
-    document.body.style.height = (layoutPixels(vv.height) + _chromeShown) + 'px';
-    document.body.style.transform = _chromeShown ? 'translateY(-' + _chromeShown + 'px)' : '';
-  };
+  var _webKitPans = false;
   var syncMobileViewport = function () {
     var vv = window.visualViewport;
     // A native page zoom or rotation changes viewport units, unlike a keyboard.
@@ -179,8 +170,12 @@ if (window.visualViewport && _isMobile) {
         });
       });
     }
+    // WebKit scrolls the page itself, in step with the keyboard, to reveal the composer;
+    // also moving the body to the visual viewport fights that animation. Kept until the
+    // keyboard is gone, since blur comes before the closing resize.
+    _webKitPans = _isIOS && kbUp && (_webKitPans || document.activeElement?.id === 'msg-input');
     var chromeHeight = 0;
-    if (_isIOS && kbUp
+    if (_isIOS && kbUp && !_webKitPans
       && !document.querySelector('#projectTerminalPage, #gitStatusPage:not([hidden]), #internalBrowserPage:not([hidden])')) {
       var topBar = document.querySelector('.top-bar');
       var breadcrumb = document.getElementById('breadcrumb');
@@ -189,25 +184,10 @@ if (window.visualViewport && _isMobile) {
         chromeHeight += breadcrumb.offsetHeight;
       }
     }
-    if (chromeHeight !== _chromeTarget) {
-      _chromeTarget = chromeHeight;
-      cancelAnimationFrame(_chromeSlide);
-      _chromeSlide = null;
-      // Hiding the chrome at once would make the centered New Session hero jump, so slide it.
-      if (document.body.classList.contains('new-session')) {
-        var from = _chromeShown, start = performance.now();
-        var slide = function (now) {
-          var t = Math.max(0, Math.min(1, (now - start) / 250));
-          _chromeShown = from + (chromeHeight - from) * (1 - Math.pow(1 - t, 3));
-          _chromeSlide = t < 1 ? requestAnimationFrame(slide) : null;
-          applyMobileViewport();
-        };
-        _chromeSlide = requestAnimationFrame(slide);
-      } else {
-        _chromeShown = chromeHeight;
-      }
-    }
-    applyMobileViewport();
+    document.body.style.bottom = 'auto';
+    document.body.style.top = layoutPixels(_isIOS && !_webKitPans ? vv.offsetTop : 0) + 'px';
+    document.body.style.height = (layoutPixels(_webKitPans ? _vpBaseHeight : vv.height) + chromeHeight) + 'px';
+    document.body.style.transform = chromeHeight ? 'translateY(-' + chromeHeight + 'px)' : '';
     if (_isIOS) {
       var bar = document.getElementById('input-bar');
       if (bar) bar.classList.toggle('kb-up', kbUp);
