@@ -1,15 +1,16 @@
-// Files between the App and its Bridges travel through S3 at t/<accountId>/<key>, which a lifecycle
-// rule empties after 7 days: a transfer channel, not storage. Both sides sign their own requests
+// Files between the App and its Bridges travel through S3 / R2 at t/<accountId>/<key>, which a lifecycle
+// rule empties after 7 days (1 day on Cloudflare): a transfer channel, not storage. Both sides sign their own requests
 // (SigV4 query authentication) with the temporary credentials the server issues for this account
 // only, so no file or URL goes through Lambda. Used by the Bridge (Node) and the App (browser).
 
 const encoder = new TextEncoder();
 const KEY = /^[0-9a-f]{8,64}(?:\.[a-z0-9]{1,16})?$/;
 const MAX_EXPIRES = 3600;
-// Objects expire 7 days after they were written; one older than this is written again before it
-// is reused, so it outlives the day the writer remembers it (`recentKeys`).
-const REUSE_MS = 6 * 86400_000;
+// Objects expire 1 day after they were written on Cloudflare. One older than REUSE_MS is written again,
+// and a key is remembered no longer (`transferKeys`), so a key handed out is at most 16 h old.
+const REUSE_MS = 8 * 3600_000;
 export const reusable = (object) => !!object && Date.now() - object.modified < REUSE_MS;
+export const transferKeys = (limit) => recentKeys(limit, REUSE_MS);
 
 export const IMAGE_TYPES = {
   png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp',
