@@ -162,10 +162,39 @@ static void baton_sync_launch_snapshots(void) {
 }
 @end
 
+// The Session composer: WebKit reveals it ~2 frames after the keyboard starts rising, so it is briefly covered. Scrolled
+// inside the keyboard's own animation instead (as WebKit already does when it hides), it rises with the keyboard;
+// WebKit's own reveal then finds it visible. Only while the page says the bottom composer has focus.
+static BOOL _baton_composer_focused = NO;
+@interface BatonComposerHandler : NSObject <WKScriptMessageHandler>
+@end
+
+@implementation BatonComposerHandler
+- (void)userContentController:(WKUserContentController *)controller didReceiveScriptMessage:(WKScriptMessage *)message {
+    if (message.frameInfo.isMainFrame) _baton_composer_focused = [message.body isEqual:@YES];
+}
+@end
+
+static void baton_follow_keyboard(NSNotification *note, WKWebView *wv) {
+    if (!_baton_composer_focused || !wv.window || UIDevice.currentDevice.userInterfaceIdiom != UIUserInterfaceIdiomPhone) return;
+    CGRect end = [wv convertRect:[note.userInfo[UIKeyboardFrameEndUserInfoKey] CGRectValue] fromView:nil];
+    UIScrollView *sv = wv.scrollView;
+    CGFloat target = CGRectGetMaxY(wv.bounds) - CGRectGetMinY(end) - sv.adjustedContentInset.top;
+    if (target <= 0 || sv.contentOffset.y >= target - 0.5) return;
+    UIViewAnimationOptions curve = [note.userInfo[UIKeyboardAnimationCurveUserInfoKey] unsignedIntegerValue] << 16;
+    [UIView animateWithDuration:[note.userInfo[UIKeyboardAnimationDurationUserInfoKey] doubleValue] delay:0
+                        options:curve | UIViewAnimationOptionBeginFromCurrentState
+                     animations:^{ sv.contentOffset = CGPointMake(sv.contentOffset.x, target); } completion:nil];
+}
+
 static void baton_install_appearance_bridge(WKWebView *webview) {
     if (objc_getAssociatedObject(webview, &_baton_appearance_installed_key)) return;
     BatonAppearanceHandler *handler = [BatonAppearanceHandler new];
     [webview.configuration.userContentController addScriptMessageHandler:handler name:@"batonAppearance"];
+    [webview.configuration.userContentController addScriptMessageHandler:[BatonComposerHandler new] name:@"batonComposer"];
+    __weak WKWebView *weakWebview = webview;
+    [[NSNotificationCenter defaultCenter] addObserverForName:UIKeyboardWillShowNotification object:nil
+        queue:[NSOperationQueue mainQueue] usingBlock:^(NSNotification *note) { baton_follow_keyboard(note, weakWebview); }];
     objc_setAssociatedObject(webview, &_baton_appearance_installed_key, handler, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     NSString *script = [NSString stringWithFormat:@"window.__BATON_NATIVE_THEME__='%@';", baton_preference()];
     [webview.configuration.userContentController addUserScript:[[WKUserScript alloc]

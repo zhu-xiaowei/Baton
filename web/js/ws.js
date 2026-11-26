@@ -224,12 +224,15 @@ if (window.visualViewport && _isMobile) {
   if (_isIOS) window.visualViewport.addEventListener('scroll', syncMobileViewport);
   var messageInput = document.getElementById('msg-input');
   if (messageInput) {
+    var composerToNative = function (focused) { window.webkit?.messageHandlers?.batonComposer?.postMessage(focused); };
     messageInput.addEventListener('focus', function () {
       _inputFocusRequestsBottom = !!state.appState.session
         && state.appState.session !== '__new__';
+      composerToNative(!document.body.classList.contains('new-session')); // main.mm: rises with the keyboard
     });
     messageInput.addEventListener('blur', function () {
       _inputFocusRequestsBottom = false;
+      composerToNative(false);
     });
   }
   syncMobileViewport();
