@@ -106,6 +106,8 @@ export async function rotatedKey(config) {
 export async function leave(config, options) {
   const credentials = ['apiKey', 'accountKey', 'accountKeyAt', 'accounts'];
   const next = await join(Object.fromEntries(Object.entries(config).filter(([k]) => !credentials.includes(k))), options);
+  // The old account forgets this computer; if that fails it stays listed there, offline, until removed in the App.
+  await call(config, '/api/tokens/revoke', {}, options?.fetchImpl).catch((error) => console.error(`Not removed from the old account: ${error.message}`));
   fs.writeFileSync(`${CONFIG_PATH}.bak-${Date.now()}`, JSON.stringify(config, null, 2), { mode: 0o600 });
   saveConfig(next);
   return next;

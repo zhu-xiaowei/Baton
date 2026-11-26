@@ -117,7 +117,7 @@ a phone (no empty accounts to expire), and every computer and phone of one perso
 4. **Show a code again:** `~/.baton-bridge/baton pair` (Windows PowerShell: `~\.baton-bridge\baton.cmd pair`; cmd: `%USERPROFILE%\.baton-bridge\baton.cmd pair`) (Bridge with `K`: App code; without: join
    code; one code, then it exits). `pair --leave` asks for confirmation, then shows a join code and moves the
    computer to the account that approves it (the old config.json is kept as `config.json.bak-<time>` and changes
-   only once joined; the running Bridge restarts). Every install run ends with `pair`.
+   only once joined; the old account then logs this computer out, which also drops it from `/devices`; the running Bridge restarts). Every install run ends with `pair`.
 5. **Recovery** (§9 of the plan): 24 words → `K` → `accountId`, `joinSecret` → `recover` → App token.
 - In hosted mode the clear `account_key` method (PR A migration) is refused by Bridge: `config.accounts`
   is set when the Bridge joined; self-host keeps PR A's migration.
