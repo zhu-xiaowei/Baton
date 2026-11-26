@@ -4,7 +4,7 @@ import path from 'path';
 import { finished } from 'stream/promises';
 import { WS_FRAME_LIMIT } from '../config.mjs';
 import { contentHash, forgetContentHash } from '../content-hash.mjs';
-import { previewType, recentKeys, reusable, transfer } from '../transfer-store.mjs';
+import { previewType, reusable, transfer, transferKeys } from '../transfer-store.mjs';
 import { projectHashToPath } from '../session.mjs';
 import { resolveProjectPath } from '../project-path.mjs';
 import { sendTextFrames } from './ws-frames.mjs';
@@ -22,8 +22,8 @@ const IMAGE_EXTENSIONS = new Set([
 const VIDEO_EXTENSIONS = new Set([
   '.mp4', '.m4v', '.mov', '.webm', '.mkv', '.avi',
 ]);
-const uploadedFileKeys = recentKeys();
-const downloadFileKeys = recentKeys(100); // file identity → key
+const uploadedFileKeys = transferKeys(1000);
+const downloadFileKeys = transferKeys(100); // file identity → key
 
 async function prepareFileDownload(message, { projectRoot, store = transfer, fetchFn = fetch, send, home }) {
   const absPath = resolveReadablePath(projectRoot, message.path);

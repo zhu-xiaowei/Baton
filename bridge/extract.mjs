@@ -2,7 +2,7 @@ import fs from 'fs';
 import crypto from 'crypto';
 import sharp from 'sharp';
 import { isMainThread } from 'node:worker_threads';
-import { recentKeys, reusable, transfer } from './transfer-store.mjs';
+import { reusable, transfer, transferKeys } from './transfer-store.mjs';
 import { VALID_TYPES } from './config.mjs';
 
 // sessionId → next line the watcher reads; startup sets it to the end of every known file.
@@ -18,8 +18,8 @@ export function countJsonlLines(filePath) {
 // Fixed timestamp for uuid/timestamp-less metadata rows — keeps them identical across reads.
 const META_EPOCH_TS = '1970-01-01T00:00:00.000Z';
 
-// History pages are read again and again: each image is compressed and uploaded once a day.
-const imageKeys = recentKeys(500); // sha1(base64) → Promise<key>
+// History pages are read again and again: each image is compressed and uploaded once per reuse window.
+const imageKeys = transferKeys(500); // sha1(base64) → Promise<key>
 
 function processImage(base64Data) {
   const id = crypto.createHash('sha1').update(base64Data).digest('hex');
