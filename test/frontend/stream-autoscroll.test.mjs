@@ -110,7 +110,7 @@ test('keyboard opening and closing preserve physical bottom follow', async (t) =
   h.document.getElementById('msg-input').blur();
 });
 
-test('Git commit keyboard keeps the page in place without disabling chat chrome adaptation', async (t) => {
+test('Git commit keyboard keeps the page in place; the chat composer leaves the page to WebKit', async (t) => {
   await h.tick(10);
   resetSession(h, { sessionId: 'codex:git-keyboard' });
   const topBar = h.document.createElement('div');
@@ -153,8 +153,9 @@ test('Git commit keyboard keeps the page in place without disabling chat chrome 
   h.document.getElementById('msg-input').focus();
   h.visualViewport.height = 420;
   h.visualViewport.dispatch('resize');
-  assert.equal(h.document.body.style.height, '523px');
-  assert.equal(h.document.body.style.transform, 'translateY(-103px)');
+  assert.equal(h.document.body.style.height, '844px');
+  assert.equal(h.document.body.style.top, '0px');
+  assert.equal(h.document.body.style.transform, '');
   await h.tick(10);
 });
 
