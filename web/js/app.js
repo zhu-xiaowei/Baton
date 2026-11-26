@@ -951,6 +951,7 @@ function showInputBar(visible) {
   document.querySelector('.star-card')?.remove(); // it belongs to the Session it was shown in
   var bar = document.getElementById('input-bar');
   var scrollButton = document.getElementById('scroll-bottom-btn');
+  if (!bar) return;
   bar.style.display = visible ? 'flex' : 'none';
   scrollButton.style.display = visible ? '' : 'none';
   if (visible) {
@@ -2101,6 +2102,9 @@ async function loadMessages(sessionId, preview, options) {
   if (options.restoreGitStatus) openGitStatusPage({ restoring: true });
   // Skeleton before any await — loadViewerLibs can take a while and the old page would linger.
   var content = document.getElementById('content');
+  // New Session keeps the bar inside #content: replacing it would delete the bar (a push opened from there).
+  var bar = document.getElementById('input-bar');
+  if (bar && bar.parentElement !== document.body) document.body.appendChild(bar);
   content.innerHTML = skeletonMessages();
   showInputBar(true);
   saveNav(); // before the await: a stale-chunk reload must come back to this Session
