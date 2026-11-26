@@ -70,7 +70,7 @@ test('logging out closes every socket of that token, though the role index has n
   assert.deepEqual(closed, ['app_data']);
 });
 
-test('a computer logging out (pair --leave) leaves the device list too', async () => {
+test('a computer logging out (leave) leaves the device list too', async () => {
   const { createAccounts } = await import('../../server/core/accounts.mjs');
   const gone = [];
   const accounts = createAccounts({ env: {}, table: { query: async () => ({ Items: [] }), deleteItem: async () => {} },

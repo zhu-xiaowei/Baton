@@ -31,9 +31,10 @@ import {
 } from './updater.mjs';
 import { extractTar, installProductionDependencies } from './platform.mjs';
 
-try { writeCliLauncher(undefined, undefined, process.argv[2] === 'pair'); } catch (error) { console.error(`[init] could not write the baton command: ${error.message}`); }
+const cliCommand = ['pair', 'leave'].includes(process.argv[2]);
+try { writeCliLauncher(undefined, undefined, cliCommand); } catch (error) { console.error(`[init] could not write the baton command: ${error.message}`); }
 // Not the service: shows a pairing QR code in this terminal, while the service keeps running.
-if (process.argv[2] === 'pair') process.exit(await (await import('./accounts.mjs')).runPair().catch((error) => { console.error(error.message); return 1; }));
+if (cliCommand) process.exit(await (await import('./accounts.mjs')).runPair().catch((error) => { console.error(error.message); return 1; }));
 
 const releaseInstanceLock = await acquireInstanceLock(BRIDGE_HOME);
 if (!releaseInstanceLock) {
@@ -53,7 +54,7 @@ async function shutdownBridge(exitCode = 0) {
 }
 process.on('SIGTERM', () => { shutdownBridge(0).catch(() => process.exit(1)); });
 process.on('SIGINT', () => { shutdownBridge(0).catch(() => process.exit(1)); });
-// `pair --leave` saved another account: exit non-zero, so the service manager starts it again.
+// `leave` saved another account: exit non-zero, so the service manager starts it again.
 process.on('SIGHUP', () => { shutdownBridge(1).catch(() => process.exit(1)); });
 
 const CONFIG = loadConfig();

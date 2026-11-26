@@ -356,7 +356,7 @@ export function createAccounts({ env, table, auth, devices, sockets, log, place 
     // No id: log out. An id: remove another App of the account (a lost phone).
     if (!body.id) {
       await drop(caller.accountId, caller.tokenHash ? [caller.tokenHash] : []);
-      // A computer that left (`pair --leave`) is no longer listed.
+      // A computer that left (`leave`) is no longer listed.
       if (caller.kind === 'bridge') await devices.delete(caller.accountId, caller.deviceName);
       return { ok: true };
     }

@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { randomBytes } from 'node:crypto';
 
-test('pair --leave keeps config.json until another account approves, then keeps the device fields', async () => {
+test('leave keeps config.json until another account approves, then keeps the device fields', async () => {
   process.env.HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'leave-'));
   const { leave } = await import('../../bridge/accounts.mjs');
   const { pairCode, sealPair } = await import('../../bridge/e2ee-node.mjs');

@@ -101,7 +101,7 @@ export async function rotatedKey(config) {
   return k.toString('base64') === config.accountKey ? null : k;
 }
 
-// `pair --leave`: joins another account with the same server and device fields. config.json is written, and the
+// `leave`: joins another account with the same server and device fields. config.json is written, and the
 // old one backed up, only once the join succeeded; an abort or a failure leaves the old account in place.
 export async function leave(config, options) {
   const credentials = ['apiKey', 'accountKey', 'accountKeyAt', 'accounts'];
@@ -114,7 +114,7 @@ export async function leave(config, options) {
 }
 
 export async function runPair() {
-  const leaving = process.argv[3] === '--leave';
+  const leaving = process.argv[2] === 'leave';
   const target = leaving ? undefined : process.argv[3];
   let config;
   try { config = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8')); } catch {
@@ -126,7 +126,7 @@ export async function runPair() {
     return 0;
   }
   if (!process.stdout.isTTY) {
-    console.error(`Run \`${bridgeCommand('pair')}\` in a terminal: its QR code is shown only there.`);
+    console.error(`Run \`${bridgeCommand(leaving ? 'leave' : 'pair')}\` in a terminal: its QR code is shown only there.`);
     return 1;
   }
   if (leaving && config.apiKey) {
@@ -155,6 +155,6 @@ export async function runPair() {
   const { link: invite, expiresIn } = await createInvite(config);
   console.log(`\nScan with the Baton app on a new phone, or open the link in a browser, to add it (valid ${Math.round(expiresIn / 60)} minutes):`);
   show(console.log, invite);
-  console.log(`To move this computer to another account, run: ${bridgeCommand('pair --leave')}`);
+  console.log(`To move this computer to another account, run: ${bridgeCommand('leave')}`);
   return 0;
 }

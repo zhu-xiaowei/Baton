@@ -160,7 +160,7 @@ Named after both a relay baton and a conductor's baton, Baton lets you pick up w
 
 ### Hosted relay
 
-- **Move a computer to another account**: run `node ~/.baton-bridge/bridge.mjs pair --leave` on it.
+- **Move a computer to another account**: run `node ~/.baton-bridge/bridge.mjs leave` on it.
 - **Remove a computer**: long-press it on the App's home page and choose **Remove**; its Bridge stops and turns off autostart.
 - **Delete the account**: **Settings** → **Delete account**.
 
