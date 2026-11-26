@@ -266,7 +266,7 @@ async function deployMonitor() {
   org ??= await cf('POST', '/access/organizations', { name: zoneName, auth_domain: `${zoneName.split('.')[0]}.cloudflareaccess.com` });
   const idps = await cf('GET', '/access/identity_providers');
   const otp = idps.find((i) => i.type === 'onetimepin') ?? await cf('POST', '/access/identity_providers', { name: 'One-time PIN', type: 'onetimepin', config: {} });
-  const appBody = { name, domain: flags.monitor, type: 'self_hosted', session_duration: '24h', allowed_idps: [otp.id], auto_redirect_to_identity: true,
+  const appBody = { name, domain: flags.monitor, type: 'self_hosted', session_duration: '730h', allowed_idps: [otp.id], auto_redirect_to_identity: true,
     policies: [{ name: 'admins', decision: 'allow', include: [{ email: { email } }] }] };
   const app = (await cf('GET', '/access/apps')).find((a) => a.domain === flags.monitor);
   const { aud } = app ? await cf('PUT', `/access/apps/${app.id}`, appBody) : await cf('POST', '/access/apps', appBody);
