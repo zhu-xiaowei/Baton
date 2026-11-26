@@ -24,7 +24,7 @@ import { managedSocketPath } from './codex-app-server.mjs';
 import { parseStorageSessionId, runtimeDescriptor, storageSessionId } from './session-identity.mjs';
 import { SessionGrants } from './session-grants.mjs';
 import { getRuntimeAdapter, registerInstalledRuntimes, runtimeAdapters } from './runtime-registry.mjs';
-import { WS_FRAME_LIMIT, saveConfig, uninstallBridge } from './config.mjs';
+import { CONFIG_PATH, WS_FRAME_LIMIT, saveConfig, uninstallBridge } from './config.mjs';
 import { pickEntry, viaEntry } from './entry.mjs';
 import { ClaudePool } from './headless.mjs';
 import {
@@ -1006,6 +1006,10 @@ async function catchUpAccountKey() {
   } catch (error) { console.error(`[accounts] key rotation not applied: ${error.message}`); }
 }
 
+function savedApiKey() {
+  try { return JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8')).apiKey; } catch { return null; }
+}
+
 async function handleMessage(msg) {
   if (_directRpc?.handleControl(msg)) return;
   switch (msg.action) {
@@ -1014,6 +1018,12 @@ async function handleMessage(msg) {
       break;
     case 'account_deleted':
     case 'device_removed':
+      // `leave` saved another account, then logged the old token out: restart into it, do not uninstall.
+      if (_config?.apiKey && savedApiKey() && savedApiKey() !== _config.apiKey) {
+        console.log('[ws] this computer joined another account; restarting');
+        process.emit('SIGHUP'); // bridge.mjs: exit 1, so the service manager starts it again (Windows too)
+        break;
+      }
       uninstallBridge();
       console.log(msg.action === 'account_deleted' ? '[ws] the Baton account was deleted and autostart is off; run the install command again to start a new one'
         : '[ws] this device was removed from Baton and autostart is off; run a new install command from Setup to add it again');

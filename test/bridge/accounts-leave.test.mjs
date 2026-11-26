@@ -16,7 +16,7 @@ test('leave keeps config.json until another account approves, then keeps the dev
   const k = randomBytes(32);
   let p, revoked;
   const fetchImpl = async (url, { headers, body }) => {
-    if (url.endsWith('/api/tokens/revoke')) { revoked = headers['x-api-key']; return { ok: true, json: async () => ({ ok: true }) }; }
+    if (url.endsWith('/api/tokens/revoke')) { revoked = [headers['x-api-key'], JSON.parse(fs.readFileSync(path.join(dir, 'config.json'))).apiKey]; return { ok: true, json: async () => ({ ok: true }) }; }
     assert.equal(headers['x-api-key'], undefined);
     if (url.endsWith('/start')) return { ok: true, json: async () => ({ code: JSON.parse(body).code, poll: 'x', expiresIn: 600 }) };
     return { ok: true, json: async () => ({ token: 'bt_new', approvedBy: 'phone', sealed: sealPair(p, k, pairCode(p)) }) };
@@ -28,6 +28,6 @@ test('leave keeps config.json until another account approves, then keeps the dev
   const saved = JSON.parse(fs.readFileSync(path.join(dir, 'config.json')));
   assert.deepEqual([saved.apiKey, saved.server, saved.deviceDisplayName, saved.bridgeId], ['bt_new', old.server, 'mac', 'b']);
   assert.match(saved.deviceName, /^pc-[0-9a-f]{8}$/); // a new account knows it by a new random ID
-  assert.equal(revoked, 'bt_old'); // and the old account no longer lists it
+  assert.deepEqual(revoked, ['bt_old', 'bt_new']); // the old account forgets it once the new one is saved
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dir, fs.readdirSync(dir).find((f) => f.includes('.bak-'))))), old);
 });
