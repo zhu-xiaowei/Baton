@@ -205,7 +205,10 @@ if (window.visualViewport && _isMobile) {
         _followKeyboardOpen = false;
         state.stickBottom = true;
         var currentContent = document.getElementById('content');
-        if (currentContent) currentContent.scrollTop = currentContent.scrollHeight;
+        if (!currentContent) return;
+        currentContent.style.overflowY = 'hidden'; // stops a momentum scroll, which would win over scrollTop
+        currentContent.scrollTop = currentContent.scrollHeight;
+        requestAnimationFrame(function () { currentContent.style.overflowY = ''; });
       });
     }
   };
@@ -222,15 +225,17 @@ if (window.visualViewport && _isMobile) {
       var content = document.getElementById('content');
       if (!bar || !content) return;
       var shift = focused ? Math.max(0, (parseFloat(window.getComputedStyle(bar).paddingBottom) || 0) - 8) : 0;
+      // `translate`, not `transform`: the swipe back moves these two with `transform`.
       [content, bar].forEach(function (el) {
-        el.style.transition = 'transform 250ms ease-in-out';
-        el.style.transform = shift ? 'translateY(' + shift + 'px)' : '';
+        el.style.transition = 'translate 250ms ease-in-out';
+        el.style.translate = shift ? '0 ' + shift + 'px' : '';
       });
       document.documentElement.classList.add('kb-sliding');
       clearTimeout(dockTimer);
       dockTimer = setTimeout(function () {
         document.documentElement.classList.remove('kb-sliding');
-        if (!_mobileKeyboardOpen && shift) content.style.transform = bar.style.transform = ''; // a hardware keyboard: no keyboard came up
+        content.style.transition = bar.style.transition = '';
+        if (!_mobileKeyboardOpen && shift) content.style.translate = bar.style.translate = ''; // a hardware keyboard: no keyboard came up
       }, 700);
     };
     var composerFocus = function (focused) {
