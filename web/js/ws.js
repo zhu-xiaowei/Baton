@@ -148,7 +148,7 @@ if (window.visualViewport && _isMobile) {
       && content.scrollHeight - content.scrollTop - content.clientHeight < 100;
 
     _vpBaseHeight = Math.max(_vpBaseHeight, vv.height, window.innerHeight);
-    var kbUp = vv.height < _vpBaseHeight * 0.75;
+    var kbUp = _vpBaseHeight - vv.height > 150; // docked keyboards are 265+ pt; a hardware keyboard's bar or a floating one less
     var keyboardClosing = _mobileKeyboardOpen && !kbUp;
     var focusOpenedKeyboard = viewportShrinking && kbUp && _inputFocusRequestsBottom;
     if (viewportShrinking && (wasAtBottom || focusOpenedKeyboard)) {
