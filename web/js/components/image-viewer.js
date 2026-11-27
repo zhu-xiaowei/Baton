@@ -337,6 +337,11 @@ async function downloadCurrentImage() {
 // items: [{ src, key?, attachment? }]; an item with a storage key can be downloaded.
 function showImageViewer(list, start = 0) {
   ensureViewer();
+  // Another image replaces a docked one over the whole window; the docked file panel goes with it.
+  if (overlay.classList.contains('docked')) {
+    overlay.classList.remove('docked');
+    window.closeFileViewer?.({ refresh: false });
+  }
   items = list;
   showAt(start);
   overlay.style.display = 'flex';
@@ -354,8 +359,13 @@ function closeImageViewer() {
   if (downloads.size && nativeDownloadsStopOnClose()) cancelNativeDownload();
 }
 
+// Docked beside the chat, the viewer takes only keys meant for it (as the docked panels do).
+let pointerInside = false;
+document.addEventListener('pointerdown', event => { pointerInside = !!overlay?.contains(event.target); }, true);
 document.addEventListener('keydown', event => {
   if (!overlay || overlay.style.display !== 'flex') return;
+  if (overlay.classList.contains('docked')
+    && !(event.target === document.body ? pointerInside : overlay.contains(event.target))) return;
   if (event.key === 'ArrowLeft') { event.preventDefault(); showAt(index - 1); }
   else if (event.key === 'ArrowRight') { event.preventDefault(); showAt(index + 1); }
   else if (event.key === 'Escape') closeImageViewer();
