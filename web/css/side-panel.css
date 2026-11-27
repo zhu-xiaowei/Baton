@@ -4,7 +4,6 @@ body.side-dock :is(#projectTerminalPage, #gitStatusPage, #projectFilesPage, #int
   left: auto; right: 0; width: var(--side-w);
   border-left: 1px solid color-mix(in srgb, var(--border) 60%, var(--canvas)); box-sizing: border-box;
 }
-body.side-dock:not(.side-dock-max) .img-overlay.docked { left: auto; width: var(--side-w); }
 body.side-dock-max :is(#projectTerminalPage, #gitStatusPage, #projectFilesPage, #internalBrowserPage, #fileOverlay) {
   left: 0; width: auto; border-left: 0;
 }
