@@ -234,8 +234,9 @@ if (window.visualViewport && _isMobile) {
       }, 700);
     };
     var composerFocus = function (focused) {
-      window.webkit?.messageHandlers?.batonComposer?.postMessage(focused); // main.mm: rises with the keyboard
-      dockComposer(focused && !document.body.classList.contains('new-session'));
+      var dock = focused && !document.body.classList.contains('new-session'); // New Session: WebKit centres it
+      window.webkit?.messageHandlers?.batonComposer?.postMessage(dock); // main.mm: rises with the keyboard
+      dockComposer(dock);
     };
     messageInput.addEventListener('focus', function () {
       _inputFocusRequestsBottom = !!state.appState.session
