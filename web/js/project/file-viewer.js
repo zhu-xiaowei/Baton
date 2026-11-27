@@ -926,6 +926,11 @@ function handleFileResponse(msg, line, snippet, token) {
   if (msg.image) {
     return window.getImageUrl(msg.key, msg.attachment).then(function (url) {
       if (token !== _fileRequestToken) return;
+      // Docked beside the chat, the image stays in the panel; elsewhere it opens over the window.
+      if (document.body.classList.contains('side-dock')) {
+        setBody('<img class="file-image" alt="" src="' + esc(url) + '" onclick="viewImage(this.src)">');
+        return;
+      }
       closeFileViewer({ refresh: false });
       if (window.viewImage) window.viewImage(url);
     }).catch(function () {
