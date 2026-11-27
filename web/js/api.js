@@ -286,6 +286,15 @@ async function getLocalImageUrl(path, context) {
   return promise;
 }
 
+// A sent image's transfer copy expires after a day and was sealed under the account key of its time;
+// the Bridge's own copy (data-local) is then read and sent again like any image on that computer.
+function placeholderImageUrl(el, context) {
+  return getImageUrl(el.dataset.key).catch(function (error) {
+    if (!el.dataset.local) throw error;
+    return getLocalImageUrl(el.dataset.local, context);
+  });
+}
+
 function showLoadedImage(el, url) {
   var image = document.createElement('img');
   image.src = url;
@@ -327,11 +336,10 @@ async function loadOneImage(el, manual = false, notify = false) {
     return;
   }
   try {
-    var url = path ? await getLocalImageUrl(requestPath, context)
-      : await getImageUrl(el.dataset.key);
+    var url = path ? await getLocalImageUrl(requestPath, context) : await placeholderImageUrl(el, context);
     showLoadedImage(el, url);
   } catch(e) {
-    if (path && /^(?:ENOENT|ENOTDIR)\b/.test(e.message)) {
+    if ((path || el.dataset.local) && /^(?:ENOENT|ENOTDIR)\b/.test(e.message)) {
       el.dataset.failed = 'missing';
       el.classList.remove('loaded');
       var label = document.createElement('span');
@@ -374,13 +382,21 @@ function viewImage(src, element) {
   var group = element?.closest('.msg-attachments');
   // An image still loading in the message joins too and loads when it is shown.
   var images = group ? Array.from(group.querySelectorAll('.img-placeholder'), node => node.classList.contains('loaded')
-    ? node.querySelector('img') : node.dataset.key && { lazyKey: node.dataset.key }).filter(Boolean) : [];
+    ? node.querySelector('img') : node.dataset.key && { lazyKey: node.dataset.key, node }).filter(Boolean) : [];
   if (!images.includes(element)) images = [element || { src }];
   var entries = Array.from(imageCache.values());
   showImageViewer(images.map(image => {
-    if (image.lazyKey) return { key: image.lazyKey, load: () => getImageUrl(image.lazyKey) };
+    if (image.lazyKey) {
+      var item = { key: image.lazyKey };
+      item.load = () => placeholderImageUrl(image.node, imageContexts.get(image.node) || currentImageContext()).then(url => {
+        Object.assign(item, Array.from(imageCache.values()).find(entry => entry.url === url)?.source);
+        return url;
+      });
+      return item;
+    }
     var key = image.dataset?.key || image.closest?.('.img-placeholder[data-key]')?.dataset.key;
-    return { src: image.src, ...(key ? { key } : entries.find(entry => entry.url === image.src)?.source) };
+    // The key it was loaded with comes first: one read from the Bridge's copy has a new key.
+    return { src: image.src, ...(entries.find(entry => entry.url === image.src)?.source || (key ? { key } : undefined)) };
   }),
   Math.max(0, images.indexOf(element)));
 }
