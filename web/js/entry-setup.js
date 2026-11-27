@@ -249,7 +249,7 @@ setNativeTabTitle('Settings');
       block.querySelector('.text').textContent = '••••••••••••••••••••••••••••••••';
     });
     document.querySelector('.connect .qr-frame').classList.remove('ready');
-    if (!document.querySelector('[data-panel="qr"]').hidden) reveal();
+    if (!document.querySelector('[data-panel="qr"]').hidden) reveal().catch(function () {});
   }
 
   // One code fills all three tabs, so switching tabs never loads again.

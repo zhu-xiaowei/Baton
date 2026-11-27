@@ -928,7 +928,7 @@ function handleFileResponse(msg, line, snippet, token) {
       if (token !== _fileRequestToken) return;
       // Docked beside the chat, the image stays in the panel; elsewhere it opens over the window.
       if (document.body.classList.contains('side-dock')) {
-        setBody('<img class="file-image" alt="" src="' + esc(url) + '" onclick="viewImage(this.src)">');
+        setBody('<img class="file-image" alt="" src="' + esc(url) + '">');
         return;
       }
       closeFileViewer({ refresh: false });
