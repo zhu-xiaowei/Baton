@@ -387,7 +387,12 @@ function viewImage(src, element) {
   var entries = Array.from(imageCache.values());
   showImageViewer(images.map(image => {
     if (image.lazyKey) {
-      return { key: image.lazyKey, load: () => placeholderImageUrl(image.node, imageContexts.get(image.node) || currentImageContext()) };
+      var item = { key: image.lazyKey };
+      item.load = () => placeholderImageUrl(image.node, imageContexts.get(image.node) || currentImageContext()).then(url => {
+        Object.assign(item, Array.from(imageCache.values()).find(entry => entry.url === url)?.source);
+        return url;
+      });
+      return item;
     }
     var key = image.dataset?.key || image.closest?.('.img-placeholder[data-key]')?.dataset.key;
     // The key it was loaded with comes first: one read from the Bridge's copy has a new key.
