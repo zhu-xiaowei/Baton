@@ -214,15 +214,34 @@ if (window.visualViewport && _isMobile) {
   if (_isIOS) window.visualViewport.addEventListener('scroll', syncMobileViewport);
   var messageInput = document.getElementById('msg-input');
   if (messageInput) {
-    var composerToNative = function (focused) { window.webkit?.messageHandlers?.batonComposer?.postMessage(focused); };
+    var dockTimer = 0;
+    // The keyboard docks against the page bottom, below the composer's safe-area padding: move the composer down
+    // by it from focus on, composited, so it lands on the keyboard whenever the viewport events arrive.
+    var dockComposer = function (focused) {
+      var bar = _isIOS && document.getElementById('input-bar');
+      if (!bar) return;
+      var shift = focused ? Math.max(0, (parseFloat(window.getComputedStyle(bar).paddingBottom) || 0) - 8) : 0;
+      bar.style.transition = 'transform 250ms ease-in-out';
+      bar.style.transform = shift ? 'translateY(' + shift + 'px)' : '';
+      document.documentElement.classList.add('kb-sliding');
+      clearTimeout(dockTimer);
+      dockTimer = setTimeout(function () {
+        document.documentElement.classList.remove('kb-sliding');
+        if (!_mobileKeyboardOpen && shift) bar.style.transform = ''; // a hardware keyboard: no keyboard came up
+      }, 700);
+    };
+    var composerFocus = function (focused) {
+      window.webkit?.messageHandlers?.batonComposer?.postMessage(focused); // main.mm: rises with the keyboard
+      dockComposer(focused && !document.body.classList.contains('new-session'));
+    };
     messageInput.addEventListener('focus', function () {
       _inputFocusRequestsBottom = !!state.appState.session
         && state.appState.session !== '__new__';
-      composerToNative(!document.body.classList.contains('new-session'));
+      composerFocus(true);
     });
     messageInput.addEventListener('blur', function () {
       _inputFocusRequestsBottom = false;
-      composerToNative(false);
+      composerFocus(false);
     });
   }
   syncMobileViewport();
