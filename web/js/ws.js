@@ -50,7 +50,7 @@ var _keyboardOpenFrame = null;
 var _followKeyboardOpen = false;
 var _mobileKeyboardOpen = false;
 var _inputFocusRequestsBottom = false;
-var _isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent);
+var _isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 // Gate keyboard adaptation to touch devices: on desktop visualViewport also fires resize (scrollbar/chrome shifts, mermaid render), and the Android branch below would wrongly rewrite body height → input bar jumps.
 var _isMobile = /Mobi|Android/i.test(navigator.userAgent) || _isIOS;
 // Session events, sends and subscriptions use the direct App ⇄ Bridge channel.
@@ -148,7 +148,7 @@ if (window.visualViewport && _isMobile) {
       && content.scrollHeight - content.scrollTop - content.clientHeight < 100;
 
     _vpBaseHeight = Math.max(_vpBaseHeight, vv.height, window.innerHeight);
-    var kbUp = vv.height < _vpBaseHeight * 0.75;
+    var kbUp = _vpBaseHeight - vv.height > 150; // docked keyboards are 265+ pt; a hardware keyboard's bar or a floating one less
     var keyboardClosing = _mobileKeyboardOpen && !kbUp;
     var focusOpenedKeyboard = viewportShrinking && kbUp && _inputFocusRequestsBottom;
     if (viewportShrinking && (wasAtBottom || focusOpenedKeyboard)) {
@@ -173,7 +173,6 @@ if (window.visualViewport && _isMobile) {
     // WebKit scrolls the page itself, in step with the keyboard, to reveal the composer;
     // also moving the body to the visual viewport fights that animation. Kept after blur until the
     // keyboard is gone, since blur comes before the closing resize, unless another input took focus.
-    var wasPanning = _webKitPans;
     var focused = document.activeElement;
     _webKitPans = _isIOS && kbUp && (focused?.id === 'msg-input'
       || (_webKitPans && (!focused || focused === document.body)));
@@ -192,20 +191,12 @@ if (window.visualViewport && _isMobile) {
       bar.classList.toggle('kb-up', kbUp);
       bar.classList.toggle('kb-pan', _webKitPans);
     }
-    // The composer keeps its safe-area padding; the page drops by it instead, without resizing.
-    var shift = _webKitPans && bar ? Math.max(0, (parseFloat(window.getComputedStyle(bar).paddingBottom) || 0) - 8) : 0;
-    var top = layoutPixels(_isIOS && !_webKitPans ? vv.offsetTop : 0) + shift;
-    var previousTop = parseFloat(document.body.style.top) || 0;
     document.body.style.bottom = 'auto';
-    document.body.style.top = top + 'px';
-    document.body.style.height = (layoutPixels(_webKitPans ? _vpBaseHeight : vv.height) + chromeHeight) + 'px';
+    document.body.style.top = layoutPixels(_isIOS && !_webKitPans ? vv.offsetTop : 0) + 'px';
+    // Ends where the screen does once WebKit has scrolled, so a keyboard that grows later still lifts the composer.
+    document.body.style.height = (layoutPixels(!_webKitPans ? vv.height
+      : document.body.classList.contains('new-session') || vv.offsetTop <= 0 ? _vpBaseHeight : vv.offsetTop + vv.height) + chromeHeight) + 'px';
     document.body.style.transform = chromeHeight ? 'translateY(-' + chromeHeight + 'px)' : '';
-    // Slide it while WebKit's keyboard scroll is fastest, so the page keeps moving one way;
-    // composited, so a busy main thread cannot turn the slide into a jump.
-    if (wasPanning !== _webKitPans && Math.abs(top - previousTop) >= 1) {
-      document.body.animate?.({ transform: ['translateY(' + (previousTop - top) + 'px)', 'none'] },
-        { duration: 80, delay: 50, fill: 'backwards' });
-    }
     if (window.positionScrollBtn) window.positionScrollBtn();
     if (_followKeyboardOpen && _keyboardOpenFrame === null) {
       _keyboardOpenFrame = requestAnimationFrame(function () {
@@ -214,7 +205,10 @@ if (window.visualViewport && _isMobile) {
         _followKeyboardOpen = false;
         state.stickBottom = true;
         var currentContent = document.getElementById('content');
-        if (currentContent) currentContent.scrollTop = currentContent.scrollHeight;
+        if (!currentContent) return;
+        currentContent.style.overflowY = 'hidden'; // stops a momentum scroll, which would win over scrollTop
+        currentContent.scrollTop = currentContent.scrollHeight;
+        requestAnimationFrame(function () { currentContent.style.overflowY = ''; });
       });
     }
   };
@@ -223,12 +217,40 @@ if (window.visualViewport && _isMobile) {
   if (_isIOS) window.visualViewport.addEventListener('scroll', syncMobileViewport);
   var messageInput = document.getElementById('msg-input');
   if (messageInput) {
+    var dockTimer = 0;
+    // The keyboard docks against the page bottom, below the composer's safe-area padding: move the chat and the
+    // composer down by it from focus on, composited, so they land on the keyboard whenever viewport events arrive.
+    var dockComposer = function (focused) {
+      var bar = _isIOS && document.getElementById('input-bar');
+      var content = document.getElementById('content');
+      if (!bar || !content) return;
+      var shift = focused ? Math.max(0, (parseFloat(window.getComputedStyle(bar).paddingBottom) || 0) - 8) : 0;
+      // `translate`, not `transform`: the swipe back moves these two with `transform`.
+      [content, bar].forEach(function (el) {
+        el.style.transition = 'translate 250ms ease-in-out';
+        el.style.translate = shift ? '0 ' + shift + 'px' : '';
+      });
+      document.documentElement.classList.add('kb-sliding');
+      clearTimeout(dockTimer);
+      dockTimer = setTimeout(function () {
+        document.documentElement.classList.remove('kb-sliding');
+        content.style.transition = bar.style.transition = '';
+        if (!_mobileKeyboardOpen && shift) content.style.translate = bar.style.translate = ''; // a hardware keyboard: no keyboard came up
+      }, 700);
+    };
+    var composerFocus = function (focused) {
+      var dock = focused && !document.body.classList.contains('new-session'); // New Session: WebKit centres it
+      window.webkit?.messageHandlers?.batonComposer?.postMessage(dock); // main.mm: rises with the keyboard
+      dockComposer(dock);
+    };
     messageInput.addEventListener('focus', function () {
       _inputFocusRequestsBottom = !!state.appState.session
         && state.appState.session !== '__new__';
+      composerFocus(true);
     });
     messageInput.addEventListener('blur', function () {
       _inputFocusRequestsBottom = false;
+      composerFocus(false);
     });
   }
   syncMobileViewport();
