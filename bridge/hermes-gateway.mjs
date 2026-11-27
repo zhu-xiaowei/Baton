@@ -51,7 +51,7 @@ async function nativeTarget() {
 
 // The hermes CLI, located on first use (its `--version` takes ~0.2 s).
 export function hermesCli(args, timeout = 30_000) {
-  hermesBin ||= findRuntimeBin('hermes', [path.join(HERMES_HOME, 'hermes-agent/.hermes/bin')])?.bin;
+  if (!hermesBin || !fs.existsSync(hermesBin)) hermesBin = findRuntimeBin('hermes', [path.join(HERMES_HOME, 'hermes-agent/.hermes/bin')])?.bin;
   if (!hermesBin) return Promise.reject(new Error('Hermes CLI not found'));
   return new Promise((resolve) => execFile(hermesBin, args, { timeout }, (error, stdout, stderr) => resolve({ error, stdout, stderr })));
 }

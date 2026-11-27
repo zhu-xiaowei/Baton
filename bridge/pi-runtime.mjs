@@ -145,7 +145,7 @@ export default piRuntime;
 
 let found;
 function launch() {
-  if (found) return found;
+  if (found && [found.bin, ...found.pre].every((file) => fs.existsSync(file))) return found; // moved by an update: look again
   const pi = findRuntimeBin('pi', [], '1.0.0');
   const cli = pi && fs.realpathSync(pi.bin);
   const head = Buffer.alloc(128);
