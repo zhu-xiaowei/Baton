@@ -192,8 +192,8 @@ if (window.visualViewport && _isMobile) {
       bar.classList.toggle('kb-up', kbUp);
       bar.classList.toggle('kb-pan', _webKitPans);
     }
-    // The composer keeps its safe-area padding; the page drops by it instead, without resizing.
-    var shift = _webKitPans && bar ? Math.max(0, (parseFloat(window.getComputedStyle(bar).paddingBottom) || 0) - 8) : 0;
+    // The composer keeps its safe-area padding; the page drops by it instead, without resizing, once the page scrolls.
+    var shift = _webKitPans && bar && vv.offsetTop > 0 ? Math.max(0, (parseFloat(window.getComputedStyle(bar).paddingBottom) || 0) - 8) : 0;
     var top = layoutPixels(_isIOS && !_webKitPans ? vv.offsetTop : 0) + shift;
     var previousTop = parseFloat(document.body.style.top) || 0;
     document.body.style.bottom = 'auto';
@@ -204,7 +204,7 @@ if (window.visualViewport && _isMobile) {
     document.body.style.transform = chromeHeight ? 'translateY(-' + chromeHeight + 'px)' : '';
     // Slide it while WebKit's keyboard scroll is fastest, so the page keeps moving one way;
     // composited, so a busy main thread cannot turn the slide into a jump.
-    if (wasPanning !== _webKitPans && Math.abs(top - previousTop) >= 1) {
+    if ((wasPanning !== _webKitPans || _webKitPans) && Math.abs(top - previousTop) >= 1) {
       // main.mm scrolls with the keyboard: then slide alongside it, and hide the caret, which does not follow a transform.
       var withKeyboard = top > previousTop && !!window.webkit?.messageHandlers?.batonComposer;
       var slide = document.body.animate?.({ transform: ['translateY(' + (previousTop - top) + 'px)', 'none'] },
