@@ -205,8 +205,14 @@ if (window.visualViewport && _isMobile) {
     // Slide it while WebKit's keyboard scroll is fastest, so the page keeps moving one way;
     // composited, so a busy main thread cannot turn the slide into a jump.
     if (wasPanning !== _webKitPans && Math.abs(top - previousTop) >= 1) {
-      document.body.animate?.({ transform: ['translateY(' + (previousTop - top) + 'px)', 'none'] },
-        { duration: 80, delay: 50, fill: 'backwards' });
+      // main.mm scrolls with the keyboard: then slide alongside it, and hide the caret, which does not follow a transform.
+      var withKeyboard = top > previousTop && !!window.webkit?.messageHandlers?.batonComposer;
+      var slide = document.body.animate?.({ transform: ['translateY(' + (previousTop - top) + 'px)', 'none'] },
+        withKeyboard ? { duration: 250, easing: 'cubic-bezier(0.33, 1, 0.68, 1)' } : { duration: 80, delay: 50, fill: 'backwards' });
+      if (slide && withKeyboard) {
+        document.documentElement.classList.add('kb-sliding');
+        slide.finished.finally(function () { document.documentElement.classList.remove('kb-sliding'); });
+      }
     }
     if (window.positionScrollBtn) window.positionScrollBtn();
     if (_followKeyboardOpen && _keyboardOpenFrame === null) {

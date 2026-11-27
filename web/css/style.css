@@ -1075,6 +1075,7 @@ html[data-theme="light"] .permission-btn[aria-checked="true"] { background: var(
 }
 #input-bar.file-drop-active #file-drop-hint { display: flex; }
 #input-bar.kb-up:not(.kb-pan) { padding-bottom: 8px; }
+html.kb-sliding #msg-input { caret-color: transparent; }
 @media (min-width: 481px) { #input-bar { padding-bottom: 14px; } }
 #input-bar[inert] { cursor: not-allowed; }
 #input-bar[inert] .input-row {
