@@ -926,6 +926,11 @@ function handleFileResponse(msg, line, snippet, token) {
   if (msg.image) {
     return window.getImageUrl(msg.key, msg.attachment).then(function (url) {
       if (token !== _fileRequestToken) return;
+      // Docked beside the chat, the image stays in the panel and opens the full viewer on click.
+      if (document.body.classList.contains('side-dock')) {
+        setBody('<img class="file-image-docked" alt="" src="' + esc(url) + '" onclick="viewImage(this.src)">');
+        return;
+      }
       closeFileViewer({ refresh: false });
       if (window.viewImage) window.viewImage(url);
     }).catch(function () {
@@ -958,6 +963,7 @@ if (backSlot) mountBackButton(backSlot, function () { closeFileViewer(); });
 document.addEventListener('keydown', function (e) {
   var o = overlay();
   if (!o || o.style.display !== 'flex' || e.key !== 'Escape' || window.sideDockOutside?.(e)) return;
+  if (document.getElementById('imgOverlay')?.style.display === 'flex') return;  // Esc closes the image viewer above
   closeFileViewer();
   e.preventDefault();
   e.stopImmediatePropagation();

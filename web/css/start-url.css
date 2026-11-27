@@ -59,5 +59,6 @@ html.native-mobile[data-page-zoom] .start-url-form .input-group input { font-siz
   height: 100%; display: flex; justify-content: center; align-items: flex-start;
   overflow-y: auto; padding-top: var(--sat, env(safe-area-inset-top, 0px));
 }
-.add-device-page .add-back { position: fixed; top: calc(var(--sat, env(safe-area-inset-top, 0px)) + 6px); left: 8px; width: 28px; height: 28px; display: flex; }
+/* Where Settings' back button sits: centred in its 44px bar (top padding max(safe area, 6px), 6px + 1px border below). */
+.add-device-page .add-back { --bar-top: max(var(--sat, env(safe-area-inset-top, 0px)), 6px); position: fixed; top: calc(var(--bar-top) + max(0px, (9px - var(--bar-top)) / 2)); left: 8px; width: 28px; height: 28px; display: flex; }
 html.native-mobile .add-device-page .add-back { width: 44px; height: 44px; top: var(--sat, env(safe-area-inset-top, 0px)); left: var(--sal, env(safe-area-inset-left, 0px)); }

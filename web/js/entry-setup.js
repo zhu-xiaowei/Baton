@@ -238,37 +238,42 @@ setNativeTabTitle('Settings');
     return platform === 'windows' ? "irm '" + url + (paired ? '?' : '&') + "platform=windows' | iex" : 'curl -sL "' + url + '" | bash';
   }
 
-  var EYE = document.querySelector('.connect .code-btn').innerHTML;
+  var values = {};  // each tab's full text; a code is shown only as its first and last characters
 
   function resetConnect() {
     tokenRequest = null;
     document.querySelectorAll('.connect .code-block').forEach(function (block) {
       if (paired && block.dataset.panel === 'install') return;  // public, never expires
+      delete values[block.dataset.panel];
       block.classList.add('masked');
       block.querySelector('.text').textContent = '••••••••••••••••••••••••••••••••';
-      block.querySelector('.code-btn').innerHTML = EYE;
     });
     document.querySelector('.connect .qr-frame').classList.remove('ready');
-    if (!document.querySelector('[data-panel="qr"]').hidden) reveal(null);
+    if (!document.querySelector('[data-panel="qr"]').hidden) reveal().catch(function () {});
   }
 
-  // One Show reveals all three tabs from the same code, so switching tabs never loads again.
-  function reveal(button) {
-    if (button) { button.innerHTML = '<span class="spinner"></span>'; button.disabled = true; }
-    startToken().then(function (startUrl) {
+  // One code fills all three tabs, so switching tabs never loads again.
+  function reveal() {
+    return startToken().then(function (startUrl) {
+      var code = /[#?&][ct]=([^&]+)/.exec(startUrl)[1];
       document.querySelectorAll('.connect .code-block').forEach(function (block) {
-        block.querySelector('.text').textContent = connectText(block.dataset.panel, startUrl);
+        var text = values[block.dataset.panel] = connectText(block.dataset.panel, startUrl);
+        block.querySelector('.text').textContent = text.split(code).join(code.slice(0, 4) + '***' + code.slice(-4));
         block.classList.remove('masked');
-        block.querySelector('.code-btn').innerHTML = COPY_ICON;
       });
       drawQr(startUrl);
-    }, function () { if (button) button.innerHTML = EYE; }).finally(function () { if (button) button.disabled = false; });
+    });
   }
 
-  window.revealConnect = function (button) {
-    var block = button.parentElement;
-    if (block.classList.contains('masked')) reveal(button);
-    else copyText(button, block.querySelector('.text').textContent);
+  // Copies at once, requesting the code first if needed (the clipboard write starts within the click).
+  window.copyConnect = function (button) {
+    var panel = button.parentElement.dataset.panel;
+    if (values[panel]) return copyText(button, values[panel]);
+    button.innerHTML = '<span class="spinner"></span>';
+    button.disabled = true;
+    copyText(button, reveal().then(function () { return values[panel]; }))
+      .catch(function () { button.innerHTML = COPY_ICON; })
+      .finally(function () { button.disabled = false; });
   };
 
   window.selectConnectTab = function (tab) {
@@ -276,7 +281,7 @@ setNativeTabTitle('Settings');
       button.classList.toggle('active', button.dataset.tab === tab);
     });
     document.querySelectorAll('.connect [data-panel]').forEach(function (panel) { panel.hidden = panel.dataset.panel !== tab; });
-    if (tab === 'qr' && !document.querySelector('.connect .qr-frame.ready')) reveal(null);
+    if (tab === 'qr' && !document.querySelector('.connect .qr-frame.ready')) reveal().catch(function () {});
   };
 
   // A paired account's install command is public (no credential): shown as it is.
@@ -284,11 +289,9 @@ setNativeTabTitle('Settings');
     installBase = account && account.install || '';
     var install = document.querySelector('[data-panel="install"]');
     var text = connectText('install', '');
+    values.install = text;
     if (install.querySelector('.text').textContent !== text) install.querySelector('.text').textContent = text;
-    if (install.classList.contains('masked')) {
-      install.classList.remove('masked');
-      install.querySelector('.code-btn').innerHTML = COPY_ICON;
-    }
+    install.classList.remove('masked');
     if (!account) return;
     document.querySelectorAll('.hosted-only').forEach(function (row) { row.hidden = !account.hosted; });
     // A paired App of a self-hosted stack has no install command it could show (the public one is hosted only).
@@ -322,8 +325,13 @@ setNativeTabTitle('Settings');
     canvas.parentElement.classList.add('ready');
   }
 
+  // `text` may be a promise: WebKit only accepts a later value through a ClipboardItem made during the click.
   function copyText(btn, text) {
-    navigator.clipboard.writeText(text).then(function () {
+    var later = function () { return Promise.resolve(text).then(function (value) { return navigator.clipboard.writeText(value); }); };
+    var write = typeof text === 'string' || !window.ClipboardItem ? later()
+      : navigator.clipboard.write([new ClipboardItem({ 'text/plain': text.then(function (value) { return new Blob([value], { type: 'text/plain' }); }) })])
+        .catch(later);
+    return write.then(function () {
       btn.innerHTML = CHECK_ICON_SVG;
       btn.classList.add('copied');
       setTimeout(function () { btn.innerHTML = COPY_ICON; btn.classList.remove('copied'); }, 2000);
