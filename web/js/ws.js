@@ -198,8 +198,7 @@ if (window.visualViewport && _isMobile) {
     var previousTop = parseFloat(document.body.style.top) || 0;
     document.body.style.bottom = 'auto';
     document.body.style.top = top + 'px';
-    // Panned, the page ends where the screen does, so a keyboard that grows later (another input method) lifts the composer;
-    // not before WebKit reports its scroll, or the page would shrink for a frame.
+    // Ends where the screen does once WebKit has scrolled, so a keyboard that grows later still lifts the composer.
     document.body.style.height = (layoutPixels(!_webKitPans ? vv.height
       : document.body.classList.contains('new-session') || vv.offsetTop <= 0 ? _vpBaseHeight : vv.offsetTop + vv.height) + chromeHeight) + 'px';
     document.body.style.transform = chromeHeight ? 'translateY(-' + chromeHeight + 'px)' : '';
@@ -230,7 +229,7 @@ if (window.visualViewport && _isMobile) {
     messageInput.addEventListener('focus', function () {
       _inputFocusRequestsBottom = !!state.appState.session
         && state.appState.session !== '__new__';
-      composerToNative(!document.body.classList.contains('new-session')); // main.mm: rises with the keyboard
+      composerToNative(!document.body.classList.contains('new-session'));
     });
     messageInput.addEventListener('blur', function () {
       _inputFocusRequestsBottom = false;

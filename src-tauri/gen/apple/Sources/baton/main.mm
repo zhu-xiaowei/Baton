@@ -162,9 +162,7 @@ static void baton_sync_launch_snapshots(void) {
 }
 @end
 
-// The Session composer: WebKit reveals it ~2 frames after the keyboard starts rising, so it is briefly covered. Scrolled
-// inside the keyboard's own animation instead (as WebKit already does when it hides), it rises with the keyboard;
-// WebKit's own reveal then finds it visible. Only while the page says the bottom composer has focus.
+// WebKit reveals the Session composer a few frames late; scrolled in the keyboard's animation it rises with it.
 static BOOL _baton_composer_focused = NO;
 @interface BatonComposerHandler : NSObject <WKScriptMessageHandler>
 @end
@@ -183,8 +181,7 @@ static void baton_follow_keyboard(NSNotification *note, WKWebView *wv) {
     if (target <= 0 || sv.contentOffset.y >= target - 0.5) return;
     UIViewAnimationOptions curve = [note.userInfo[UIKeyboardAnimationCurveUserInfoKey] unsignedIntegerValue] << 16;
     [UIView animateWithDuration:[note.userInfo[UIKeyboardAnimationDurationUserInfoKey] doubleValue] delay:0
-                        options:curve | UIViewAnimationOptionBeginFromCurrentState
-                     animations:^{ sv.contentOffset = CGPointMake(sv.contentOffset.x, target); } completion:nil];
+        options:curve | UIViewAnimationOptionBeginFromCurrentState animations:^{ sv.contentOffset = CGPointMake(sv.contentOffset.x, target); } completion:nil];
 }
 
 static void baton_install_appearance_bridge(WKWebView *webview) {
