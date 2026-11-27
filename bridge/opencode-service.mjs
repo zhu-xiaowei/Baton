@@ -34,7 +34,7 @@ export function writerProcesses() {
 }
 
 let bin;
-const opencodeBin = () => (bin ??= findRuntimeBin('opencode', [path.join(os.homedir(), '.opencode/bin')], '2.2.0')?.bin || null);
+const opencodeBin = () => (bin && fs.existsSync(bin) ? bin : (bin = findRuntimeBin('opencode', [path.join(os.homedir(), '.opencode/bin')], '2.2.0')?.bin || null)); // kept while the file exists
 
 function serviceInfo() {
   try {

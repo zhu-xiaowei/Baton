@@ -33,8 +33,8 @@ const watches = {};
 
 const sid = (id) => storageSessionId('kiro', id);
 const recOf = (id) => sessionIndex.records.get(sessionFile(id));
-// Found at the first use and kept, a miss too ('').
-const kiroBin = () => (bin ??= findRuntimeBin('kiro-cli', [], '3.0.0')?.bin || '') || Promise.reject(new Error('kiro-cli 3.x was not found on this device.'));
+// Kept while the file exists; a miss is looked up again (an update may install or move it).
+const kiroBin = () => (bin && fs.existsSync(bin) ? bin : (bin = findRuntimeBin('kiro-cli', [], '3.0.0')?.bin || '')) || Promise.reject(new Error('kiro-cli 3.x was not found on this device.'));
 
 // A closed session holds no lease, so a new turn starts at once while the old process is still exiting.
 function connect(cwd) {
@@ -397,7 +397,7 @@ const kiroInteraction = defineInteractionAdapter({
     if (conns.has(id)) return; // a message during a turn steers into it
     cwd = (id && recOf(id)?.state?.cwd) || cwd; // the key sendExisting uses, also in a linked worktree
     const c = warm.get(cwd) || warm.set(cwd, connect(cwd)).get(cwd);
-    c.ready.catch((error) => console.error(`[kiro] prewarm: ${error.message}`));
+    c.ready.catch((error) => { if (warm.get(cwd) === c) warm.delete(cwd); console.error(`[kiro] prewarm: ${error.message}`); });
     clearTimeout(c.warmTimer);
     c.warmTimer = setTimeout(() => warm.delete(cwd) && close(c), PREWARM_MS).unref();
   },
