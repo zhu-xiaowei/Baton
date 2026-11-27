@@ -346,6 +346,11 @@ function closeImageViewer() {
   ensureViewer();
   overlay.style.display = 'none';
   resetZoom();
+  // Shown over the docked file panel: closing it closes that panel too.
+  if (overlay.classList.contains('docked')) {
+    overlay.classList.remove('docked');
+    window.closeFileViewer?.({ refresh: false });
+  }
   if (downloads.size && nativeDownloadsStopOnClose()) cancelNativeDownload();
 }
 

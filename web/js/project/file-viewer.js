@@ -15,6 +15,7 @@ import { CACHED_PREVIEW_TYPES, cacheAttachment, cachedAttachment } from '../comp
 import { toolDetailsSource } from '../tool-details.js';
 import { resolveEditLocation } from './edit-location.js';
 import { imageMimeType } from '../components/image-type.js';
+import { closeImageViewer } from '../components/image-viewer.js';
 import { transfer } from '../../../bridge/transfer-store.mjs';
 
 var FILE_REQ_TIMEOUT = 20000;
@@ -637,6 +638,8 @@ export function closeFileViewer(options) {
   options = options || {};
   var wasOpen = overlay()?.style.display === 'flex';
   var onClose = _view?.options.onClose;
+  var dockedImage = document.getElementById('imgOverlay');
+  if (dockedImage?.classList.contains('docked')) { dockedImage.classList.remove('docked'); closeImageViewer(); }
   _edgeBack.deactivate();
   var o = overlay();
   if (o) o.style.display = 'none';
@@ -926,13 +929,11 @@ function handleFileResponse(msg, line, snippet, token) {
   if (msg.image) {
     return window.getImageUrl(msg.key, msg.attachment).then(function (url) {
       if (token !== _fileRequestToken) return;
-      // Docked beside the chat, the image stays in the panel; elsewhere it opens over the window.
-      if (document.body.classList.contains('side-dock')) {
-        setBody('<img class="file-image-docked" alt="" src="' + esc(url) + '">');
-        return;
-      }
-      closeFileViewer({ refresh: false });
+      // Docked beside the chat, the image viewer covers only the panel, which stays open under it.
+      var docked = document.body.classList.contains('side-dock');
+      if (!docked) closeFileViewer({ refresh: false });
       if (window.viewImage) window.viewImage(url);
+      if (docked) document.getElementById('imgOverlay').classList.add('docked');
     }).catch(function () {
       if (token === _fileRequestToken) setBody('<div class="file-error">Failed to download image.</div>');
     });

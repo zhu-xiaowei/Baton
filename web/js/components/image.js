@@ -49,7 +49,7 @@ function canDropFiles() {
   const modalOpen = Array.from(document.querySelectorAll('.modal-overlay, .file-overlay, .img-overlay, dialog[open]'))
     .some(modal => modal.getClientRects().length > 0
       && !(modal.classList.contains('visualization-surface') && !modal.classList.contains('is-fullscreen'))
-      && !(docked && modal.id === 'fileOverlay'));
+      && !(docked && (modal.id === 'fileOverlay' || modal.classList.contains('docked'))));
   return !!(state.appState.session && bar && input && !bar.hidden && !bar.inert && !modalOpen
     && window.getComputedStyle(bar).display !== 'none' && !input.disabled
     && state.activeThreadCanSend !== false);
