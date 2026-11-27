@@ -174,8 +174,10 @@ static BOOL _baton_composer_focused = NO;
 @end
 
 static void baton_follow_keyboard(NSNotification *note, WKWebView *wv) {
-    if (!_baton_composer_focused || !wv.window || UIDevice.currentDevice.userInterfaceIdiom != UIUserInterfaceIdiomPhone) return;
+    if (!_baton_composer_focused || !wv.window) return;
     CGRect end = [wv convertRect:[note.userInfo[UIKeyboardFrameEndUserInfoKey] CGRectValue] fromView:nil];
+    // iPad: only a docked keyboard; a floating or split one does not reach the window's bottom.
+    if (CGRectGetMaxY(end) < CGRectGetMaxY([wv convertRect:wv.window.bounds fromView:wv.window]) - 0.5) return;
     UIScrollView *sv = wv.scrollView;
     CGFloat target = CGRectGetMaxY(wv.bounds) - CGRectGetMinY(end) - sv.adjustedContentInset.top;
     if (target <= 0 || sv.contentOffset.y >= target - 0.5) return;

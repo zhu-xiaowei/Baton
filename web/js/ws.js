@@ -50,7 +50,7 @@ var _keyboardOpenFrame = null;
 var _followKeyboardOpen = false;
 var _mobileKeyboardOpen = false;
 var _inputFocusRequestsBottom = false;
-var _isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent);
+var _isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 // Gate keyboard adaptation to touch devices: on desktop visualViewport also fires resize (scrollbar/chrome shifts, mermaid render), and the Android branch below would wrongly rewrite body height → input bar jumps.
 var _isMobile = /Mobi|Android/i.test(navigator.userAgent) || _isIOS;
 // Session events, sends and subscriptions use the direct App ⇄ Bridge channel.
