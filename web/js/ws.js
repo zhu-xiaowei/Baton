@@ -215,19 +215,22 @@ if (window.visualViewport && _isMobile) {
   var messageInput = document.getElementById('msg-input');
   if (messageInput) {
     var dockTimer = 0;
-    // The keyboard docks against the page bottom, below the composer's safe-area padding: move the composer down
-    // by it from focus on, composited, so it lands on the keyboard whenever the viewport events arrive.
+    // The keyboard docks against the page bottom, below the composer's safe-area padding: move the chat and the
+    // composer down by it from focus on, composited, so they land on the keyboard whenever viewport events arrive.
     var dockComposer = function (focused) {
       var bar = _isIOS && document.getElementById('input-bar');
-      if (!bar) return;
+      var content = document.getElementById('content');
+      if (!bar || !content) return;
       var shift = focused ? Math.max(0, (parseFloat(window.getComputedStyle(bar).paddingBottom) || 0) - 8) : 0;
-      bar.style.transition = 'transform 250ms ease-in-out';
-      bar.style.transform = shift ? 'translateY(' + shift + 'px)' : '';
+      [content, bar].forEach(function (el) {
+        el.style.transition = 'transform 250ms ease-in-out';
+        el.style.transform = shift ? 'translateY(' + shift + 'px)' : '';
+      });
       document.documentElement.classList.add('kb-sliding');
       clearTimeout(dockTimer);
       dockTimer = setTimeout(function () {
         document.documentElement.classList.remove('kb-sliding');
-        if (!_mobileKeyboardOpen && shift) bar.style.transform = ''; // a hardware keyboard: no keyboard came up
+        if (!_mobileKeyboardOpen && shift) content.style.transform = bar.style.transform = ''; // a hardware keyboard: no keyboard came up
       }, 700);
     };
     var composerFocus = function (focused) {
