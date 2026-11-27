@@ -328,7 +328,12 @@ async function loadOneImage(el, manual = false, notify = false) {
   }
   try {
     var url = path ? await getLocalImageUrl(requestPath, context)
-      : await getImageUrl(el.dataset.key);
+      : await getImageUrl(el.dataset.key).catch(function (error) {
+        // The transfer copy expires after a day and was sealed under the account key of its time;
+        // the Bridge's own copy is read and sent again like any image on that computer.
+        if (!el.dataset.local) throw error;
+        return getLocalImageUrl(el.dataset.local, context);
+      });
     showLoadedImage(el, url);
   } catch(e) {
     if (path && /^(?:ENOENT|ENOTDIR)\b/.test(e.message)) {
