@@ -1993,7 +1993,8 @@ async function startNewSession(projectHash) {
   showInputBar(true);
   // Move input-bar into #content so it sits with the hero in centered flex group.
   // Restored to body on first send (see ws.js doSend) or on showInputBar(false).
-  if (bar && bar.parentElement !== content) content.appendChild(bar);
+  // Moving it drops focus without a blur event; blur first so main.mm hears it.
+  if (bar && bar.parentElement !== content) { document.getElementById('msg-input')?.blur(); content.appendChild(bar); }
   // Sync the static #send-btn placeholder to the current composer state
   if (typeof updateSendBtn === 'function') updateSendBtn();
   newSessionRequest(projectHash);
