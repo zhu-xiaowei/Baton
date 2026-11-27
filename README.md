@@ -13,7 +13,9 @@ Baton provides non-intrusive, real-time streaming and rendering for Claude Code,
 
 ## Quick Start
 
-### 1. Install Bridge on your computer
+### Option A: Baton-hosted relay
+
+#### 1. Install Bridge on your computer
 
 ```bash
 curl -fsSL https://agentbaton.app/install | bash
@@ -30,7 +32,7 @@ irm https://agentbaton.app/install.ps1 | iex
 
 </details>
 
-### 2. Get the App and connect
+#### 2. Get the App and connect
 
 | iOS | Android | HarmonyOS | macOS | Windows | Linux |
 |:---:|:---:|:---:|:---:|:---:|:---:|
@@ -39,7 +41,32 @@ irm https://agentbaton.app/install.ps1 | iex
 
 Scan the QR code shown by Bridge, or paste its **Start URL**.
 
-You can also [self-host the relay on AWS](#self-hosting-aws).
+### Option B: Self-hosted relay on AWS
+
+<details>
+<summary>Deployment steps</summary>
+
+**1. Deploy Server**
+
+Requires [AWS CLI](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html) with permissions to create CloudFormation stacks, plus `git`, `zip` and `openssl`.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/agentbaton/baton/main/server/install.sh | bash
+```
+
+Takes ~6-8 minutes. Prints a **Start URL** (and a QR code when Node.js is installed) on success. Supports `--region`, `--stack`, `--profile` options (pass after `bash -s --`).
+
+**2. Install Bridge**
+
+1. Open the **Start URL** in your browser (this is also the web viewer)
+2. Copy the one-line **Install bridge** command from the Setup page
+3. Run it on the computer where you use your coding agent.
+
+On native Windows, run the install command in PowerShell using **Run as administrator**.
+
+Then get the App above and scan the QR code or input the Start URL.
+
+</details>
 
 ---
 
@@ -51,7 +78,7 @@ You can also [self-host the relay on AWS](#self-hosting-aws).
 - **Two-way handoff** — sessions on your computer stream live to your phone, with running / needs input / done status; start projects and sessions on your phone and carry on at your computer
 - **Approvals and questions** — approve or deny tool calls, answer questions and review plans from your phone
 - **Notifications** — get an alert when a session finishes or needs you; tap to open it
-- **End-to-end encrypted** — conversations stay on your computer; the relay only forwards them
+- **End-to-end encrypted chat** — your computer stores your chat history; the relay forwards messages without storing them
 
 ### Developer tools
 
@@ -99,33 +126,6 @@ You can also [self-host the relay on AWS](#self-hosting-aws).
 - **API key rotation** — rotate the API key with `--rotate-key` while preserving existing data
 - **macOS tabs** — work on multiple sessions in independent tabs
 - **Claude usage insights** — status, settings, rate limits, token history, and model usage charts
-
----
-
-## Self-hosting (AWS)
-
-Run your own server in your AWS account instead of the hosted service.
-
-### 1. Deploy Server
-
-Requires [AWS CLI](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html) with permissions to create CloudFormation stacks, plus `git`, `zip` and `openssl`.
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/agentbaton/baton/main/server/install.sh | bash
-```
-
-Takes ~6-8 minutes. Prints a **Start URL** (and a QR code when Node.js is installed) on success. Supports `--region`, `--stack`, `--profile` options (pass after `bash -s --`).
-
-
-### 2. Install Bridge
-
-1. Open the **Start URL** in your browser (this is also the web viewer)
-2. Copy the one-line **Install bridge** command from the Setup page
-3. Run it on the machine where Claude Code or Codex is running
-
-On native Windows, run the install command in PowerShell using **Run as administrator**.
-
-Then get the App above and scan the QR code or input the Start URL.
 
 ---
 

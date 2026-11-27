@@ -13,7 +13,9 @@ Baton transmite y muestra en tiempo real, sin interferir en tu forma de trabajar
 
 ## Inicio rápido
 
-### 1. Instala el Bridge en tu ordenador
+### Opción A: Relay alojado por Baton
+
+#### 1. Instala el Bridge en tu ordenador
 
 ```bash
 curl -fsSL https://agentbaton.app/install | bash
@@ -30,7 +32,7 @@ irm https://agentbaton.app/install.ps1 | iex
 
 </details>
 
-### 2. Descarga la App y conéctate
+#### 2. Descarga la App y conéctate
 
 | iOS | Android | HarmonyOS | macOS | Windows | Linux |
 |:---:|:---:|:---:|:---:|:---:|:---:|
@@ -39,7 +41,32 @@ irm https://agentbaton.app/install.ps1 | iex
 
 Escanea el código QR que muestra el Bridge o pega su **Start URL**.
 
-También puedes [alojar tu propio relay en AWS](#alojamiento-propio-aws).
+### Opción B: Relay alojado en tu cuenta de AWS
+
+<details>
+<summary>Pasos de despliegue</summary>
+
+**1. Desplegar el servidor**
+
+Requiere [AWS CLI](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html) con permisos para crear pilas de CloudFormation, además de `git`, `zip` y `openssl`.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/agentbaton/baton/main/server/install.sh | bash
+```
+
+Tarda unos 6–8 minutos. Al finalizar, muestra una **Start URL** (y un código QR si Node.js está instalado). Admite las opciones `--region`, `--stack` y `--profile` (añádelas después de `bash -s --`).
+
+**2. Instalar el Bridge**
+
+1. Abre la **Start URL** en tu navegador (también sirve como visor web).
+2. Copia el comando de una línea **Install bridge** de la página Setup.
+3. Ejecuta el comando en el ordenador donde usas tu agente de programación.
+
+En Windows, ejecuta el comando de instalación en PowerShell con la opción **Ejecutar como administrador**.
+
+Después, descarga la App indicada arriba y escanea el código QR o introduce la Start URL.
+
+</details>
 
 ---
 
@@ -51,7 +78,7 @@ También puedes [alojar tu propio relay en AWS](#alojamiento-propio-aws).
 - **Relevo en ambos sentidos** — las Sessions de tu ordenador llegan en directo al móvil, con su estado (en curso, necesita respuesta, terminada); crea proyectos y Sessions en el móvil y continúa en el ordenador.
 - **Aprobaciones y preguntas** — aprueba o rechaza llamadas a herramientas, responde preguntas y revisa planes desde el móvil.
 - **Notificaciones** — recibe un aviso cuando una Session termina o te necesita; tócalo para abrirla.
-- **Cifrado de extremo a extremo** — las conversaciones se quedan en tu ordenador; el relay solo las reenvía.
+- **Chat cifrado de extremo a extremo** — tu ordenador guarda el historial de chat; el relay reenvía los mensajes sin guardarlos.
 
 ### Herramientas de desarrollo
 
@@ -99,33 +126,6 @@ También puedes [alojar tu propio relay en AWS](#alojamiento-propio-aws).
 - **Rotación de la clave API** — cambia la clave API con `--rotate-key` y conserva los datos existentes.
 - **Pestañas en macOS** — trabaja en varias Sessions mediante pestañas independientes.
 - **Estadísticas de uso de Claude** — consulta el estado, la configuración, los límites de uso, el historial de tokens y los gráficos de uso de modelos.
-
----
-
-## Alojamiento propio (AWS)
-
-Ejecuta tu propio servidor en tu cuenta de AWS en lugar de usar el servicio alojado.
-
-### 1. Desplegar el servidor
-
-Requiere [AWS CLI](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html) con permisos para crear pilas de CloudFormation, además de `git`, `zip` y `openssl`.
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/agentbaton/baton/main/server/install.sh | bash
-```
-
-Tarda unos 6–8 minutos. Al finalizar, muestra una **Start URL** (y un código QR si Node.js está instalado). Admite las opciones `--region`, `--stack` y `--profile` (añádelas después de `bash -s --`).
-
-
-### 2. Instalar el Bridge
-
-1. Abre la **Start URL** en tu navegador (también sirve como visor web).
-2. Copia el comando de una línea **Install bridge** de la página Setup.
-3. Ejecútalo en el ordenador donde se esté ejecutando Claude Code o Codex.
-
-En Windows, ejecuta el comando de instalación en PowerShell con la opción **Ejecutar como administrador**.
-
-Después, descarga la App indicada arriba y escanea el código QR o introduce la Start URL.
 
 ---
 

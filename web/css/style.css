@@ -929,7 +929,7 @@ html.native-mobile .agent-threads-list {
 .md-preview h4 { font-size: 1em; }
 .md-preview h5 { font-size: .875em; }
 .md-preview h6 { font-size: .85em; color: var(--text-secondary); }
-.md-preview hr { height: .25em; margin: 24px 0; padding: 0; border: 0; background: var(--border); }
+.md-preview hr { height: 1px; margin: 24px 0; padding: 0; border: 0; background: var(--border); }
 .md-preview th, .md-preview td { padding: 6px 13px; font-size: inherit; }
 .md-preview tr:nth-child(2n) { background: var(--surface-subtle); }
 .md-preview blockquote { padding: 0 1em; border-left: .25em solid var(--border); }

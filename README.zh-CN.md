@@ -13,7 +13,9 @@ Baton 以无侵入的方式，在多个设备上实时同步和渲染 Claude Cod
 
 ## 快速开始
 
-### 1. 在电脑上安装 Bridge
+### 方案 A：Baton 官方中继
+
+#### 1. 在电脑上安装 Bridge
 
 ```bash
 curl -fsSL https://agentbaton.app/install | bash
@@ -30,7 +32,7 @@ irm https://agentbaton.app/install.ps1 | iex
 
 </details>
 
-### 2. 下载 App 并连接
+#### 2. 下载 App 并连接
 
 | iOS | Android | HarmonyOS | macOS | Windows | Linux |
 |:---:|:---:|:---:|:---:|:---:|:---:|
@@ -39,7 +41,32 @@ irm https://agentbaton.app/install.ps1 | iex
 
 扫描 Bridge 显示的二维码，或粘贴 **Start URL** 连接。
 
-也可以[在 AWS 上自建中继](#自行部署aws)。
+### 方案 B：AWS 自建中继
+
+<details>
+<summary>查看部署步骤</summary>
+
+**1. 部署服务器**
+
+需要安装 [AWS CLI](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html)，并具备创建 CloudFormation 堆栈的权限；另需 `git`、`zip` 和 `openssl`。
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/agentbaton/baton/main/server/install.sh | bash
+```
+
+部署约需 6–8 分钟，成功后会输出 **Start URL**（装有 Node.js 时还会输出二维码）。支持 `--region`、`--stack`、`--profile` 选项（通过 `bash -s --` 传入）。
+
+**2. 安装 Bridge**
+
+1. 在浏览器中打开 **Start URL**（也可直接作为 Web 查看器使用）。
+2. 在 Setup 页面复制 **Install bridge** 提供的一行安装命令。
+3. 在你使用编程助手的电脑上执行该命令。
+
+如果直接在 Windows 上安装，请以**管理员身份运行** PowerShell，再执行安装命令。
+
+然后下载上方的 App，扫描二维码或输入 Start URL。
+
+</details>
 
 ---
 
@@ -51,7 +78,7 @@ irm https://agentbaton.app/install.ps1 | iex
 - **双向接力** — 电脑上的 Session 实时同步到手机，并显示运行中、等待输入、已完成状态；在手机上新建项目和 Session，回到电脑也能接着用。
 - **审批与回答** — 在手机上批准或拒绝工具调用、回答问题、审阅计划。
 - **通知提醒** — Session 完成或需要你处理时提醒你，点一下就能打开。
-- **端到端加密** — 对话留在你的电脑上，中继只负责转发。
+- **端到端加密聊天** — 聊天记录保存在你的电脑上，中继只转发消息，不保存记录。
 
 ### 开发工具
 
@@ -99,33 +126,6 @@ irm https://agentbaton.app/install.ps1 | iex
 - **API key 轮换** — 支持通过 `--rotate-key` 轮换 API key，保留已有数据。
 - **macOS 标签页** — 通过独立标签页同时处理多个 Session。
 - **Claude 用量分析** — 查看状态、设置、速率限制、Token 历史和模型用量图表。
-
----
-
-## 自行部署（AWS）
-
-不使用托管服务，而是在自己的 AWS 账户中运行服务器。
-
-### 1. 部署服务器
-
-需要安装 [AWS CLI](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html)，并具备创建 CloudFormation 堆栈的权限；另需 `git`、`zip` 和 `openssl`。
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/agentbaton/baton/main/server/install.sh | bash
-```
-
-部署约需 6–8 分钟，成功后会输出 **Start URL**（装有 Node.js 时还会输出二维码）。支持 `--region`、`--stack`、`--profile` 选项（通过 `bash -s --` 传入）。
-
-
-### 2. 安装 Bridge
-
-1. 在浏览器中打开 **Start URL**（也可直接作为 Web 查看器使用）。
-2. 在 Setup 页面复制 **Install bridge** 提供的一行安装命令。
-3. 在运行 Claude Code 或 Codex 的电脑上执行该命令。
-
-如果直接在 Windows 上安装，请以**管理员身份运行** PowerShell，再执行安装命令。
-
-然后下载上方的 App，扫描二维码或输入 Start URL。
 
 ---
 
