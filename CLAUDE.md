@@ -252,7 +252,7 @@ Done:
   is alive and started before the lease was taken + open turn → running, open approval → needs_input. History is
   one row per line, by line number; the turn id Baton sends as `userMessageTag` (and `steer-<id>`) becomes
   `nativeId: live:user:<turnId>` / `live:interrupt:<turnId>`; Kiro's steering injections and `[STEERING …]` notes hide.
-- `kiro-runtime.mjs` (in `OPTIONAL_RUNTIMES` when kiro-cli 3.x has unpacked its engine, `<data dir>/kiro-cli/kas` (`$XDG_DATA_HOME` honoured); the binary is located at first use, a miss is kept too): a Baton turn runs `kiro-cli acp --agent-engine=v3` (`session/load` with `noReplay`, or
+- `kiro-runtime.mjs` (in `OPTIONAL_RUNTIMES` when kiro-cli 3.x has unpacked its engine, `<data dir>/kiro-cli/kas` (`$XDG_DATA_HOME` honoured); the binary is located at first use and kept while the file exists; a miss is looked up again): a Baton turn runs `kiro-cli acp --agent-engine=v3` (`session/load` with `noReplay`, or
   `session/new` + the user's `chat.defaultModel`); it exits when Done (`session/close` → EOF). A send during a turn
   waits until that turn's prompt is stored (`turn_start`), then uses `_session/steer`, so the order holds; sends that
   arrive while a turn ends wait for it, then the first opens the next connection and the rest steer into it (one connection per Session); interrupt sends `session/cancel` once the turn started (≤ 2 s). Text streams from ACP

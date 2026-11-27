@@ -397,7 +397,7 @@ const kiroInteraction = defineInteractionAdapter({
     if (conns.has(id)) return; // a message during a turn steers into it
     cwd = (id && recOf(id)?.state?.cwd) || cwd; // the key sendExisting uses, also in a linked worktree
     const c = warm.get(cwd) || warm.set(cwd, connect(cwd)).get(cwd);
-    c.ready.catch((error) => { if (warm.get(cwd) === c) warm.delete(cwd); console.error(`[kiro] prewarm: ${error.message}`); });
+    c.ready.catch((error) => { if (warm.get(cwd) === c) { warm.delete(cwd); clearTimeout(c.warmTimer); } console.error(`[kiro] prewarm: ${error.message}`); });
     clearTimeout(c.warmTimer);
     c.warmTimer = setTimeout(() => warm.delete(cwd) && close(c), PREWARM_MS).unref();
   },
