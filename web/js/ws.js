@@ -198,8 +198,10 @@ if (window.visualViewport && _isMobile) {
     var previousTop = parseFloat(document.body.style.top) || 0;
     document.body.style.bottom = 'auto';
     document.body.style.top = top + 'px';
-    // Panned, the page ends where the screen does, so a keyboard that grows later (another input method) lifts the composer.
-    document.body.style.height = (layoutPixels(!_webKitPans ? vv.height : document.body.classList.contains('new-session') ? _vpBaseHeight : vv.offsetTop + vv.height) + chromeHeight) + 'px';
+    // Panned, the page ends where the screen does, so a keyboard that grows later (another input method) lifts the composer;
+    // not before WebKit reports its scroll, or the page would shrink for a frame.
+    document.body.style.height = (layoutPixels(!_webKitPans ? vv.height
+      : document.body.classList.contains('new-session') || vv.offsetTop <= 0 ? _vpBaseHeight : vv.offsetTop + vv.height) + chromeHeight) + 'px';
     document.body.style.transform = chromeHeight ? 'translateY(-' + chromeHeight + 'px)' : '';
     // Slide it while WebKit's keyboard scroll is fastest, so the page keeps moving one way;
     // composited, so a busy main thread cannot turn the slide into a jump.
