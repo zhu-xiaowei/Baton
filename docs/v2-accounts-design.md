@@ -51,10 +51,10 @@ connections (`apigatewaymanagementapi.delete_connection`), so renewal stops.
 
 | pk | sk | Attributes | TTL |
 |---|---|---|---|
-| `ACCOUNT#<accountId>` | `META` | `joinSecretHash`, `head` (fingerprint of the current `K`), `rotations` (chain, ≤ 8), `createdAt` | — |
+| `ACCOUNT#<accountId>` | `META` | `hosted`, `joinSecretHash` (of `R`), `keySealed`, `phraseSealed` (§8), `head` (fingerprint of `K`), `createdAt` | — |
 | `ACCOUNT#<accountId>` | `TOKEN#<hash>` | `kind` (`app`/`bridge`), `deviceName`, `createdAt`, `lastSeen` | — |
 | `TOKEN#<hash>` | `-` | `accountId`, `kind`, `deviceName` | — |
-| `JOIN#<hash(joinSecret)>` | `-` | `accountId` (written at register, replaced at rotate, deleted with the account) | — |
+| `JOIN#<hash(joinSecret)>` | `-` | `accountId` (written at register and with each new `R`, deleted when a device leaves and with the account) | — |
 | `PAIR#<sha256(code)>` | `-` | `kind` (`app`/`bridge`), `accountId` (set when issued by a signed-in device or approved), `sealed` (K under `t`), `pollHash` (joining computer), `deviceName`, `token` (issued token for a waiting Bridge, deleted on read) | 15 min |
 | `PUSH_DEVICE#<accountId>` | `<environment>:<token>` | (replaces the shared `PUSH_DEVICE` partition) | 30 days (as today) |
 | `RATE#<scope>` | `<window start>` | `n` (atomic `ADD`) | window + 1 h |
@@ -66,9 +66,10 @@ devices queries `pk = ACCOUNT#<id>, begins_with(sk, 'TOKEN#')`.
 
 | Route | Credential | Body → reply | Notes |
 |---|---|---|---|
-| `POST /api/account/register` | none | `{accountId, joinSecret, deviceName}` → `{token}` (app) | called by the first App, which creates `K`; only with `OpenRegistration`; `accountId` must not exist (conditional put); `RATE#ip` ≤ 5 / hour; `accountId == HKDF(K)` is unverifiable by the server and need not be |
-| `POST /api/account/recover` | none | `{joinSecret, deviceName}` → `{token, accountId}` (app) | the account is found by `JOIN#<hash(joinSecret)>` (accountId is fixed at registration while K rotates, so it cannot be derived from the phrase); `RATE#ip` and `RATE#account` ≤ 5 / hour; the new App appears in the device list |
-| `POST /api/bridge/delete-device` | app token or API key | `{deviceName, rotation?}` → `{}` | hosted accounts must send `rotation = {joinSecret', fp, next, sealed}`; applied first, conditional on `head = fp` (§8) |
+| `POST /api/account/register` | none | `{accountId, fp, joinSecret, keySealed, phraseSealed, deviceName}` → `{token}` (app) | called by the first App, which creates `K`; only with `OpenRegistration`; `accountId` must not exist (conditional put); `RATE#ip` ≤ 5 / hour; `accountId == HKDF(K)` is unverifiable by the server and need not be |
+| `POST /api/account/recover` | none | `{joinSecret, deviceName}` → `{token, accountId, keySealed}` (app) | the account is found by `JOIN#<hash(joinSecret)>`; the App opens `K` from `keySealed` with `R`; `RATE#ip` and `RATE#account` ≤ 5 / hour; the new App appears in the device list |
+| `POST /api/bridge/delete-device` | app token or API key | `{deviceName}` → `{}` | §8 |
+| `POST /api/account/recovery` | bridge token | `{joinSecret, keySealed, phraseSealed}` → `{ok}` | a new `R` after a removal; the first one is kept (§8) |
 | `POST /api/account/delete` | app token | `{}` → `{}` | §9 |
 | `POST /api/pair/create` | app token or API key or bridge token | `{kind:'app', sealed}` → `{code, expiresIn}` | sealed = K under `t` (§5) |
 | `POST /api/pair/claim` | none | `{code, deviceName}` → `{token, accountId, sealed}` | atomic delete of the PAIR row (`ReturnValues: ALL_OLD`) |
@@ -76,7 +77,7 @@ devices queries `pk = ACCOUNT#<id>, begins_with(sk, 'TOKEN#')`.
 | `POST /api/pair/approve` | app token | `{code, sealed}` → `{}` | binds the PAIR row to the App's account; refuses when the account already has 3 Bridges (free tier, §10); API-key Apps may approve too (self-host) |
 | `POST /api/pair/wait` | none | `{code, poll}` → `{token, accountId, sealed}` or `{pending:true}` | long-poll up to 20 s; `poll` checked by hash; row deleted once read |
 | `GET /api/bridge/devices` | any | existing reply + `apps: [{id, deviceName, kind, lastSeen}]` | `id` = first 12 hex of the token hash |
-| `POST /api/tokens/revoke` | app token or API key | `{}` (log out) or `{id, rotation?}` (another App) → `{}` | deletes both token rows and closes its sockets; removing another App rotates `K` like a computer |
+| `POST /api/tokens/revoke` | app token or API key | `{}` (log out), `{id}` or `{ids}` (other Apps) → `{}` | deletes the token rows and closes their sockets; §8 |
 
 `/api/auth/start-token`, `/auth/exchange-token`, `/auth/install` stay for self-host Setup links (API key).
 
@@ -105,7 +106,7 @@ a phone (no empty accounts to expire), and every computer and phone of one perso
    follows still finds it open and an expired link leaves no empty account.
 2. **An App scans a join code** (existing barcode-scanner plugin; web: paste the link):
    - signed in → seals its `K` under `t`, calls `approve`;
-   - not signed in → creates `K`, derives `accountId`/`joinSecret`, calls `register` (App token), then
+   - not signed in → creates `K` and `R`, derives `accountId` (from `K`) and `joinSecret` (from `R`), calls `register` (App token), then
      `approve`.
    The waiting Bridge receives its token and sealed `K`, opens and checks it, saves `{apiKey: token,
    accountKey: K, accountKeyAt, accounts: true}` in `config.json` (0600), prints "Joined, approved by <App
@@ -118,7 +119,7 @@ a phone (no empty accounts to expire), and every computer and phone of one perso
    code; one code, then it exits). `leave` asks for confirmation, then shows a join code and moves the
    computer to the account that approves it (the old config.json is kept as `config.json.bak-<time>` and changes
    only once joined; the old account then logs this computer out, which also drops it from `/devices`; the running Bridge restarts). Every install run ends with `pair`.
-5. **Recovery** (§9 of the plan): 24 words → `K` → `accountId`, `joinSecret` → `recover` → App token.
+5. **Recovery**: 24 words → `R` → `joinSecret` → `recover` → App token + `keySealed` → `K` (§8).
 - In hosted mode the clear `account_key` method (PR A migration) is refused by Bridge: `config.accounts`
   is set when the Bridge joined; self-host keeps PR A's migration.
 
@@ -130,8 +131,8 @@ a phone (no empty accounts to expire), and every computer and phone of one perso
   `--server` given → join); the install script passes `--server`.
 - `server/src/bridge_read.py` `install_script`: a public `/install` route (only with `OpenRegistration`)
   that installs without a key; the existing keyed script is unchanged.
-- `bridge/direct-rpc.mjs`: refuse clear `account_key` when `config.accounts`; new sealed method
-  `account_key_rotate {k}` (from an App session only) and `account_key_sync` (§8).
+- `bridge/direct-rpc.mjs`: refuse clear `account_key` when `config.accounts`.
+- `bridge/ws.mjs`: `recovery_reset` → a new `R` (§8).
 - `bridge/notify.mjs` unchanged (already sealed); `bridge/ws.mjs` handles `account_deleted` like
   `device_removed`.
 
@@ -148,34 +149,29 @@ a phone (no empty accounts to expire), and every computer and phone of one perso
   dependency) from `pair/create`; "Add computer" scans a join QR (native only).
 - **Recovery phrase**: "Show recovery phrase" (native only, after confirmation) and "Recover account" on
   landing. BIP-39 English word list as data in `web/js/v2/words.js` (2,048 words, public domain; not code).
-  Encoding: 256-bit `K` + 8-bit checksum (first byte of SHA-256) = 24 × 11 bits (standard BIP-39).
+  Encoding: 256-bit `R` + 8-bit checksum (first byte of SHA-256) = 24 × 11 bits (standard BIP-39).
 - **Delete account** (Settings, confirmation): §9.
 
-## 8. Device removal and key rotation
+## 8. Device removal and the recovery key
 
-Removing an App or a computer (Settings, any App; a browser App holds `K'` raw only until it is sent, then
-stores it non-extractable). Self-host (`config.accounts` unset): step 1 only — devices signed in with the API
-key have no token, and PR A's migration would undo a rotation; the API-key holder controls every device anyway (D1).
-1. `POST /api/tokens/revoke {id}` — the server deletes the token, closes its sockets, sends
-   `device_removed` to a removed Bridge. From now on the removed device cannot reach the account.
-2. Before the removal the App catches up with the chain (`/devices`), creates `K'`, and sends `rotation =
-   {joinSecret', fp(K), fp(K'), K' sealed under K}` in the removal request itself; the server swaps
-   `joinSecretHash` / `head` / the chain and deletes the leaving device's tokens in one transaction
-   (conditional on `head = fp(K)`, so two removals from one `K` cannot fork the chain), closes its sockets
-   (a Bridge gets `device_removed` first), and only then tells the remaining Bridges `account_rotated`. The
-   leaving device can neither read the chain nor recover with the old joinSecret at any moment.
-3. It sends `account_key_rotate {k: K'}` sealed over its session to every online Bridge. A Bridge saves
-   `K'` (`accountKeyAt` now), keeps `previousKey = K` for 7 days, and joins again with new keys.
-4. Other Apps and Bridges offline at that moment: on their next connection they hold the old `K`. A Bridge
-   that still has `previousKey` accepts sessions under the old `psk` **only** for `account_key_sync`, which
-   returns `K'` sealed in that session; the App then derives new sessions. An offline Bridge gets `K'` from
-   the next App that sees its old fingerprint (the App sends `account_key_rotate` to it over a session
-   derived with its own `previousKey`, kept 7 days like Bridge's).
-- Security note (documented trade-off): within those 7 days, a removed device that still has the old `K`
-  could fetch `K'` through `account_key_sync` only if the relay lets it reach a Bridge; the server refuses
-  its token, so this needs the relay itself to collude. A per-device key pair would remove this window at
-  the cost of a public-key directory; not in v2.0.
-- The recovery phrase changes with `K'`; Settings says so after a removal.
+One account key `K` for the account's whole life, as in Chrome Sync, Firefox Sync or Bitwarden: removing a
+device stops recognising it and never replaces `K`, so a computer or App that was offline meanwhile is unaffected.
+1. `POST /api/tokens/revoke {id}` or `{ids: "<id>,<id>,…"}` (several Apps in one request), or
+   `POST /api/bridge/delete-device {deviceName}`: the server deletes the tokens and their push registrations and
+   closes their sockets (a removed Bridge gets `device_removed` first). From now on the device cannot reach the account.
+2. Hosted accounts: the recovery phrase is a separate key `R` (24 words), not `K`. `META` keeps
+   `hash(joinSecret)` (HKDF of `R`), `keySealed` (`K` under `R`, AAD accountId; recovery opens `K` with it) and
+   `phraseSealed` (`R` under `K`; any member shows the phrase from `/devices`). A device that leaves may have read
+   `R`, so after its tokens are gone the server voids all three (and the `JOIN#` row) and sends `recovery_reset` to
+   the online Bridges.
+3. A Bridge (which holds `K` raw; an App's `K` is not extractable) makes a new `R` on `recovery_reset`, and on every
+   connection while `/devices` shows no `phraseSealed`, and sends it to `POST /api/account/recovery` (bridge token).
+   The first one is kept (`attribute_not_exists(phraseSealed)`), the rest get `{ok: false}`. Until a computer is
+   online the account has no working phrase; Settings says to turn one on.
+- Trade-off (as in those products): a removed device still has `K`. It cannot connect (no token) or recover (no
+  `R`); reading new data would need the relay or storage to hand it ciphertext.
+- Accounts made before `R` (phrase = `K`, no `phraseSealed`) get their `R` from the first Bridge that connects.
+- Self-host (`config.accounts` unset): step 1 only.
 
 ## 9. Account deletion
 

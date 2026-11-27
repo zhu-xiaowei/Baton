@@ -32,12 +32,14 @@ test('a computer joins with K sealed by an App under the QR code secret, and che
   assert.equal(node.openPair(randomBytes(16), node.sealPair(randomBytes(16), k, 'c'), 'c'), null);
 });
 
-test('a rotation sealed by an App opens on a Bridge; the recovery phrase is standard BIP-39', async () => {
-  const k = randomBytes(32), next = randomBytes(32);
-  const fp = node.fingerprint(k);
-  const sealed = await browser.sealRotation(await browser.importAccountKey(k), next, fp);
-  assert.ok(node.openRotation(k, sealed, fp).equals(next));
-  assert.equal(node.openRotation(k, sealed, 'f'.repeat(16)), null);
+test('recovery made on either side opens on the other; the recovery phrase is standard BIP-39', async () => {
+  const k = randomBytes(32), r = randomBytes(32), { accountId } = node.accountOf(k);
+  const made = await browser.recoveryOf(r, k);
+  assert.ok(node.openRecovery(r, made.keySealed, accountId).equals(k));
+  assert.equal(node.openRecovery(randomBytes(32), made.keySealed, accountId), null);
+  const renewed = node.recoveryOf(r, k); // a computer's, after a removal
+  assert.deepEqual(await browser.openPhrase(await browser.importAccountKey(k), renewed.phraseSealed), new Uint8Array(r));
+  assert.equal(renewed.joinSecret, made.joinSecret);
   assert.equal(await toPhrase(new Uint8Array(32)), 'abandon '.repeat(23) + 'art');
   assert.deepEqual(await fromPhrase(await toPhrase(k)), new Uint8Array(k));
   assert.equal(await fromPhrase('abandon '.repeat(24)), null);

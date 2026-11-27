@@ -254,10 +254,11 @@ async function deployMonitor() {
   const reportHost = flags.monitor.replace(/^[^.]+/, (label) => `${label}-report`);
   let probe = old.PROBE_ACCOUNT;
   if (!probe || !('PROBE_TOKEN' in old)) {
-    const { accountOf } = await import('../../bridge/e2ee-node.mjs');
-    const id = accountOf(crypto.getRandomValues(Buffer.alloc(32)));
+    const { accountOf, recoveryOf } = await import('../../bridge/e2ee-node.mjs');
+    const k = randomBytes(32);
+    const id = accountOf(k);
     const res = await fetch(`https://${API_HOST}/api/account/register`, { method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ ...id, deviceName: 'monitor-probe' }) });
+      body: JSON.stringify({ ...id, ...recoveryOf(randomBytes(32), k), deviceName: 'monitor-probe' }) });
     if (!res.ok) throw new Error(`probe account: ${res.status} ${await res.text()}`);
     [probe, secrets.PROBE_TOKEN] = [id.accountId, (await res.json()).token];
   }

@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { test } from 'node:test';
-import { accountOf, openPair, openRotation, pairCode, sealPair } from '../../bridge/e2ee-node.mjs';
-import { GONE, KEY, ORIGIN, api, approve, code, deleteAccount, devices, finish, joinComputer, newAccount, randomIp, rotation,
+import { accountOf, openPair, openRecovery, pairCode, recoveryOf, sealPair } from '../../bridge/e2ee-node.mjs';
+import { GONE, KEY, ORIGIN, api, approve, code, deleteAccount, devices, finish, joinComputer, newAccount, randomIp,
   skip, startComputer } from './client.mjs';
 
 const appCode = async (token, k) => {
@@ -12,12 +12,12 @@ const appCode = async (token, k) => {
 };
 const recover = (joinSecret, status) => api('/api/account/recover', { joinSecret, deviceName: 'ct-recovered' }, { status });
 
-test('two accounts pair, remove with rotation, recover and delete apart', { skip }, async () => {
+test('two accounts pair, remove devices, recover and delete apart', { skip }, async () => {
   const a = await newAccount('ct-iphone'), b = await newAccount('ct-pixel');
   const exists = { detail: 'Account exists.' };
-  assert.deepEqual(await api('/api/account/register', { ...accountOf(a.k), deviceName: 'ct-x' }, { status: 409 }), exists);
+  assert.deepEqual(await api('/api/account/register', { ...accountOf(a.k), ...recoveryOf(randomBytes(32), a.k), deviceName: 'ct-x' }, { status: 409 }), exists);
   const selfId = (await devices(KEY)).notifications.accountId;
-  const squat = { accountId: selfId, joinSecret: code(), fp: '0'.repeat(16), deviceName: 'ct-squatter' };
+  const squat = { accountId: selfId, ...recoveryOf(randomBytes(32), randomBytes(32)), fp: '0'.repeat(16), deviceName: 'ct-squatter' };
   assert.deepEqual(await api('/api/account/register', squat, { status: 409 }), exists);
 
   // An App code works once and only for its account.
@@ -66,34 +66,28 @@ test('two accounts pair, remove with rotation, recover and delete apart', { skip
   await api('/api/pair/claim', { code: voidCode, deviceName: 'ct-thief' }, { status: 404 });
   assert.deepEqual(await devices(ipad.token, 401), { error: 'unauthorized' });
 
-  // Removing a computer replaces K in the same request.
-  assert.deepEqual(await api('/api/bridge/delete-device', { deviceName: 'ct-mac' }, { token: a.token, status: 400 }),
-    { detail: 'Removing a device needs a new account key.' });
-  const r1 = await rotation(a.k);
-  assert.deepEqual(await api('/api/bridge/delete-device', { deviceName: 'ct-mac', rotation: r1.body }, { token: a.token }), { ok: true });
+  // Removing a computer keeps K and voids the recovery phrase; the first computer to send a new one sets it.
+  assert.deepEqual(await api('/api/bridge/delete-device', { deviceName: 'ct-mac' }, { token: a.token }), { ok: true });
   await devices(mac.token, 401);
   assert.deepEqual(await recover(a.joinSecret, 403), { detail: 'Recovery phrase does not match an account.' });
-  const listed = await devices(a.token);
-  assert.equal(listed.hosted, true);
-  assert.deepEqual(listed.rotations, [{ fp: a.fp, sealed: r1.body.sealed }]);
-  assert.deepEqual(openRotation(a.k, listed.rotations[0].sealed, a.fp), r1.next);
-  assert.deepEqual((await devices(b.token)).rotations, []);
+  assert.deepEqual([(await devices(a.token)).hosted, (await devices(a.token)).phraseSealed], [true, '']);
+  const r1 = randomBytes(32), next = recoveryOf(r1, a.k);
+  await api('/api/account/recovery', next, { token: a.token, status: 403 });
+  assert.deepEqual(await api('/api/account/recovery', next, { token: pc.token }), { ok: true });
+  assert.deepEqual(await api('/api/account/recovery', recoveryOf(randomBytes(32), a.k), { token: pc.token }), { ok: false });
+  assert.equal((await devices(a.token)).phraseSealed, next.phraseSealed);
 
-  // A lost App: a rotation from the replaced K is refused (no fork); one from the current K removes it.
-  const phone = await recover(accountOf(r1.next).joinSecret);
-  assert.equal(phone.accountId, a.accountId);
-  const lost = (await devices(a.token)).apps.find((app) => app.deviceName === 'ct-recovered').id;
-  const stale = (await rotation(a.k)).body; // a fresh K' sealed under the replaced K
-  assert.deepEqual(await api('/api/tokens/revoke', { id: lost, rotation: stale }, { token: a.token, status: 409 }),
-    { detail: 'The account key changed meanwhile; try again.' });
-  const r2 = await rotation(r1.next);
-  await api('/api/tokens/revoke', { id: lost, rotation: r2.body }, { token: a.token });
-  await devices(phone.token, 401);
+  // A lost App, recovered with the new phrase (K opens from it), and another App leave in one request.
+  const phone = await recover(next.joinSecret);
+  assert.deepEqual([phone.accountId, openRecovery(r1, phone.keySealed, a.accountId)], [a.accountId, a.k]);
+  const ids = (await devices(a.token)).apps.filter((app) => ['ct-recovered', 'ct-mini'].includes(app.deviceName)).map((app) => app.id);
+  await api('/api/tokens/revoke', { ids: ids.join(',') }, { token: a.token });
+  for (const token of [phone.token, twin.token]) await devices(token, 401);
+  await recover(next.joinSecret, 403);
 
   // Deleting A leaves B alone.
   assert.deepEqual(await deleteAccount(a.token), { ok: true });
   for (const token of [a.token, pc.token, twin.token]) await devices(token, 401);
-  await recover(accountOf(r2.next).joinSecret, 403);
   assert.equal((await devices(b.token)).apps[0].deviceName, 'ct-pixel');
   await deleteAccount(b.token);
 });
@@ -102,7 +96,8 @@ test('two accounts pair, remove with rotation, recover and delete apart', { skip
 test('limits per caller and per account', { skip: skip || (!ORIGIN && 'BATON_ORIGIN_SECRET is unset') }, async () => {
   const ip = randomIp(), made = [];
   for (let n = 0; n < 5; n++) made.push(await newAccount('ct-limit', { ip }));
-  assert.deepEqual(await api('/api/account/register', { ...accountOf(randomBytes(32)), deviceName: 'ct-limit' }, { ip, status: 429 }),
+  const k = randomBytes(32);
+  assert.deepEqual(await api('/api/account/register', { ...accountOf(k), ...recoveryOf(randomBytes(32), k), deviceName: 'ct-limit' }, { ip, status: 429 }),
     { detail: 'Too many requests, try again later.' });
   for (let n = 0; n < 6; n++) await api('/api/account/recover', { joinSecret: code(), deviceName: 'ct-r' }, { ip, status: n < 5 ? 403 : 429 });
   for (let n = 0; n < 6; n++) await api('/api/account/recover', { joinSecret: made[0].joinSecret, deviceName: 'ct-r' }, { status: n < 5 ? 200 : 429 });

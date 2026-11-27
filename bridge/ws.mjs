@@ -51,7 +51,7 @@ import {
 import { inspectCodexSession, resolveCodexSessionCwd } from './codex-session.mjs';
 import { mcpFormReply, mcpFormRequest } from './codex-interaction.mjs';
 import { updateSessionStatus, recentSessions } from './sync.mjs';
-import { approveJoin, createInvite, rotatedKey } from './accounts.mjs';
+import { approveJoin, createInvite, renewRecovery } from './accounts.mjs';
 import { BRIDGE_VERSION } from './version.mjs';
 import {
   PermissionQueue,
@@ -862,20 +862,17 @@ function connect() {
         create_project: params => createProject(params.projectPath, params.asAgent),
         delete_files: (params, caller) => collectFrames((send) => handleDeleteFiles({ ...params, progress: true }, { send }), caller),
         // Pairing on behalf of an App, which never holds K in a form it could seal itself (plan D2).
-        // Caught up first, so the key it seals is the account's current one (`head`).
-        pair_invite: async () => { await catchUpAccountKey(); return createInvite(_config); },
+        pair_invite: () => createInvite(_config),
         github_star: params => githubStar(params),
         update_now: () => { void _checkUpdate?.(true); return { ok: true }; }, // the App's Update: even while busy
-        pair_approve: async params => { await catchUpAccountKey(); return approveJoin(_config, params.link); },
-        // The recovery phrase is K: shown to an App of the account only (sealed like every reply).
-        recovery_key: () => ({ k: _config.accounts ? _config.accountKey : '' }),
+        pair_approve: params => approveJoin(_config, params.link),
         // `recheck` (the App's tap on a runtime marked not found) looks for missing CLIs again now.
         ping: async (params) => (params?.recheck && forgetRuntimeBin(undefined, 0), await registerLateRuntimes(), { bridgeVersion: BRIDGE_VERSION, runtimes: runtimeAdapters.filter(adapter => adapter.features.create).map(adapter => adapter.runtime), unavailable: unavailableRuntimes() }),
       },
     });
     _directRpc.start();
     if (_relay) void flushQueue(); // alerts left unacknowledged when the last socket dropped
-    void catchUpAccountKey();
+    void recoveryReset();
     void _checkUpdate?.();
     _heartbeatTimer = setInterval(sendHeartbeat, HEARTBEAT_INTERVAL);
     _pingTimer = setInterval(probeConnection, PING_INTERVAL);
@@ -997,13 +994,12 @@ function scheduleReconnect(wait) {
   }, delay);
 }
 
-// Rotations (design §8) reach a hosted Bridge as K' sealed under its K, listed with /devices.
-async function catchUpAccountKey() {
+// After a device left, a hosted account's recovery phrase is made again by one of its computers (design §8).
+async function recoveryReset() {
   if (!_config?.accounts || !_config.accountKey) return;
   try {
-    const k = await rotatedKey(_config);
-    if (k) _directRpc?.setAccountKey(k);
-  } catch (error) { console.error(`[accounts] key rotation not applied: ${error.message}`); }
+    if (await renewRecovery(_config)) console.log('[accounts] new recovery phrase set');
+  } catch (error) { console.error(`[accounts] recovery phrase not renewed: ${error.message}`); }
 }
 
 function savedApiKey() {
@@ -1013,8 +1009,8 @@ function savedApiKey() {
 async function handleMessage(msg) {
   if (_directRpc?.handleControl(msg)) return;
   switch (msg.action) {
-    case 'account_rotated':
-      void catchUpAccountKey();
+    case 'recovery_reset':
+      void recoveryReset();
       break;
     case 'account_deleted':
     case 'device_removed':

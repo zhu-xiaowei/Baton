@@ -83,7 +83,7 @@ export function createServer(ports) {
       devices: items.filter((item) => item.deviceName).map((item) => ({ deviceName: item.deviceName,
         deviceDisplayName: item.deviceDisplayName || item.deviceName, ...(item.nameSealed ? { nameSealed: item.nameSealed } : {}), online: online.has(item.deviceName) })) };
     const meta = await accounts.meta(account);
-    Object.assign(result, { apps: await accounts.listTokens(account), rotations: meta.rotations ?? [], hosted: !!meta.joinSecretHash,
+    Object.assign(result, { apps: await accounts.listTokens(account), hosted: accounts.isHosted(meta), phraseSealed: meta.phraseSealed ?? '',
       ...(env.INSTALL_URL && { install: env.INSTALL_URL }), self: (caller.tokenHash ?? '').slice(0, 12) });
     if (env.CONNECTIONS_TABLE) {
       try {
@@ -99,8 +99,8 @@ export function createServer(ports) {
   async function deleteDevice({ body, auth: caller }) {
     need(body, 'deviceName');
     const account = caller.accountId;
-    // Its token goes with the rotation; the Bridge is told to uninstall before its sockets close.
-    await accounts.remove(caller, body.rotation, await accounts.computerTokens(account, body.deviceName), 'device_removed');
+    // The Bridge is told to uninstall before its sockets close.
+    await accounts.remove(caller, await accounts.computerTokens(account, body.deviceName), 'device_removed');
     const endpoint = env.WS_API_ENDPOINT ?? '';
     if (endpoint) {
       try {

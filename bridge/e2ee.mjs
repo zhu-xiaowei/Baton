@@ -122,7 +122,7 @@ export async function appKeys(k, since = 0) {
   };
 }
 
-// Accounts and pairing (docs/v2-accounts-design.md §5). The server knows accountId and hash(joinSecret);
+// Accounts and pairing (docs/v2-accounts-design.md §5). The server knows accountId and hash(joinSecret of R);
 // K travels sealed under `t`, which only the QR code carries, bound to its pairing code. A link carries one
 // secret `p`: `t` is p itself (sealPair derives its key with info 'pair'), the code a separate one-way HKDF of p.
 const b64url = (bytes) => toBase64(bytes).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
@@ -132,7 +132,7 @@ const gcm = (k, name, usage) => derive(k, name, { name: 'AES-GCM', length: 256 }
 
 export async function accountOf(raw) {
   const k = await importAccountKey(raw);
-  return { accountId: hex(await bits(k, 'account', 64)), joinSecret: b64url(await bits(k, 'join')), fp: hex(await bits(k, 'fp', 64)) };
+  return { accountId: hex(await bits(k, 'account', 64)), fp: hex(await bits(k, 'fp', 64)) };
 }
 
 // One 32-byte key sealed with AES-GCM: nonce ‖ ciphertext ‖ tag, base64.
@@ -157,8 +157,16 @@ export const pairCode = async (p) => b64url(await bits(await subtle().importKey(
 export const sealPair = async (t, raw, code) => sealKey(await gcm(await hkdfKey(t), 'pair', 'encrypt'), raw, code);
 export const openPair = async (t, sealed, code) => openKey(await gcm(await hkdfKey(t), 'pair', 'decrypt'), sealed, code);
 
-// Key rotation (design §8): the App that removes a device seals K' under the old K, keyed by the old
-// fingerprint; every device still holding the old K opens it from /devices. `k` is the CryptoKey.
 export const fingerprint = async (k) => hex(await bits(k, 'fp', 64));
-export const sealRotation = async (k, rawNext, fp) => sealKey(await gcm(k, 'rotate', 'encrypt'), rawNext, fp);
-export const openRotation = async (k, sealed, fp) => openKey(await gcm(k, 'rotate', 'decrypt'), sealed, fp);
+
+// Recovery (design §8): the phrase is a separate key R, replaced when a device leaves; K never changes.
+// The server keeps K sealed under R (recover) and R sealed under K (any member shows the phrase).
+export const joinSecretOf = async (rawR) => b64url(await bits(await importAccountKey(rawR), 'join'));
+export async function recoveryOf(rawR, rawK) {
+  const [r, k] = await Promise.all([importAccountKey(rawR), importAccountKey(rawK)]);
+  const id = hex(await bits(k, 'account', 64));
+  return { joinSecret: await joinSecretOf(rawR), keySealed: await sealKey(await gcm(r, 'recover', 'encrypt'), rawK, id),
+    phraseSealed: await sealKey(await gcm(k, 'phrase', 'encrypt'), rawR, id) };
+}
+export const openRecovery = async (rawR, sealed, accountId) => openKey(await gcm(await importAccountKey(rawR), 'recover', 'decrypt'), sealed, accountId);
+export const openPhrase = async (k, sealed) => openKey(await gcm(k, 'phrase', 'decrypt'), sealed, hex(await bits(k, 'account', 64)));

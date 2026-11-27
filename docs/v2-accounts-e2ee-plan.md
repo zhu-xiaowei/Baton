@@ -41,7 +41,8 @@ every frame itself.
   (registers and proves the account to the server), and `dataKey` (AES-256-GCM, `keyId` = generation of `K`).
   The server stores `accountId` and `hash(joinSecret)` only; it never sees `K`. `accountId` is derived once,
   at registration, and kept as a fixed identifier afterwards (it survives rotation).
-- **Rotation replaces `K` itself**: removing a device creates a fresh random `K'` (new `joinSecret`,
+- *(Superseded: removing a device keeps `K` and replaces only the recovery key `R`; v2-accounts-design.md §8.)*
+  **Rotation replaces `K` itself**: removing a device creates a fresh random `K'` (new `joinSecret`,
   `dataKey`, recovery phrase); the server swaps `hash(joinSecret)`; the remaining devices receive `K'` over
   their live forward-secret sessions (§6), never under the old `dataKey`. Rotating only the data key is not
   enough: a removed device still holding `K` could re-derive `joinSecret` and come back through recovery.

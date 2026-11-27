@@ -3,8 +3,7 @@
 // With BATON_ORIGIN_SECRET each request poses as CloudFront relaying a random viewer, so rate limits never carry over.
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
-import { accountOf, openPair, pairCode, sealPair } from '../../bridge/e2ee-node.mjs';
-import { importAccountKey, sealRotation } from '../../bridge/e2ee.mjs';
+import { accountOf, openPair, pairCode, recoveryOf, sealPair } from '../../bridge/e2ee-node.mjs';
 
 export const BASE = process.env.BATON_URL?.replace(/\/$/, '');
 export const WEB = process.env.BATON_WEB_URL?.replace(/\/$/, '') || BASE;
@@ -28,10 +27,10 @@ export async function api(path, body, { token, ip, status = 200, base = BASE } =
 export const devices = (token, status) => api('/api/bridge/devices', undefined, { token, status });
 
 export async function newAccount(deviceName = 'ct-app', opts = {}) {
-  const k = randomBytes(32);
-  const account = accountOf(k);
-  const { token } = await api('/api/account/register', { ...account, deviceName }, opts);
-  return { k, ...account, token };
+  const k = randomBytes(32), r = randomBytes(32);
+  const account = accountOf(k), recovery = recoveryOf(r, k);
+  const { token } = await api('/api/account/register', { ...account, ...recovery, deviceName }, opts);
+  return { k, r, ...account, joinSecret: recovery.joinSecret, token };
 }
 
 export async function startComputer(deviceName) {
@@ -52,14 +51,6 @@ export async function joinComputer(approverToken, k, name) {
   const start = await startComputer(name);
   await approve(approverToken, k, start);
   return finish(start);
-}
-
-// What web/js/v2/pairing.js sends to remove a device: K' sealed under the current K.
-export async function rotation(k) {
-  const next = randomBytes(32);
-  const { joinSecret, fp } = accountOf(next);
-  const old = accountOf(k).fp;
-  return { next, body: { joinSecret, fp: old, next: fp, sealed: await sealRotation(await importAccountKey(k), next, old) } };
 }
 
 export const deleteAccount = (token) => api('/api/account/delete', {}, { token });

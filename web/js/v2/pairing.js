@@ -2,7 +2,7 @@
 // computer waiting to join. A signed-in App never seals K itself (it is not extractable, plan D2): an
 // online computer of the account does it (`pair_invite`, `pair_approve`).
 import { fromBase64 } from '../../../bridge/direct-rpc-protocol.mjs';
-import { accountOf, fingerprint, openPair, pairCode, sealPair, sealRotation } from '../../../bridge/e2ee.mjs';
+import { accountOf, joinSecretOf, openPair, openPhrase, openRecovery, pairCode, recoveryOf, sealPair } from '../../../bridge/e2ee.mjs';
 import { defaultServer, state } from '../state.js';
 import { loadAccountKey, saveAccountKey } from './account-key.js';
 import { cachedOnlineDevices, devices, request } from './direct-transport.js';
@@ -72,7 +72,8 @@ export async function signInWithLink(link) {
     // 425: the server placed the new account away from this computer's region; another key is another account id.
     for (let retry = 0; !token; retry++) {
       raw = crypto.getRandomValues(new Uint8Array(32));
-      token = (await post(server, '/api/account/register', { ...await accountOf(raw), ...me(), code, retry: String(retry) })
+      const recovery = await recoveryOf(crypto.getRandomValues(new Uint8Array(32)), raw);
+      token = (await post(server, '/api/account/register', { ...await accountOf(raw), ...recovery, ...me(), code, retry: String(retry) })
         .catch((error) => { if (error.status !== 425 || retry >= 2) throw error; return {}; })).token;
     }
     added = (await post(server, '/api/pair/approve', { code, sealed: await sealPair(link.t, raw, code) }, token)).deviceName;
@@ -81,10 +82,20 @@ export async function signInWithLink(link) {
   return { token, added, addedName: link.name || added, server };
 }
 
-export async function recoverAccount(server, raw) {
-  const { token } = await post(server, '/api/account/recover', { joinSecret: (await accountOf(raw)).joinSecret, ...me() });
+// `r`: the recovery phrase's key; the server returns K sealed under it.
+export async function recoverAccount(server, r) {
+  const { token, accountId, keySealed } = await post(server, '/api/account/recover', { joinSecret: await joinSecretOf(r), ...me() });
+  const raw = keySealed && await openRecovery(r, keySealed, accountId);
+  if (raw?.length !== 32 || (await accountOf(raw)).accountId !== accountId) throw new Error('This phrase does not open its account.');
   await saveAccountKey(server, raw);
   return token;
+}
+
+// The phrase's key R, sealed under K in /devices; null while a computer has yet to make one after a removal.
+export async function recoveryKey() {
+  const { phraseSealed } = await devices();
+  const { key } = (await loadAccountKey(state.SERVER)) || {};
+  return phraseSealed && key ? openPhrase(key, phraseSealed) : null;
 }
 
 // Signed in: an online computer of this account seals K for the new device.
@@ -94,18 +105,9 @@ export async function viaComputer(method, params = {}) {
   return request(online[0], method, params);
 }
 
-// A device leaves (`path`: a computer or another App). A hosted account replaces K in the same request: K'
-// sealed under the current K, which the App first catches up with; then it takes K' from the chain like every
-// other device. Self-hosted accounts (API key) only revoke.
+// A device leaves (`path`: a computer or other Apps): its tokens are revoked, K stays; a hosted account's recovery
+// phrase is replaced by one of its computers.
 export async function removeDevice(path, body) {
-  let rotation = null;
-  if ((await devices()).hosted) {
-    const { key } = await loadAccountKey(state.SERVER);
-    const raw = crypto.getRandomValues(new Uint8Array(32));
-    const { joinSecret, fp: next } = await accountOf(raw);
-    const fp = await fingerprint(key);
-    rotation = { joinSecret, fp, next, sealed: await sealRotation(key, raw, fp) };
-  }
-  await post(state.SERVER, path, { ...body, rotation }, state.KEY);
+  await post(state.SERVER, path, body, state.KEY);
   await devices();
 }
