@@ -173,7 +173,6 @@ if (window.visualViewport && _isMobile) {
     // WebKit scrolls the page itself, in step with the keyboard, to reveal the composer;
     // also moving the body to the visual viewport fights that animation. Kept after blur until the
     // keyboard is gone, since blur comes before the closing resize, unless another input took focus.
-    var wasPanning = _webKitPans;
     var focused = document.activeElement;
     _webKitPans = _isIOS && kbUp && (focused?.id === 'msg-input'
       || (_webKitPans && (!focused || focused === document.body)));
@@ -192,22 +191,12 @@ if (window.visualViewport && _isMobile) {
       bar.classList.toggle('kb-up', kbUp);
       bar.classList.toggle('kb-pan', _webKitPans);
     }
-    // The composer keeps its safe-area padding; the page drops by it instead, without resizing.
-    var shift = _webKitPans && bar ? Math.max(0, (parseFloat(window.getComputedStyle(bar).paddingBottom) || 0) - 8) : 0;
-    var top = layoutPixels(_isIOS && !_webKitPans ? vv.offsetTop : 0) + shift;
-    var previousTop = parseFloat(document.body.style.top) || 0;
     document.body.style.bottom = 'auto';
-    document.body.style.top = top + 'px';
+    document.body.style.top = layoutPixels(_isIOS && !_webKitPans ? vv.offsetTop : 0) + 'px';
     // Ends where the screen does once WebKit has scrolled, so a keyboard that grows later still lifts the composer.
     document.body.style.height = (layoutPixels(!_webKitPans ? vv.height
       : document.body.classList.contains('new-session') || vv.offsetTop <= 0 ? _vpBaseHeight : vv.offsetTop + vv.height) + chromeHeight) + 'px';
     document.body.style.transform = chromeHeight ? 'translateY(-' + chromeHeight + 'px)' : '';
-    // Slide it while WebKit's keyboard scroll is fastest, so the page keeps moving one way;
-    // composited, so a busy main thread cannot turn the slide into a jump.
-    if (wasPanning !== _webKitPans && Math.abs(top - previousTop) >= 1) {
-      document.body.animate?.({ transform: ['translateY(' + (previousTop - top) + 'px)', 'none'] },
-        { duration: 80, delay: 50, fill: 'backwards' });
-    }
     if (window.positionScrollBtn) window.positionScrollBtn();
     if (_followKeyboardOpen && _keyboardOpenFrame === null) {
       _keyboardOpenFrame = requestAnimationFrame(function () {
