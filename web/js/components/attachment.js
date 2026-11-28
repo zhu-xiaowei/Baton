@@ -95,23 +95,30 @@ function put(url, body, headers, onProgress, signal) {
 const SMALL = 8 * 1024 * 1024;
 const agent = globalThis.navigator?.userAgent || '';
 let free = /iPhone|iPad|iPod|Android/.test(agent) || (globalThis.navigator?.platform === 'MacIntel' && navigator.maxTouchPoints > 1) ? 2 : 3;
-const queue = [];
-async function slot(signal) {
-  if (free > 0) { free--; return; }
+const queue = []; // { owner, grant }
+const held = new Map(); // owner (an upload's signal) → slots it holds
+const take = (owner) => held.set(owner, (held.get(owner) || 0) + 1);
+async function slot(owner) {
+  if (free > 0) { free--; take(owner); return; }
   await new Promise((resolve, reject) => {
-    const waiter = () => { signal.removeEventListener('abort', abort); resolve(); };
+    const waiter = { owner, grant: () => { owner.removeEventListener('abort', abort); take(owner); resolve(); } };
     const abort = () => { queue.splice(queue.indexOf(waiter), 1); reject(new DOMException('Upload cancelled', 'AbortError')); };
     queue.push(waiter);
-    signal.addEventListener('abort', abort, { once: true });
+    owner.addEventListener('abort', abort, { once: true });
   });
 }
-function release() {
-  const waiter = queue.shift();
-  if (waiter) waiter(); else free++;
+// A freed slot goes to the waiting upload that holds the fewest, so files advance side by side.
+function release(owner) {
+  const left = held.get(owner) - 1;
+  if (left) held.set(owner, left); else held.delete(owner);
+  if (!queue.length) { free++; return; }
+  const waiter = queue.reduce((best, next) => ((held.get(next.owner) || 0) < (held.get(best.owner) || 0) ? next : best));
+  queue.splice(queue.indexOf(waiter), 1);
+  waiter.grant();
 }
 async function inSlot(signal, work) {
   await slot(signal);
-  try { return await work(); } finally { release(); }
+  try { return await work(); } finally { release(signal); }
 }
 
 // A failed part is sent again after 1, 2, 5, 10 and 20 s (a network change), with a freshly signed
