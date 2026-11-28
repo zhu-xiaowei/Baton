@@ -40,7 +40,8 @@
   .trio .big { font-size: 26px; }
   .row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(60px, 38%) 64px; gap: 10px; align-items: center; margin: 7px 0; font-size: 14px; }
   .row .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .row.account { grid-template-columns: minmax(0, 1fr) minmax(40px, 28%) 64px auto; }
+  .row.account { grid-template-columns: minmax(0, 1fr) minmax(40px, 28%) 64px 56px; }
+  .row.account .mini { width: 100%; padding: 2px 0; }
   .line { display: grid; gap: 8px; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 14px; white-space: nowrap; }
   .line:last-child { border-bottom: 0; }
   .line > * { overflow: hidden; text-overflow: ellipsis; }
