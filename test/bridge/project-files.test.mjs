@@ -22,15 +22,6 @@ function storeFromPost(postFn) {
       const response = await postFn('/api/bridge/upload-file', { key, data: buffer.toString('base64') });
       if (!response?.ok) throw new Error('upload failed');
     },
-    async head(key) {
-      const response = await postFn('/api/bridge/video-prepare', { key });
-      this.video = response?.ok ? await response.json() : {};
-      return this.video.exists ? { size: 0, modified: Date.now() } : null;
-    },
-    async uploadUrl() {
-      if (!this.video?.url) throw new Error('upload failed');
-      return { url: this.video.url, headers: { 'Content-Type': this.video.contentType } };
-    },
   };
 }
 
@@ -222,13 +213,13 @@ test('downloads reject traversal and oversized files before requesting S3 access
   const { root } = fixture();
   const large = path.join(root, 'large.pptx');
   fs.writeFileSync(large, '');
-  fs.truncateSync(large, 512 * 1024 * 1024 + 1);
+  fs.truncateSync(large, 5e9 + 1);
   const options = { postFn: async () => { assert.fail('must not request upload access'); } };
   try {
     for (const filePath of ['../secret.txt', 'large.pptx']) {
       const [result] = await request(root, { operation: 'download', path: filePath }, options);
       assert.equal(result.ok, false);
-      assert.match(result.error, /outside the project|512 MB/);
+      assert.match(result.error, /outside the project|5 GB/);
     }
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
@@ -433,5 +424,14 @@ test('large text uploads cannot reuse a stale file when content changes without 
     assert.notEqual(after.key, before.key);
     await request(root, { operation: 'read', path: 'oversized.txt' }, options);
     assert.equal(uploads.length, 2);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('Apps without sealed media support are told to update instead of getting a video', async () => {
+  const { root } = fixture();
+  fs.writeFileSync(path.join(root, 'clip.mp4'), 'video');
+  try {
+    const result = await request(root, { operation: 'read', path: 'clip.mp4' });
+    assert.match(result.at(-1).error, /Update Baton/);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });

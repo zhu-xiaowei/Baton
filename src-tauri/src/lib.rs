@@ -109,7 +109,9 @@ pub fn run() {
       preview_proxy::preview_shutdown_write,
       preview_proxy::preview_close_socket,
       preview_proxy::preview_stop,
-      preview_proxy::preview_reset
+      preview_proxy::preview_reset,
+      preview_proxy::media_write,
+      preview_proxy::media_sink
     ])
     .setup(|app| {
       appearance::setup(app.handle());

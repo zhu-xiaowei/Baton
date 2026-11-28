@@ -15,7 +15,8 @@ import { CACHED_PREVIEW_TYPES, cacheAttachment, cachedAttachment } from '../comp
 import { toolDetailsSource } from '../tool-details.js';
 import { resolveEditLocation } from './edit-location.js';
 import { imageMimeType } from '../components/image-type.js';
-import { transfer } from '../../../bridge/transfer-store.mjs';
+import { previewType, transfer } from '../../../bridge/transfer-store.mjs';
+import { mediaUrl, releasePlayback } from '../media/serve.js';
 
 var FILE_REQ_TIMEOUT = 20000;
 
@@ -69,9 +70,23 @@ function uploadedKey(target) {
   return target.keyPromise;
 }
 
+// A stored copy expires: the Bridge uploads the project file, or its copy of an attachment, again.
+function uploadAgain(target, local) {
+  if (target && !target.path.startsWith('baton-file:')) {
+    target.key = '';
+    target.keyPromise = null;
+    return uploadedKey(target);
+  }
+  return local ? requestProjectFiles('download', { ...fileContext(), path: local }, { timeout: 30 * 60_000 }).then(m => m.key) : null;
+}
+
 // Identical content shares one stored file, so the name it was opened under wins over the stored one.
 async function prepareViewedDownload(target) {
-  return transfer.fileInfo(await uploadedKey(target), target.name);
+  return transfer.fileInfo(await uploadedKey(target), target.name).catch(error => {
+    const again = error.message === 'File not found' && uploadAgain(target, _view?.options.local);
+    if (!again) throw error;
+    return again.then(key => transfer.fileInfo(key, target.name));
+  });
 }
 
 async function showUploadedProjectFile(target) {
@@ -647,6 +662,7 @@ export function closeFileViewer(options) {
   _fileRequestToken++;
   _previewToken++;
   setBody('');
+  releasePlayback();
   _documentObjectUrls.forEach(function (url) { URL.revokeObjectURL(url); });
   _documentObjectUrls = [];
   _themedSvgDocuments.clear();
@@ -687,7 +703,6 @@ async function sendFileRequest(absPath, line, snippet, retriesLeft) {
       'binary file': 'Cannot preview a binary file.',
       'is a directory': 'That path is a directory.',
       'image too large': 'Image is too large to preview (over 10 MB).',
-      'video too large': 'Video is too large to preview (over 5 GB).',
     };
     var detail = error.response?.path || absPath;
     setBody('<div class="file-error">' + esc(messages[error.message] || error.message)
@@ -727,12 +742,12 @@ export function openFile(absPath, displayName, lineHint, matchId, options) {
   return true;
 }
 
-async function showAttachment(key) {
+async function showAttachment(key, again) {
   const token = ++_fileRequestToken;
   let pdfFallbackUrl = '';
   let cachedPdf = false;
   try {
-    if (!/^[0-9a-f]{32}(?:\.[a-z0-9]{1,16})?$/.test(key)) throw new Error('Invalid file key');
+    if (!/^(?:b\/)?[0-9a-f]{32}(?:\.[a-z0-9]{1,16})?$/.test(key)) throw new Error('Invalid file key');
     const office = officeKind(key);
     if (office) return await showOfficeAttachment(key, office, token);
     const cachedType = CACHED_PREVIEW_TYPES[key.split('.').pop()];
@@ -744,7 +759,10 @@ async function showAttachment(key) {
     if (token !== _fileRequestToken) return;
     document.getElementById('fileOverlayTitle').textContent = file.name;
     if (isTextAttachment(file)) {
-      const content = await readAttachmentText(file.url);
+      // A sealed file is read by range: only the shown part is fetched.
+      const shown = Math.min(file.size, 5 * 1024 * 1024);
+      const content = file.url ? await readAttachmentText(file.url) : { truncated: file.size > shown,
+        text: shown ? new TextDecoder().decode(await transfer.range(key, 0, shown, file.stored)) : '' };
       if (token !== _fileRequestToken) return;
       if (!content.text.includes('\0')) {
         render(file.name, content.text, content.truncated, '', '');
@@ -785,14 +803,22 @@ async function showAttachment(key) {
       setBody('<img class="file-image" alt="" src="' + objectUrl + '">');
       _objectUrl = objectUrl;
       return;
-    } else if (file.previewType?.startsWith('video/')) {
-      preview = '<video class="file-video" controls playsinline preload="metadata" src="' + url + '"></video>';
-    } else if (file.previewType?.startsWith('audio/')) {
-      preview = '<audio controls preload="metadata" src="' + url + '"></audio>';
+    } else if (/^(video|audio)\//.test(file.previewType)) {
+      const src = escapeAttachment(await mediaUrl(file));
+      if (token !== _fileRequestToken) return;
+      preview = file.previewType.startsWith('video/')
+        ? '<video class="file-video" controls playsinline preload="metadata" src="' + src + '"></video>'
+        : '<audio controls preload="metadata" src="' + src + '"></audio>';
     }
     setBody(preview);
   } catch (error) {
     if (token !== _fileRequestToken) return;
+    const next = !again && error.message === 'File not found' && uploadAgain(_downloadTarget, _view?.options.local);
+    if (next) {
+      return next.then(key => token === _fileRequestToken && showAttachment(key, true), retry => {
+        if (token === _fileRequestToken) setBody('<div class="file-error">' + escapeAttachment(retry.message) + '</div>');
+      });
+    }
     if (cachedPdf) {
       // A cache hit has no URL; the browser's own viewer needs a fresh one.
       pdfFallbackUrl = await transfer.fileInfo(key, _view?.name)
@@ -893,35 +919,21 @@ async function renderSource(absPath, text, truncated, lineHint, snippet) {
   });
 }
 
-// Presigned GET URLs expire in 1h; cache them ~50min (10min safety margin) so
-// re-opening the same video reuses the URL instead of round-tripping the bridge.
-// The signed URL lives as long as the credentials; an expired one is signed again where playback stopped.
-function renderVideo(key, url) {
-  setBody('<video class="file-video" controls playsinline preload="metadata" src="' + esc(url) + '"></video>');
-  var video = document.querySelector('#fileOverlayBody .file-video');
-  var renewed = 0;
-  video?.addEventListener('error', function () {
-    if (renewed++ > 2) return;
-    var at = video.currentTime;
-    transfer.url(key).then(function (next) {
-      if (!video.isConnected) return;
-      video.src = next;
-      video.addEventListener('loadedmetadata', function () { video.currentTime = at; }, { once: true });
-    }).catch(function () {});
-  });
-}
-
-function showVideo(key, token) {
-  return transfer.url(key).then(function (url) {
+// A project video: the Bridge uploaded it whole; it plays by range from the stored copy.
+async function showVideo(msg, token) {
+  const file = { key: msg.key, name: msg.name, size: msg.size, stored: msg.stored ?? msg.size, sealed: !!msg.sealed, previewType: previewType(msg.key) };
+  try {
+    const url = await mediaUrl(file, { refresh: () => requestProjectFiles('read', { ...fileContext(), path: msg.path })
+      .then(next => ({ ...file, key: next.key, stored: next.stored ?? next.size, sealed: !!next.sealed })) });
     if (token !== _fileRequestToken) return;
-    renderVideo(key, url);
-  }).catch(function () {
-    if (token === _fileRequestToken) setBody('<div class="file-error">Failed to load video.</div>');
-  });
+    setBody('<video class="file-video" controls playsinline preload="metadata" src="' + esc(url) + '"></video>');
+  } catch (error) {
+    if (token === _fileRequestToken) setBody('<div class="file-error">' + esc(error.message || 'Failed to load video.') + '</div>');
+  }
 }
 
 function handleFileResponse(msg, line, snippet, token) {
-  if (msg.video) return showVideo(msg.key, token);
+  if (msg.video) return showVideo(msg, token);
 
   if (msg.image) {
     return window.getImageUrl(msg.key, msg.attachment).then(function (url) {

@@ -1,10 +1,10 @@
 use base64::{engine::general_purpose::STANDARD, Engine};
 use serde::Serialize;
 use std::{
-  collections::{HashMap, HashSet},
-  io::{ErrorKind, Read, Write},
+  collections::{BTreeMap, HashMap, HashSet},
+  io::{BufRead, BufReader, ErrorKind, Read, Write},
   net::{Shutdown, TcpListener, TcpStream},
-  sync::{atomic::{AtomicBool, Ordering}, Arc, Condvar, Mutex},
+  sync::{atomic::{AtomicBool, Ordering}, Arc, Condvar, Mutex, OnceLock},
   thread,
   time::Duration,
 };
@@ -12,6 +12,9 @@ use tauri::{AppHandle, Emitter, State, Webview};
 use uuid::Uuid;
 
 const CHUNK_BYTES: usize = 16 * 1024;
+// Media responses (web/js/media/serve.js) are written in larger raw chunks, a few in flight.
+const MEDIA_CHUNK_BYTES: usize = 256 * 1024;
+const MEDIA_PENDING: usize = 8;
 const WINDOW_BYTES: usize = 128 * 1024;
 const MAX_STREAMS: usize = 24;
 const MAX_TUNNELS: usize = 4;
@@ -113,7 +116,7 @@ mod tests {
     let mut owned = Vec::new();
     for (id, owner) in [("a", "main"), ("b", "other"), ("c", "main")] {
       let session = Arc::new(PreviewSession {
-        port: 1, owner: owner.into(), stopped: AtomicBool::new(false),
+        port: 1, owner: owner.into(), media: false, stopped: AtomicBool::new(false),
         accept_threads: Mutex::new(Vec::new()), sockets: Mutex::new(HashSet::new()),
       });
       if owner == "main" { owned.push(Arc::clone(&session)); }
@@ -156,6 +159,8 @@ pub struct PreviewProxy {
 struct PreviewSession {
   port: u16,
   owner: String,
+  // The media listener (web/js/media/serve.js) is not counted against MAX_TUNNELS.
+  media: bool,
   stopped: AtomicBool,
   accept_threads: Mutex<Vec<thread::JoinHandle<()>>>,
   sockets: Mutex<HashSet<String>>,
@@ -167,6 +172,8 @@ struct PreviewSocket {
   // Separate handle: a write blocked on a non-reading browser holds `writer`.
   shutdown: TcpStream,
   credit: (Mutex<usize>, Condvar),
+  // Next media write and those that arrived ahead of it.
+  order: Mutex<(u64, BTreeMap<u64, Vec<u8>>)>,
   stopped: AtomicBool,
   read_logged: AtomicBool,
   write_logged: AtomicBool,
@@ -284,7 +291,7 @@ impl PreviewProxy {
           let stream_id = Uuid::new_v4().to_string();
           let socket = Arc::new(PreviewSocket {
             tunnel_id: tunnel_id.clone(), writer: Mutex::new(writer), shutdown,
-            credit: (Mutex::new(0), Condvar::new()), stopped: AtomicBool::new(false),
+            credit: (Mutex::new(0), Condvar::new()), order: Mutex::new((0, BTreeMap::new())), stopped: AtomicBool::new(false),
             read_logged: AtomicBool::new(false), write_logged: AtomicBool::new(false),
           });
           if let Ok(mut sockets) = self.sockets.lock() {
@@ -411,6 +418,8 @@ fn start_preview(app: AppHandle, manager: Arc<PreviewProxy>, owner: String, tunn
   Uuid::parse_str(&tunnel_id).map_err(|_| "Invalid preview tunnel ID".to_string())?;
   if preferred_port == 0 { return Err("Invalid preview port".into()); }
   let mode = mode.unwrap_or_else(|| "next".into());
+  let media = mode == "media";
+  let previews = |sessions: &HashMap<String, Arc<PreviewSession>>| if media { 0 } else { sessions.values().filter(|session| !session.media).count() };
   {
     let sessions = manager.sessions.lock().map_err(|_| "Preview state unavailable")?;
     if let Some(session) = sessions.get(&tunnel_id) {
@@ -418,7 +427,7 @@ fn start_preview(app: AppHandle, manager: Arc<PreviewProxy>, owner: String, tunn
       return Ok(local_origin(session.port));
     }
     let released = if mode == "takeover" { sessions.values().filter(|session| session.port == preferred_port).count() } else { 0 };
-    if sessions.len() - released >= MAX_TUNNELS { return Err("Too many active previews".into()); }
+    if previews(&sessions).saturating_sub(released) >= MAX_TUNNELS { return Err("Too many active previews".into()); }
   }
   if mode == "takeover" { manager.take_over(&app, preferred_port); }
   let quit = mode.strip_prefix("quit:").map(|pid| pid.parse::<u32>().unwrap_or(0));
@@ -430,7 +439,7 @@ fn start_preview(app: AppHandle, manager: Arc<PreviewProxy>, owner: String, tunn
   // A quit process may take a moment to release its socket.
   let mut waits = if quit.is_some() { 30 } else { 0 };
   let (listeners, port) = loop {
-    match bind_local_listeners(preferred_port, mode == "next") {
+    match bind_local_listeners(preferred_port, mode == "next" || media) {
       Err(error) if error == PORT_IN_USE && waits > 0 => {
         waits -= 1;
         thread::sleep(Duration::from_millis(100));
@@ -443,9 +452,9 @@ fn start_preview(app: AppHandle, manager: Arc<PreviewProxy>, owner: String, tunn
     listener.set_nonblocking(true).map_err(|error| error.to_string())?;
   }
   let mut sessions = manager.sessions.lock().map_err(|_| "Preview state unavailable")?;
-  if sessions.len() >= MAX_TUNNELS { return Err("Too many active previews".into()); }
+  if previews(&sessions) >= MAX_TUNNELS { return Err("Too many active previews".into()); }
   let session = Arc::new(PreviewSession {
-    port, owner, stopped: AtomicBool::new(false),
+    port, owner, media, stopped: AtomicBool::new(false),
     accept_threads: Mutex::new(Vec::new()),
     sockets: Mutex::new(HashSet::new()),
   });
@@ -529,4 +538,87 @@ pub fn release_owner(manager: Arc<PreviewProxy>, owner: String) -> tauri::async_
   tauri::async_runtime::spawn_blocking(move || {
     for session in manager.remove_owned(&owner) { manager.stop_session(&session); }
   })
+}
+
+fn write_seq(socket: &PreviewSocket, seq: u64, bytes: Vec<u8>) -> Result<(), String> {
+  let mut order = socket.order.lock().map_err(|_| "Preview writer unavailable")?;
+  if seq < order.0 || order.1.len() >= MEDIA_PENDING { return Err("Invalid media write".into()); }
+  order.1.insert(seq, bytes);
+  loop {
+    let next = order.0;
+    let Some(bytes) = order.1.remove(&next) else { return Ok(()) };
+    order.0 += 1;
+    socket.writer.lock().map_err(|_| "Preview writer unavailable".to_string())?
+      .write_all(&bytes).map_err(|error| error.to_string())?;
+  }
+}
+
+// Desktop and iOS send the bytes as a raw invoke body; `x-seq` orders writes that overtake each other.
+#[tauri::command]
+pub async fn media_write(request: tauri::ipc::Request<'_>, manager: State<'_, Arc<PreviewProxy>>) -> Result<(), String> {
+  let header = |name: &str| request.headers().get(name).and_then(|value| value.to_str().ok()).map(str::to_string);
+  let stream_id = header("x-stream").ok_or("Missing media stream")?;
+  let seq = header("x-seq").and_then(|value| value.parse::<u64>().ok()).ok_or("Missing media seq")?;
+  let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else { return Err("Invalid media bytes".into()) };
+  let bytes = bytes.clone();
+  if bytes.is_empty() || bytes.len() > MEDIA_CHUNK_BYTES { return Err("Invalid media bytes".into()); }
+  let socket = manager.socket(&stream_id)?;
+  tauri::async_runtime::spawn_blocking(move || write_seq(&socket, seq, bytes)).await.map_err(|error| error.to_string())?
+}
+
+// Android turns invoke bodies into JSON number arrays, so its page POSTs media bytes to this loopback
+// listener instead: `POST /w/<secret>/<stream>?seq=<n>`. Started once; it holds no preview slot.
+static MEDIA_SINK: OnceLock<Result<(u16, String), String>> = OnceLock::new();
+
+#[tauri::command]
+pub fn media_sink(manager: State<'_, Arc<PreviewProxy>>) -> Result<(u16, String), String> {
+  let manager = Arc::clone(manager.inner());
+  MEDIA_SINK.get_or_init(|| {
+    let listener = TcpListener::bind(("127.0.0.1", 0)).map_err(|error| error.to_string())?;
+    let port = listener.local_addr().map_err(|error| error.to_string())?.port();
+    let secret = Uuid::new_v4().simple().to_string();
+    let accepted = secret.clone();
+    thread::spawn(move || for stream in listener.incoming().flatten() {
+      let (manager, secret) = (Arc::clone(&manager), accepted.clone());
+      thread::spawn(move || { let _ = sink_connection(&manager, &secret, stream); });
+    });
+    Ok((port, secret))
+  }).clone()
+}
+
+fn sink_connection(manager: &PreviewProxy, secret: &str, stream: TcpStream) -> std::io::Result<()> {
+  let mut output = stream.try_clone()?;
+  let mut reader = BufReader::new(stream);
+  loop {
+    let mut line = String::new();
+    if reader.read_line(&mut line)? == 0 { return Ok(()); }
+    let mut length = 0;
+    loop {
+      let mut header = String::new();
+      if reader.read_line(&mut header)? == 0 { return Ok(()); }
+      let header = header.trim_end();
+      if header.is_empty() { break; }
+      if let Some((name, value)) = header.split_once(':') {
+        if name.eq_ignore_ascii_case("content-length") { length = value.trim().parse().unwrap_or(usize::MAX); }
+      }
+    }
+    let cors = "Access-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: POST\r\nAccess-Control-Allow-Headers: *\r\nAccess-Control-Allow-Private-Network: true\r\n";
+    let mut parts = line.split_whitespace();
+    let (method, target) = (parts.next().unwrap_or(""), parts.next().unwrap_or(""));
+    if method == "OPTIONS" {
+      output.write_all(format!("HTTP/1.1 204 No Content\r\n{cors}Content-Length: 0\r\n\r\n").as_bytes())?;
+      continue;
+    }
+    if method != "POST" || length > MEDIA_CHUNK_BYTES { return Ok(()); }
+    let mut body = vec![0; length];
+    reader.read_exact(&mut body)?;
+    let (path, query) = target.split_once("?seq=").unwrap_or((target, ""));
+    let result = match (path.strip_prefix("/w/").and_then(|rest| rest.split_once('/')), query.parse::<u64>()) {
+      (Some((given, stream_id)), Ok(seq)) if given == secret && !body.is_empty() =>
+        manager.socket(stream_id).and_then(|socket| write_seq(&socket, seq, body)),
+      _ => Err("Invalid media write".into()),
+    };
+    let status = if result.is_ok() { "204 No Content" } else { "409 Conflict" };
+    output.write_all(format!("HTTP/1.1 {status}\r\n{cors}Content-Length: 0\r\n\r\n").as_bytes())?;
+  }
 }

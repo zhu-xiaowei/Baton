@@ -10,6 +10,7 @@ export function requestProjectFiles(operation, fields, options) {
     path: fields.path || '',
     ...(fields.cursor ? { cursor: fields.cursor } : {}),
     device: fields.device ?? state.appState.device ?? '',
+    files: 2, // opens sealed videos and large files (bridge/project/files.mjs)
   }, {
     timeout: options.timeout,
     onProgress: options.onProgress,

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createTransferStore, presign, signUrl } from '../../bridge/transfer-store.mjs';
+import { createTransferStore, presign, RECORD, sealStream, setTransferKeys, signUrl } from '../../bridge/transfer-store.mjs';
 
 test('query signatures match the AWS S3 example', async () => {
   // "Authenticating Requests: Using Query Parameters (AWS Signature Version 4)", S3 API Reference.
@@ -31,8 +31,25 @@ test('stored content is reused only while it outlives the hours its writer remem
   const prepare = (ageMs) => createTransferStore(access, async () => new Response(null, { status: 200, headers: {
     'content-length': '5', 'x-amz-checksum-sha256': checksum, 'last-modified': new Date(Date.now() - ageMs).toUTCString() } }))
     .prepareUpload({ name: 'a.txt', size: 5, contentHash });
-  assert.deepEqual(await prepare(21 * hour), { key: 'c'.repeat(32) + '.txt', exists: true });
+  assert.deepEqual(await prepare(21 * hour), { key: 'c'.repeat(32) + '.txt', exists: true, sealed: false, stored: 5 });
   const old = await prepare(22 * hour);
   assert.equal(old.key, 'c'.repeat(32) + '.txt');
   assert.ok(old.url && !old.exists, 'an object near its expiry is written again under the same key');
+});
+
+test('a sealed stream reads back by record and stores nothing when its source fails at the end', async () => {
+  const keys = { key: await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']), since: Date.now() };
+  setTransferKeys(() => keys);
+  const key = 'b/' + 'e'.repeat(32) + '.mp4';
+  const plain = new Uint8Array(3 * RECORD + 5).map((_, i) => i * 7);
+  const parts = []; for await (const record of sealStream(keys, key, plain.length, [plain.subarray(0, 100), plain.subarray(100)])) parts.push(record);
+  const sealed = Buffer.concat(parts);
+  const store = createTransferStore(async () => ({ bucket: 'b', region: 'r', accountId: 'a', credentials: { accessKeyId: 'A', secretAccessKey: 'S', expiresAt: Date.now() / 1000 + 600 } }),
+    async (url, { headers }) => { const [, a, b] = /(\d+)-(\d+)/.exec(headers.Range); return new Response(sealed.subarray(+a, +b + 1), { status: 206 }); });
+  const read = []; for await (const record of store.records(key, sealed.length, 1, { segments: [1, 2] })) read.push(record);
+  assert.deepEqual(Buffer.concat(read), Buffer.from(plain.subarray(RECORD)));
+  const failing = (async function* () { yield plain; throw new Error('changed'); })();
+  const out = []; await assert.rejects(async () => { for await (const record of sealStream(keys, key, plain.length, failing)) out.push(record); });
+  assert.ok(out.length < 4, 'the last record waits for the source to end');
+  setTransferKeys(() => null);
 });

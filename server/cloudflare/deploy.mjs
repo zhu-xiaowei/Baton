@@ -167,11 +167,12 @@ async function zoneRule(phase, rule) {
 
 async function bucket() {
   if (!(await cf('GET', `/r2/buckets/${flags.bucket}`, undefined, { ok404: true }))) await cf('POST', '/r2/buckets', { name: flags.bucket });
-  await cf('PUT', `/r2/buckets/${flags.bucket}/cors`, { rules: [{ allowed: { origins: ['*'], methods: ['GET', 'PUT', 'HEAD'], headers: ['*'] },
+  await cf('PUT', `/r2/buckets/${flags.bucket}/cors`, { rules: [{ allowed: { origins: ['*'], methods: ['GET', 'PUT', 'HEAD', 'POST'], headers: ['*'] },
     exposeHeaders: ['ETag', 'Content-Length', 'Content-Type', 'x-amz-checksum-sha256', 'x-amz-meta-filename', 'x-amz-meta-content-type',
       'x-amz-meta-sealed'], maxAgeSeconds: 3600 }] });
   await cf('PUT', `/r2/buckets/${flags.bucket}/lifecycle`, { rules: [{ id: 'transfers-1-day', enabled: true, conditions: { prefix: 't/' },
-    deleteObjectsTransition: { condition: { type: 'Age', maxAge: 86400 } } }] });
+    deleteObjectsTransition: { condition: { type: 'Age', maxAge: 86400 } },
+    abortMultipartUploadsTransition: { condition: { type: 'Age', maxAge: 86400 } } }] });
 }
 
 // As server/install.sh builds it. Its version is the last commit that changed bridge/, not this deploy's: a deploy that
