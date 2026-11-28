@@ -114,9 +114,9 @@ async function inSlot(signal, work) {
   try { return await work(); } finally { release(); }
 }
 
-// A failed part is sent again after 1, 2, 5, 10, 20 and 30 s (a network change), with a freshly
-// signed URL each time.
-const RETRY_MS = [1000, 2000, 5000, 10000, 20000, 30000];
+// A failed part is sent again after 1, 2, 5, 10 and 20 s (a network change), with a freshly signed
+// URL each time.
+const RETRY_MS = [1000, 2000, 5000, 10000, 20000];
 async function putPart(url, body, onProgress, signal) {
   for (let attempt = 0; ; attempt++) {
     try {

@@ -18,9 +18,11 @@ AAD `key|index|last`). All but images and Office files up to 256 MB are read by 
   after the last request. GETs of a request that ends stop after a second unless another request claims
   them, or at once when a seek leaves them behind. A short read resumes where it stopped (R2 resets a
   stalled GET after ~120 s, S3 after ~300 s); an expired stored copy is uploaded again by the Bridge.
-- **Uploads** (`web/js/components/attachment.js`): up to 32 MB one PUT; larger 16 MiB multipart parts, three
-  in flight, a failed part retried after 0/1/3/5 s with a fresh URL, a failed upload aborted (≈ 66 writes per
-  GB). A stack whose CORS predates multipart gets one PUT.
+- **Uploads** (`web/js/components/attachment.js`): up to 32 MB one PUT; larger 16 MiB multipart parts. All
+  uploads share three slots (two on phones; files up to 8 MB take none), so several large files at once still
+  keep that many parts in flight and in memory. A failed part is retried after 1/2/5/10/20 s with a fresh URL;
+  a failed upload is aborted (≈ 66 writes per GB); the progress shown never goes back. A stack whose CORS
+  predates multipart gets one PUT.
 - **Channels** (`web/js/media/serve.js`): Tauri shells answer `http://127.0.0.1|localhost:<port>/m/<token>` on a
   `preview_proxy` listener (Host-checked, unguessable token); the page parses the request and writes the
   response with the raw `media_write` invoke (256 KiB, 3 in flight, reordered by `x-seq` in Rust). Android's
