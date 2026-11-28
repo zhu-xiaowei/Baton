@@ -359,7 +359,8 @@
       var runtime = markRuntime(image);
       var svg = runtimeIconSvg(runtime);
       if (svg) {
-        image.parentNode.classList.add('runtime-mark-svg');
+        image.parentNode.classList.replace('runtime-mark-mono', 'runtime-mark-svg') || image.parentNode.classList.add('runtime-mark-svg');
+        image.parentNode.style.removeProperty('--runtime-mask');
         image.outerHTML = svg;
         return;
       }
