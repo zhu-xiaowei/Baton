@@ -40,6 +40,7 @@
   .trio .big { font-size: 26px; }
   .row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(60px, 38%) 64px; gap: 10px; align-items: center; margin: 7px 0; font-size: 14px; }
   .row .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .row.account { grid-template-columns: minmax(0, 1fr) minmax(40px, 28%) 64px auto; }
   .line { display: grid; gap: 8px; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 14px; white-space: nowrap; }
   .line:last-child { border-bottom: 0; }
   .line > * { overflow: hidden; text-overflow: ellipsis; }
@@ -276,9 +277,9 @@ function render(d) {
       + `<div class="track"><div class="fill ${level(share)}" style="width:${Math.max(2, Math.min(100, share * 100))}%"></div></div><span class="num">${pct(share)}</span></div>`
       + `<div class="sub" style="margin:-4px 0 8px">${(QUOTA[k]?.[2] ?? n)(used)} / ${(QUOTA[k]?.[2] ?? n)(limit)}</div>`).join('') : NA()),
     card(`账户费用 Top 10 ${info('本月至今，按账户的 Durable Object 用量估算；超过上限的账户封禁到下月 1 日。')}`,
-      (L0.accounts ?? []).length ? L0.accounts.map((a, i) => `<div class="row"><span class="name">${i + 1}. <code>${esc(a.name)}</code>${d.blocked?.[a.name] ? ' <span class="bad">已封禁</span>' : ''}`
-        + `${a.name === d.probe ? '' : ` <button class="mini" data-purge="${esc(a.name)}" type="button">清除</button>`}</span>`
-        + `<div class="track"><div class="fill ${level(a.capCost / d.cap)}" style="width:${Math.max(2, Math.min(100, (100 * a.capCost) / d.cap))}%"></div></div><span class="num">${usd(a.cost)}</span></div>`).join('')
+      (L0.accounts ?? []).length ? L0.accounts.map((a, i) => `<div class="row account"><span class="name">${i + 1}. <code>${esc(a.name)}</code>${d.blocked?.[a.name] ? ' <span class="bad">已封禁</span>' : ''}</span>`
+        + `<div class="track"><div class="fill ${level(a.capCost / d.cap)}" style="width:${Math.max(2, Math.min(100, (100 * a.capCost) / d.cap))}%"></div></div><span class="num">${usd(a.cost)}</span>`
+        + `${a.name === d.probe ? '<span></span>' : `<button class="mini" data-purge="${esc(a.name)}" type="button" title="${esc(a.name)}">清除</button>`}</div>`).join('')
         + `<div class="sub">条长 = 计入上限的费用 / ${usd(d.cap)}</div>` : NA(), '本月'),
     card('已封禁账户', Object.keys(d.blocked ?? {}).length ? Object.entries(d.blocked).map(([k, b]) => `<div class="line blocked"><code title="${esc(k)}">${esc(k)}</code>`
       + `<span>${usd(b.cost)}</span><span class="sub" style="margin:0">至 ${new Date(b.until).toISOString().slice(5, 10).replace('-', '/')}</span>`
