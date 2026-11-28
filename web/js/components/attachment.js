@@ -89,8 +89,34 @@ function put(url, body, headers, onProgress, signal) {
   });
 }
 
-// A failed part is sent again after 0, 1, 3 and 5 s, with a freshly signed URL each time.
-const RETRY_MS = [0, 1000, 3000, 5000];
+// All uploads share three slots (two on phones, whose links are slower and drop more): several large
+// files at once still keep that many requests in flight and sealed bodies in memory (a host gets six
+// HTTP/1.1 connections). Files up to 8 MB need none.
+const SMALL = 8 * 1024 * 1024;
+const agent = globalThis.navigator?.userAgent || '';
+let free = /iPhone|iPad|iPod|Android/.test(agent) || (globalThis.navigator?.platform === 'MacIntel' && navigator.maxTouchPoints > 1) ? 2 : 3;
+const queue = [];
+async function slot(signal) {
+  if (free > 0) { free--; return; }
+  await new Promise((resolve, reject) => {
+    const waiter = () => { signal.removeEventListener('abort', abort); resolve(); };
+    const abort = () => { queue.splice(queue.indexOf(waiter), 1); reject(new DOMException('Upload cancelled', 'AbortError')); };
+    queue.push(waiter);
+    signal.addEventListener('abort', abort, { once: true });
+  });
+}
+function release() {
+  const waiter = queue.shift();
+  if (waiter) waiter(); else free++;
+}
+async function inSlot(signal, work) {
+  await slot(signal);
+  try { return await work(); } finally { release(); }
+}
+
+// A failed part is sent again after 1, 2, 5, 10, 20 and 30 s (a network change), with a freshly
+// signed URL each time.
+const RETRY_MS = [1000, 2000, 5000, 10000, 20000, 30000];
 async function putPart(url, body, onProgress, signal) {
   for (let attempt = 0; ; attempt++) {
     try {
@@ -102,8 +128,8 @@ async function putPart(url, body, onProgress, signal) {
   }
 }
 
-// A large file goes up in parts, each sealed on its own. Three at once: while some upload another
-// seals, so the upload never waits between parts and at most three parts are in memory.
+// A large file goes up in parts, each sealed on its own, three lanes taking the shared slots. The
+// progress shown never goes back while a part is sent again.
 async function uploadParts(file, prepared, id, onProgress, cancelled) {
   const { parts } = prepared;
   // One failed part stops the others too.
@@ -115,14 +141,18 @@ async function uploadParts(file, prepared, id, onProgress, cancelled) {
   const count = Math.max(1, Math.ceil(file.size / parts.size));
   const etags = [];
   const sent = new Array(count).fill(0);
+  let shown = 0;
   let next = 0;
   const lane = async () => {
     for (let n; (n = next++) < count;) {
-      const body = new Blob([await prepared.seal(file.slice(n * parts.size, (n + 1) * parts.size), n * parts.records)]);
-      etags[n] = await putPart(() => parts.url(id, n + 1), body, loaded => {
-        sent[n] = loaded * body.size;
-        if (!signal.aborted) onProgress(Math.round(100 * Math.min(1, sent.reduce((a, b) => a + b, 0) / file.size)));
-      }, signal);
+      etags[n] = await inSlot(signal, async () => {
+        const body = new Blob([await prepared.seal(file.slice(n * parts.size, (n + 1) * parts.size), n * parts.records)]);
+        return putPart(() => parts.url(id, n + 1), body, loaded => {
+          sent[n] = loaded * body.size;
+          shown = Math.max(shown, Math.round(100 * Math.min(1, sent.reduce((a, b) => a + b, 0) / file.size)));
+          if (!signal.aborted) onProgress(shown);
+        }, signal);
+      });
     }
   };
   try {
@@ -142,15 +172,16 @@ export async function uploadAttachment(file, prepared, onProgress, signal) {
   // A self-hosted stack whose CORS predates multipart refuses the start: one PUT instead.
   const id = prepared.parts && await prepared.parts.start().catch(() => null);
   if (id) return uploadParts(file, prepared, id, onProgress, signal);
-  const urls = [...new Set([prepared.url, prepared.fallbackUrl].filter(Boolean))];
-  const body = prepared.seal ? new Blob([await prepared.seal(file)]) : file;
-  for (const url of urls) {
-    try {
-      await put(url, body, prepared.headers, loaded => onProgress(Math.round(100 * loaded)), signal);
-      return;
-    } catch (error) {
-      if (signal.aborted || url === urls.at(-1)) throw error;
+  const single = async () => {
+    const urls = [...new Set([prepared.url, prepared.fallbackUrl].filter(Boolean))];
+    const body = prepared.seal ? new Blob([await prepared.seal(file)]) : file;
+    for (const url of urls) {
+      try {
+        return await put(url, body, prepared.headers, loaded => onProgress(Math.round(100 * loaded)), signal);
+      } catch (error) {
+        if (signal.aborted || url === urls.at(-1)) throw error;
+      }
     }
-  }
-  throw new Error('No upload URL');
+  };
+  await (file.size > SMALL ? inSlot(signal, single) : single());
 }
