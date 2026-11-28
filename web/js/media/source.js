@@ -100,9 +100,9 @@ async function* read(entry, start, end, signal) {
       keep(entry, index, bytes);
       const from = Math.max(0, start - index * RECORD);
       const to = Math.min(bytes.length, end - index * RECORD);
-      yield bytes.subarray(from, to);
       // A download that stops reading drops its GET (WebKit would keep filling memory) and resumes later.
       if (!BACKPRESSURE && entry.download) timer = setTimeout(close, STALL_MS);
+      yield bytes.subarray(from, to);
     }
   } finally {
     clearTimeout(timer);

@@ -103,6 +103,7 @@ export async function* sealStream(keys, key, size, source) {
   let index = 0;
   let read = 0;
   for await (const record of split(source, RECORD)) {
+    if (read + record.length > size) throw new Error('File changed while uploading');
     if (read) yield await sealRecord(keys, key, held, index++, total);
     held = record;
     read += record.length;

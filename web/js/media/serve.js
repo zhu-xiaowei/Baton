@@ -8,7 +8,8 @@ import { register, releasePlayback, respond } from './source.js';
 
 const BLOB_MAX = 256 * 1024 * 1024;
 const WRITE_BYTES = 256 * 1024;
-const IN_FLIGHT = 3;
+// Android writes are POSTs that wait for the player to read; one per stream keeps its few connections free.
+const IN_FLIGHT = /Android/i.test(globalThis.navigator?.userAgent || '') ? 1 : 3;
 const encoder = new TextEncoder();
 
 export { releasePlayback };

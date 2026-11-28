@@ -31,7 +31,7 @@ async function prepareFileDownload(message, { projectRoot, store = transfer, fet
   const stat = await fs.promises.stat(absPath);
   if (!stat.isFile()) throw new Error('not a regular file');
   if (stat.size > PUT_MAX) throw new Error('File exceeds the 5 GB limit');
-  if (message.files !== 2 && (stat.size > 50 * 1024 * 1024 || VIDEO_EXTENSIONS.has(path.extname(absPath).toLowerCase()))) {
+  if (message.files !== 2 && (stat.size > 50 * 1024 * 1024 || /^\.(mp4|m4v|mov|webm|mkv|avi|mp3|wav|m4a|ogg)$/i.test(path.extname(absPath)))) {
     throw new Error(OLD_APP);
   }
   const identity = `${absPath}\0${stat.mtimeMs}\0${stat.size}`;
@@ -62,7 +62,7 @@ async function putFile(absPath, stat, hash, info, fetchFn, home) {
   async function* checked(file) {
     const digest = crypto.createHash('sha256');
     let size = 0;
-    for await (const chunk of file) { digest.update(chunk); size += chunk.length; yield chunk; }
+    for await (const chunk of file) { digest.update(chunk); if ((size += chunk.length) > stat.size) break; yield chunk; }
     if (size !== stat.size || digest.digest('hex') !== hash) { changed = true; throw new Error('File changed'); }
   }
   for (const url of [...new Set([info.url, info.fallbackUrl].filter(Boolean))]) {

@@ -835,6 +835,7 @@ async function showAttachment(key, again) {
 }
 
 async function downloadAttachment(key, file) {
+  if (!file.previewUrl) throw new Error('This file is too large to preview. Download it to open.');
   const response = await fetch(file.previewUrl);
   if (!response.ok) throw new Error('Download failed (' + response.status + ')');
   const buffer = await response.arrayBuffer();
