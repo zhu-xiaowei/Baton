@@ -12,7 +12,7 @@ const ASKED = 'baton-notifications-asked';
 const TARGET = 'baton-notification-target';
 const CONFIG = 'baton-notification-config';
 let platform, config, initialization, pendingTarget, permission;
-let refreshed = false; // devices() answered this load: K rotations are followed
+let refreshed = false; // devices() answered this load
 let relay = ''; // hosted: Android holds a `role=notify` socket to this URL instead of polling
 let status = '';
 

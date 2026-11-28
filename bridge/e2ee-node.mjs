@@ -91,7 +91,7 @@ export function bridgeKeys(k, since = 0, exhausted = () => {}) {
 }
 
 // Synchronous twins of e2ee.mjs accountOf / pairCode / sealPair / openPair.
-export const accountOf = (k) => ({ accountId: hkdf(k, 'account', 8).toString('hex'), joinSecret: hkdf(k, 'join').toString('base64url'), fp: fingerprint(k) });
+export const accountOf = (k) => ({ accountId: hkdf(k, 'account', 8).toString('hex'), fp: fingerprint(k) });
 
 // One 32-byte key sealed with AES-GCM: nonce ‖ ciphertext ‖ tag, base64.
 function sealKey(key, plain, aad) {
@@ -113,8 +113,12 @@ export const pairCode = (p) => hkdf(p, 'pair-code', 16).toString('base64url');
 export const sealPair = (t, k, code) => sealKey(hkdf(t, 'pair'), k, code);
 export const openPair = (t, sealed, code) => openKey(hkdf(t, 'pair'), sealed, code);
 export const fingerprint = (k) => hkdf(k, 'fp', 8).toString('hex');
-// `fp`: the old K's fingerprint, under which K' was sealed.
-export const openRotation = (k, sealed, fp) => openKey(hkdf(k, 'rotate'), sealed, fp);
+// Twins of e2ee.mjs recoveryOf / openRecovery: a computer makes a new R once a device has left.
+export function recoveryOf(r, k) {
+  const id = hkdf(k, 'account', 8).toString('hex');
+  return { joinSecret: hkdf(r, 'recovery-join').toString('base64url'), keySealed: sealKey(hkdf(r, 'recover'), k, id), phraseSealed: sealKey(hkdf(k, 'phrase'), r, id) };
+}
+export const openRecovery = (r, sealed, accountId) => openKey(hkdf(r, 'recover'), sealed, accountId);
 
 // A hosted computer's display name for /devices, sealed under K and bound to its device ID. The nonce comes from the
 // name, so an unchanged name seals the same (no rewrite); the tag (case-insensitive) finds a duplicate in the account.

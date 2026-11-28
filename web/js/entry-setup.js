@@ -12,12 +12,11 @@ import { initMacosTabs, setNativeTabTitle } from './macos-tabs.js';
 import { initMobileNotifications, mountNotificationSettings } from './mobile-notifications.js';
 import { mountTextSizeSettings } from './text-size-settings.js';
 import { initPageZoomShortcuts } from './page-zoom.js';
-import { removeDevice, viaComputer } from './v2/pairing.js';
+import { recoveryKey, removeDevice, viaComputer } from './v2/pairing.js';
 import { openAddDevice } from './v2/add-device.js';
 import { cachedOnlineDevices, connect, devices, relayFrameBytes, request } from './v2/direct-transport.js';
 import { toPhrase } from './v2/recovery.js';
 import { confirmDialog } from './components/confirm-dialog.js';
-import { fromBase64 } from '../../bridge/direct-rpc-protocol.mjs';
 import { COPY_ICON } from './copy.js';
 import { showCenteredModal, hideCenteredModal } from './components/modal-viewport.js';
 import { routeExternalLinks } from './native-shell.js';
@@ -101,6 +100,7 @@ setNativeTabTitle('Settings');
 
   function renderApps() {
     var apps = (listing && listing.apps || []).filter(function (app) { return app.kind === 'app'; });
+    document.getElementById('appsRemoveOthers').hidden = apps.length < 3;
     document.getElementById('appsList').innerHTML = apps.map(function (app) {
       var seen = app.lastSeen ? new Date(app.lastSeen * 1000).toLocaleString() : '';
       return '<div class="agent-thread-row"><span class="agent-thread-copy"><span class="agent-thread-title"><strong>' + esc(app.deviceName)
@@ -136,8 +136,7 @@ setNativeTabTitle('Settings');
       'It is signed out at once and cannot reach your computers again; to use it again, add it with a new code.')) return;
     button.disabled = true;
     try {
-      await removeDevice('/api/tokens/revoke', { id: button.dataset.id });
-      listing = await devices();
+      listing = await removeDevice('/api/tokens/revoke', { id: button.dataset.id });
       renderApps();
     } catch (e) {
       button.disabled = false;
@@ -145,7 +144,20 @@ setNativeTabTitle('Settings');
     }
   });
 
-  // Opened by Show phrase; Show loads it in place (an online computer holds K) and the dialog stays.
+  window.removeOtherApps = async function (button) {
+    var others = listing.apps.filter(function (app) { return app.kind === 'app' && app.id !== listing.self; });
+    if (!others.length || !await confirmDialog('Remove ' + others.length + ' other phones and browsers?', [[false, 'Cancel'], [true, 'Remove', true]], false,
+      'They are signed out at once; your computers stay. To use one again, add it with a new code.')) return;
+    button.disabled = true;
+    try {
+      listing = await removeDevice('/api/tokens/revoke', { ids: others.map(function (app) { return app.id; }).join(',') });
+      renderApps();
+    } catch (e) {
+      await failed('Could not remove them', e);
+    } finally { button.disabled = false; }
+  };
+
+  // Opened by Show phrase; Show opens it in place (R sealed under K, from /devices) and the dialog stays.
   var phraseDialog = document.getElementById('phraseDialog');
   var phraseNote = document.getElementById('phraseNote').textContent;
   var phraseRun = 0;  // a load that finishes after close or reopen is dropped
@@ -171,7 +183,9 @@ setNativeTabTitle('Settings');
     button.disabled = true;
     var run = phraseRun;
     try {
-      var phrase = await toPhrase(fromBase64((await viaComputer('recovery_key')).k));
+      var r = await recoveryKey();
+      if (!r) throw new Error('Turn on one of your computers, then try again: it makes the phrase.');
+      var phrase = await toPhrase(r);
       if (run !== phraseRun) return;
       // Shown as it is pasted: words separated by spaces, no numbers.
       document.getElementById('phraseWords').textContent = phrase;

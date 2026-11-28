@@ -32,7 +32,8 @@ test('a computer code in its last 30 s opens no account', async () => {
   const { routes } = createAccounts({ env: { OPEN_REGISTRATION: 'true' }, table, devices: { list: async () => [] }, sockets: {}, log() {},
     auth: { accountId: async () => 'self', currentKey: async () => 'k' } });
   const register = routes.find((r) => r.path === '/api/account/register').handler;
-  const body = { accountId: '0123456789abcdef', joinSecret: 'j'.repeat(22), fp: 'f'.repeat(16), deviceName: 'iPhone', code: 'c'.repeat(22) };
+  const body = { accountId: '0123456789abcdef', joinSecret: 'j'.repeat(22), fp: 'f'.repeat(16), deviceName: 'iPhone', code: 'c'.repeat(22),
+    keySealed: 's'.repeat(80), phraseSealed: 's'.repeat(80) };
   const call = () => register({ body, headers: new Headers(), clientIp: '1.2.3.4' }).then(() => 'ok', (e) => e.status);
   left = 20; assert.equal(await call(), 404);
   left = 100; assert.equal(await call(), 'ok');

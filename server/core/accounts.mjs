@@ -5,18 +5,10 @@ import { HTTPError, compareDigest, length, nowInt, pattern, sha256, tokenUrlsafe
 
 export const LINK_SECONDS = 900; // pairing codes and Setup's start token (Start URL, QR code, install command)
 const MAX_BRIDGES = 10;
-const MAX_ROTATIONS = 8;
 const GONE = 'This code is used or expired.';
 const COLLECT_SECONDS = 60; // an approved computer code stays collectable this long past its expiry (RFC 8628 polling)
 const REGISTER_MARGIN = 30; // a new account needs this long left on its computer's code, for the approval that follows
 const required = { required: true };
-
-export const Rotation = [
-  ['joinSecret', pattern('^[\\w-]{22,64}$', required)],
-  ['fp', pattern('^[0-9a-f]{16}$', required)], // the K being replaced: must be the account's head
-  ['next', pattern('^[0-9a-f]{16}$', required)], // K'
-  ['sealed', pattern('^[\\w+/=-]{40,200}$', required)], // K' sealed under K
-];
 
 export const Body = [
   ['accountId', pattern('^([0-9a-f]{16})?$')],
@@ -28,7 +20,10 @@ export const Body = [
   ['deviceName', {}],
   ['install', pattern('^[\\w-]{0,64}$')], // an App's own random id: joining again replaces its token
   ['id', pattern('^([0-9a-f]{12})?$')],
-  ['rotation', { model: Rotation, nullable: true, default: null }],
+  ['ids', pattern('^([0-9a-f]{12}(,[0-9a-f]{12}){0,199})?$')], // revoke: several Apps at once
+  // The recovery phrase is R, not K: K sealed under R (recover) and R sealed under K (members show the phrase).
+  ['keySealed', pattern('^([\\w+/=-]{40,200})?$')],
+  ['phraseSealed', pattern('^([\\w+/=-]{40,200})?$')],
   ['retry', pattern('^[0-9]?$')], // register: attempts so far at placing the account (Cloudflare)
   ['nameTag', pattern('^([0-9a-f]{32})?$')], // a hosted computer's display-name tag (bridge/e2ee-node.mjs)
 ];
@@ -120,6 +115,8 @@ export function createAccounts({ env, table, auth, devices, sockets, log, place 
     }
   }
 
+  // Accounts paired before `hosted` existed are known by their joinSecretHash.
+  const isHosted = (row) => !!(row.hosted || row.joinSecretHash);
   const meta = async (account) => (await table.getItem({ Key: { pk: `ACCOUNT#${account}`, sk: 'META' }, ConsistentRead: true })).Item || {};
   const tokenRows = async (account) => (await table.query({ KeyConditionExpression: '#pk = :pk AND begins_with(#sk, :sk)',
     ExpressionAttributeNames: { '#pk': 'pk', '#sk': 'sk' }, ExpressionAttributeValues: { ':pk': `ACCOUNT#${account}`, ':sk': 'TOKEN#' } })).Items;
@@ -184,7 +181,7 @@ export function createAccounts({ env, table, auth, devices, sockets, log, place 
   }
 
   async function register({ body, ...request }) {
-    need(body, 'accountId', 'joinSecret', 'fp', 'deviceName');
+    need(body, 'accountId', 'joinSecret', 'fp', 'deviceName', 'keySealed', 'phraseSealed');
     if (!open()) throw new HTTPError(404, 'Registration is closed on this server.');
     await perIp('register', request, 5, 3); // through the relay a sign-in may take 3 (placement retries)
     // The computer's code it comes with must stay open until the approval: no empty account is left behind.
@@ -192,10 +189,10 @@ export function createAccounts({ env, table, auth, devices, sockets, log, place 
     if (body.code && !(pair?.kind === 'bridge' && !('accountId' in pair) && pair.ttl > nowInt() + REGISTER_MARGIN)) throw new HTTPError(404, GONE);
     if (place) await placeAccount(body, request, pair); // before anything reads the account: its first access places it
     if (await selfHosted(body.accountId) || (await devices.list(body.accountId)).length) throw new HTTPError(409, 'Account exists.');
-    if (await conditional(async () => table.putItem({ Item: { pk: `ACCOUNT#${body.accountId}`, sk: 'META',
-      joinSecretHash: await sha256(body.joinSecret), head: body.fp, createdAt: nowInt() },
+    if (await conditional(async () => table.putItem({ Item: { pk: `ACCOUNT#${body.accountId}`, sk: 'META', hosted: true,
+      joinSecretHash: await sha256(body.joinSecret), keySealed: body.keySealed, phraseSealed: body.phraseSealed, head: body.fp, createdAt: nowInt() },
     ConditionExpression: 'attribute_not_exists(pk)' })) === false) throw new HTTPError(409, 'Account exists.');
-    // accountId is fixed at registration while K (and joinSecret) rotate: recovery finds it from joinSecret.
+    // Recovery finds the account from joinSecret (derived from R, which changes when a device leaves).
     await table.putItem({ Item: { pk: `JOIN#${await sha256(body.joinSecret)}`, sk: '-', accountId: body.accountId } });
     return { token: await issue(body.accountId, 'app', body.deviceName, body.install) };
   }
@@ -213,11 +210,27 @@ export function createAccounts({ env, table, auth, devices, sockets, log, place 
     await perIp('recover', request, 5);
     const digest = await sha256(body.joinSecret);
     const account = (await table.getItem({ Key: { pk: `JOIN#${digest}`, sk: '-' }, ConsistentRead: true })).Item?.accountId;
-    if (!account || !compareDigest((await meta(account)).joinSecretHash ?? '', digest)) {
+    const current = account ? await meta(account) : {};
+    if (!account || !compareDigest(current.joinSecretHash ?? '', digest)) {
       throw new HTTPError(403, 'Recovery phrase does not match an account.');
     }
     await rate(`recover#${account}`, 5);
-    return { token: await issue(account, 'app', body.deviceName, body.install), accountId: account };
+    return { token: await issue(account, 'app', body.deviceName, body.install), accountId: account, keySealed: current.keySealed };
+  }
+
+  // A new R from a computer (it holds K raw; an App's K is not extractable) after a device left; the first one wins.
+  async function setRecovery({ body, auth: caller }) {
+    need(body, 'joinSecret', 'keySealed', 'phraseSealed');
+    const current = await meta(caller.accountId);
+    if (caller.kind !== 'bridge' || !isHosted(current)) throw new HTTPError(403, 'Only a computer of a paired account renews recovery.');
+    const join = await sha256(body.joinSecret);
+    const old = current.joinSecretHash; // an account from before R: its phrase was K
+    if (await conditional(() => table.updateItem({ Key: { pk: `ACCOUNT#${caller.accountId}`, sk: 'META' },
+      UpdateExpression: 'SET hosted = :yes, joinSecretHash = :join, keySealed = :key, phraseSealed = :phrase', ConditionExpression: 'attribute_not_exists(phraseSealed)',
+      ExpressionAttributeValues: { ':yes': true, ':join': join, ':key': body.keySealed, ':phrase': body.phraseSealed } })) === false) return { ok: false };
+    if (old) await table.deleteItem({ Key: { pk: `JOIN#${old}`, sk: '-' } });
+    await table.putItem({ Item: { pk: `JOIN#${join}`, sk: '-', accountId: caller.accountId } });
+    return { ok: true };
   }
 
   // The client picks the code (a hash of its link's secret; format checked by Body); older Bridges let pair/start pick one.
@@ -276,7 +289,7 @@ export function createAccounts({ env, table, auth, devices, sockets, log, place 
     return joined(row, 'bridge', row.deviceName, '', { approvedBy: row.approvedBy });
   }
 
-  // ---- Removal, rotation, deletion ----
+  // ---- Removal, deletion ----
 
   async function close(account, digest = null, notice = null) {
     for (const role of ['app', 'bridge', 'app_data', 'bridge_data', 'notify']) { // notify: Cloudflare's Android alert socket
@@ -295,54 +308,37 @@ export function createAccounts({ env, table, auth, devices, sockets, log, place 
     }
   }
 
-  // K' sealed under the K the leaving device also holds, its tokens deleted and the recovery index moved, in ONE
-  // transaction: it can never read the chain, the old joinSecret never outlives the removal, and `head = fp` makes a
-  // second rotation from the same K fail instead of forking the chain.
-  async function rotateAndRevoke(account, current, rotation, digests) {
-    const chain = (current.rotations ?? []).filter((entry) => entry.fp !== rotation.fp).slice(-(MAX_ROTATIONS - 1));
-    if (rotation.next === rotation.fp || chain.some((entry) => entry.fp === rotation.next)) throw new HTTPError(409, 'A new account key is required.');
-    const join = await sha256(rotation.joinSecret);
-    const update = { Key: { pk: `ACCOUNT#${account}`, sk: 'META' }, ConditionExpression: 'head = :fp',
-      UpdateExpression: 'SET joinSecretHash = :hash, head = :next, rotations = :chain',
-      ExpressionAttributeValues: { ':hash': join, ':next': rotation.next, ':fp': rotation.fp,
-        ':chain': [...chain, { fp: rotation.fp, sealed: rotation.sealed }] } };
-    // The recovery index moves only when the join secret changed (one transaction may not touch a row twice).
-    const moved = join !== current.joinSecretHash;
-    const keys = [...digests.flatMap((digest) => tokenKeys(account, digest)), ...(moved ? [{ pk: `JOIN#${current.joinSecretHash}`, sk: '-' }] : [])];
-    try {
-      await table.transactWriteItems({ TransactItems: [{ Update: update },
-        ...(moved ? [{ Put: { Item: { pk: `JOIN#${join}`, sk: '-', accountId: account } } }] : []),
-        ...keys.map((Key) => ({ Delete: { Key } }))] });
-    } catch (error) {
-      if (error.code !== 'TransactionCanceledException') throw error;
-      throw new HTTPError(409, 'The account key changed meanwhile; try again.');
-    }
-  }
-
-  // A device leaves: a hosted account replaces K at that moment, a self-hosted one (API key) only revokes. Its
-  // sockets close (a Bridge told `notice` first), and only then do the remaining Bridges hear of the rotation.
-  async function remove(caller, rotation, digests, notice = null) {
+  // A device leaves: its tokens and sockets go (a Bridge told `notice` first); K stays. A hosted account's recovery
+  // (R, which the leaving device could have read) is voided first, so a removal that fails midway is retried with the
+  // tokens still there; the remaining computers then make a new R.
+  async function remove(caller, digests, notice = null) {
     if (caller.kind === 'bridge') throw new HTTPError(403, 'Remove devices from an App.');
     const account = caller.accountId;
+    if (!digests.length) return;
     const current = await meta(account);
-    const hosted = !!current.joinSecretHash;
-    if (hosted && !rotation) throw new HTTPError(400, 'Removing a device needs a new account key.');
-    if (hosted) await rotateAndRevoke(account, current, rotation, digests);
-    await drop(account, digests, notice, !hosted);
+    const hosted = isHosted(current);
+    if (hosted) {
+      // Unconditional: an R set meanwhile is voided too (computers make another), and a JOIN# row left behind
+      // without its META hash recovers nothing (recover compares both).
+      await table.updateItem({ Key: { pk: `ACCOUNT#${account}`, sk: 'META' }, UpdateExpression: 'SET hosted = :yes REMOVE joinSecretHash, keySealed, phraseSealed',
+        ExpressionAttributeValues: { ':yes': true } });
+      if (current.joinSecretHash) await table.deleteItem({ Key: { pk: `JOIN#${current.joinSecretHash}`, sk: '-' } });
+    }
+    await drop(account, digests, notice);
     for (const item of hosted ? await sockets.query(account, 'bridge') : []) {
       try {
-        await sockets.post(env.WS_API_ENDPOINT ?? '', item.connectionId, { action: 'account_rotated' });
+        await sockets.post(env.WS_API_ENDPOINT ?? '', item.connectionId, { action: 'recovery_reset' });
       } catch {}
     }
   }
 
-  // Tokens (unless already gone in the rotation), the push registrations made with them, their sockets.
-  async function drop(account, digests, notice = null, rows = true) {
+  // Tokens, the push registrations made with them, their sockets.
+  async function drop(account, digests, notice = null) {
     if (!digests.length) return;
     const pushes = (await table.query({ KeyConditionExpression: '#pk = :pk', ExpressionAttributeNames: { '#pk': 'pk' },
       ExpressionAttributeValues: { ':pk': `PUSH_DEVICE#${account}` } })).Items;
     for (const digest of digests) {
-      for (const key of [...(rows ? tokenKeys(account, digest) : []), ...pushes.filter((push) => push.tokenHash === digest)]) {
+      for (const key of [...tokenKeys(account, digest), ...pushes.filter((push) => push.tokenHash === digest)]) {
         await table.deleteItem({ Key: { pk: key.pk, sk: key.sk } });
       }
       await close(account, digest, notice);
@@ -353,22 +349,25 @@ export function createAccounts({ env, table, auth, devices, sockets, log, place 
     .filter((row) => row.kind === 'bridge' && row.deviceName === name).map((row) => row.sk.slice(6));
 
   async function revoke({ body, auth: caller }) {
-    // No id: log out. An id: remove another App of the account (a lost phone).
-    if (!body.id) {
+    // No id: log out. An id (or several, `ids`): remove other Apps of the account (a lost phone).
+    const ids = body.ids ? body.ids.split(',') : body.id ? [body.id] : [];
+    if (!ids.length) {
       await drop(caller.accountId, caller.tokenHash ? [caller.tokenHash] : []);
       // A computer that left (`leave`) is no longer listed.
       if (caller.kind === 'bridge') await devices.delete(caller.accountId, caller.deviceName);
       return { ok: true };
     }
-    const digest = (await tokenRows(caller.accountId)).find((row) => row.sk.slice(6, 18) === body.id && row.kind === 'app')?.sk.slice(6);
-    if (!digest || digest === caller.tokenHash) throw new HTTPError(404, 'No such App in this account.');
-    await remove(caller, body.rotation, [digest]);
+    const rows = await tokenRows(caller.accountId);
+    // Ids already gone (removed elsewhere meanwhile) are skipped; none left, or this App itself, is a 404.
+    const digests = ids.map((id) => rows.find((row) => row.sk.slice(6, 18) === id && row.kind === 'app')?.sk.slice(6)).filter(Boolean);
+    if (!digests.length || digests.includes(caller.tokenHash)) throw new HTTPError(404, 'No such App in this account.');
+    await remove(caller, digests);
     return { ok: true };
   }
 
   async function deleteAccount({ auth: caller }) {
     const account = caller.accountId;
-    if (caller.kind !== 'app' || !(await meta(account)).joinSecretHash) {
+    if (caller.kind !== 'app' || !isHosted(await meta(account))) {
       throw new HTTPError(403, 'Only an App of an account made by pairing can delete it.');
     }
     await close(account, null, 'account_deleted');
@@ -379,7 +378,7 @@ export function createAccounts({ env, table, auth, devices, sockets, log, place 
           ExpressionAttributeValues: { ':pk': pk } })).Items;
         if (!rows.length) break;
         for (const row of rows) {
-          if (row.sk === 'META') await table.deleteItem({ Key: { pk: `JOIN#${row.joinSecretHash}`, sk: '-' } });
+          if (row.sk === 'META' && row.joinSecretHash) await table.deleteItem({ Key: { pk: `JOIN#${row.joinSecretHash}`, sk: '-' } });
           if (row.sk.startsWith('TOKEN#')) await table.deleteItem({ Key: { pk: row.sk, sk: '-' } });
           await table.deleteItem({ Key: { pk: row.pk, sk: row.sk } });
         }
@@ -391,8 +390,8 @@ export function createAccounts({ env, table, auth, devices, sockets, log, place 
   const routes = [
     ['/api/account/register', register], ['/api/account/recover', recover], ['/api/pair/create', pairCreate],
     ['/api/pair/claim', pairClaim], ['/api/pair/start', pairStart], ['/api/pair/approve', pairApprove],
-    ['/api/pair/wait', pairWait], ['/api/tokens/revoke', revoke],
+    ['/api/pair/wait', pairWait], ['/api/tokens/revoke', revoke], ['/api/account/recovery', setRecovery],
   ].map(([path, handler]) => ({ method: 'POST', path, body: Body, handler }));
   routes.push({ method: 'POST', path: '/api/account/delete', handler: deleteAccount });
-  return { routes, remove, computerTokens, listTokens, meta, ipToken };
+  return { routes, remove, computerTokens, listTokens, meta, isHosted, ipToken };
 }

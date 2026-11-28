@@ -6,7 +6,7 @@ import fs from 'fs';
 import { createInterface } from 'readline/promises';
 import qrcode from 'qrcode-terminal';
 import { BRIDGE_HOME, CONFIG_PATH, bridgeCommand, saveConfig } from './config.mjs';
-import { deviceNameTag, fingerprint, openPair, openRotation, pairCode, sealPair } from './e2ee-node.mjs';
+import { deviceNameTag, fingerprint, openPair, pairCode, recoveryOf, sealPair } from './e2ee-node.mjs';
 import { pickEntry, vouched } from './entry.mjs';
 import { runningBridgePid } from './instance-lock.mjs';
 
@@ -88,17 +88,12 @@ export function approveJoin(config, url) {
     .then((reply) => ({ ...reply, displayName: name || reply.deviceName }));
 }
 
-// The newest K after rotations made while this computer was away or just now (`account_rotated`), or null.
-export async function rotatedKey(config) {
-  const { rotations = [] } = await call(config, '/api/bridge/devices');
-  let k = Buffer.from(config.accountKey, 'base64');
-  // At most one step per entry: a chain that loops back cannot hang this loop.
-  for (let step = 0, entry; step < rotations.length && (entry = rotations.find((candidate) => candidate.fp === fingerprint(k))); step++) {
-    const next = openRotation(k, entry.sealed, entry.fp);
-    if (next?.length !== 32) break;
-    k = next;
-  }
-  return k.toString('base64') === config.accountKey ? null : k;
+// A device left (`recovery_reset`) while this computer was away or just now: a new recovery key R, which the first
+// computer to send it sets (the server keeps the first). Returns whether this one did.
+export async function renewRecovery(config) {
+  const { hosted, phraseSealed } = await call(config, '/api/bridge/devices');
+  if (!hosted || phraseSealed) return false;
+  return (await call(config, '/api/account/recovery', recoveryOf(randomBytes(32), Buffer.from(config.accountKey, 'base64')))).ok;
 }
 
 // `leave`: joins another account with the same server and device fields. config.json is written, and the
