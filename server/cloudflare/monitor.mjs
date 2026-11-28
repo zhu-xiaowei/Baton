@@ -227,6 +227,7 @@ export class MonitorStore extends DurableObject {
     this.sql = ctx.storage.sql;
     this.sql.exec('CREATE TABLE IF NOT EXISTS snaps (t INTEGER PRIMARY KEY, ok INTEGER, online INTEGER, data TEXT)');
     this.sql.exec('CREATE TABLE IF NOT EXISTS devices (id TEXT PRIMARY KEY, role TEXT, first INTEGER)'); // every App and computer seen
+    try { this.sql.exec('ALTER TABLE devices ADD COLUMN acct TEXT'); } catch {} // its account's hash: a purge removes only those
   }
 
   // Each keyed alert once; one email per run lists them all.
@@ -300,19 +301,21 @@ export class MonitorStore extends DurableObject {
         `It relays again next month; meanwhile mainland clients use the API host directly.`);
     }
     // Devices seen since the last run (overlapping; up to AE's 90 days the first time) join the all-time list.
-    // A one-off reset (secret DEVICES_RESET = {"from": <ms>, "keep": [ids]}): applied once; rebuilds start at `from`.
+    // A one-off reset (secret DEVICES_RESET = {"from": <ms>, "keep": [[id, role, acct], …]}): applied once, the list
+    // becomes exactly `keep`, and points before `from` are never read again.
     let reset = null;
     try { reset = JSON.parse(env.DEVICES_RESET || 'null'); } catch {}
     if (reset?.from && reset.from !== state.devicesFrom && reset.keep?.length) {
-      this.sql.exec(`DELETE FROM devices WHERE id NOT IN (${reset.keep.map(() => '?').join(', ')})`, ...reset.keep);
+      this.sql.exec('DELETE FROM devices');
+      for (const [id, role, acct] of reset.keep) this.sql.exec('INSERT OR IGNORE INTO devices VALUES (?, ?, ?, ?)', id, role, now, acct);
       Object.assign(state, { devicesFrom: reset.from, devicesAt: Math.max(state.devicesAt ?? 0, reset.from) });
     }
     if (env.DATASET && env.ANALYTICS_TOKEN) {
       const minutes = Math.min(90 * 1440, Math.ceil((now - Math.max(state.devicesAt ?? 0, state.devicesFrom ?? 0)) / MIN) + 15);
       try {
-        for (const r of await ae(env, `SELECT blob8 AS id, blob1 AS role FROM ${env.DATASET} WHERE timestamp > NOW() - INTERVAL '${minutes}' MINUTE`
-          + ` AND blob1 IN ('app', 'bridge') AND blob8 != '' AND blob2 NOT IN (${skipped(env, state)}) GROUP BY id, role`)) {
-          this.sql.exec('INSERT OR IGNORE INTO devices VALUES (?, ?, ?)', r.id, r.role, now);
+        for (const r of await ae(env, `SELECT blob8 AS id, blob1 AS role, blob2 AS acct FROM ${env.DATASET} WHERE timestamp > NOW() - INTERVAL '${minutes}' MINUTE`
+          + ` AND blob1 IN ('app', 'bridge') AND blob8 != '' AND blob2 NOT IN (${skipped(env, state)}) GROUP BY id, role, acct`)) {
+          this.sql.exec('INSERT OR IGNORE INTO devices VALUES (?, ?, ?, ?)', r.id, r.role, now, r.acct);
         }
         state.devicesAt = now;
       } catch (error) { console.log(`devices: ${error.message}`); }
@@ -327,13 +330,16 @@ export class MonitorStore extends DurableObject {
       state.log = [...fresh.map(([s]) => ({ t: now, subject: s, result })), ...(state.log ?? [])].slice(0, 30);
       state.unsent = result === 'sent' ? [] : alerts.slice(-20);
     }
-    // An unblock or a purge may have landed during the awaits above: keep it (a purge's device list is rebuilt next run).
+    // An unblock or a purge may have landed during the awaits above: keep it, and drop the purged accounts' devices
+    // this run may have added.
     const saved = await this.ctx.storage.get('state');
     state.lifted = saved?.lifted ?? state.lifted;
     if (JSON.stringify(saved?.purged ?? {}) !== JSON.stringify(state.purged ?? {})) {
-      Object.assign(state, { purged: saved.purged, devicesAt: 0 });
-      for (const name of Object.keys(state.purged)) delete state.blocked?.[name];
-      this.sql.exec('DELETE FROM devices');
+      state.purged = saved.purged;
+      for (const [name, p] of Object.entries(state.purged)) {
+        delete state.blocked?.[name];
+        this.sql.exec('DELETE FROM devices WHERE acct = ?', p.hash);
+      }
     }
     for (const [name, m] of Object.entries(state.lifted ?? {})) if (m === month) delete state.blocked[name];
     const relays = new Set([...(await this.ctx.storage.list({ prefix: 'relay:' })).keys()].map((k) => k.slice(6))); // a retire meanwhile
@@ -357,18 +363,18 @@ export class MonitorStore extends DurableObject {
     return true;
   }
 
-  // The operator's purge of a test account (dashboard): its object is emptied, and its points leave every figure. The
-  // device list is rebuilt from the dataset (up to 90 days) at the next run without them.
+  // The operator's purge of a test account (dashboard): its object is emptied, its devices leave the list, and its
+  // points leave every figure. Other accounts' devices are untouched.
   async purge(name) {
     if (!/^[0-9a-f]{16}$/.test(name) || name === this.env.PROBE_ACCOUNT) return false;
     await this.env.ACCOUNT.get(this.env.ACCOUNT.idFromName(name)).purge(name);
     const state = (await this.ctx.storage.get('state')) ?? {};
-    state.purged = { ...state.purged, [name]: { hash: await hashOf(name), at: Date.now() } };
-    state.devicesAt = 0;
+    const hash = await hashOf(name);
+    state.purged = { ...state.purged, [name]: { hash, at: Date.now() } };
     delete state.blocked?.[name]; // unblocking it later would write into the emptied object
     delete state.lifted?.[name];
     await this.ctx.storage.put('state', state);
-    this.sql.exec('DELETE FROM devices');
+    this.sql.exec('DELETE FROM devices WHERE acct = ?', hash);
     this.cached = null;
     this.purges = (this.purges ?? 0) + 1; // a data() read in flight meanwhile is not cached
     return true;
