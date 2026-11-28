@@ -159,15 +159,17 @@ device stops recognising it and never replaces `K`, so a computer or App that wa
 1. `POST /api/tokens/revoke {id}` or `{ids: "<id>,<id>,…"}` (several Apps in one request), or
    `POST /api/bridge/delete-device {deviceName}`: the server deletes the tokens and their push registrations and
    closes their sockets (a removed Bridge gets `device_removed` first). From now on the device cannot reach the account.
+   Ids already gone are skipped; a device without tokens left changes nothing.
 2. Hosted accounts: the recovery phrase is a separate key `R` (24 words), not `K`. `META` keeps
    `hash(joinSecret)` (HKDF of `R`), `keySealed` (`K` under `R`, AAD accountId; recovery opens `K` with it) and
    `phraseSealed` (`R` under `K`; any member shows the phrase from `/devices`). A device that leaves may have read
-   `R`, so after its tokens are gone the server voids all three (and the `JOIN#` row) and sends `recovery_reset` to
-   the online Bridges.
+   `R`, so the server voids all three (and the `JOIN#` row) before deleting its tokens (a removal that fails midway
+   can be retried), then sends `recovery_reset` to the online Bridges.
 3. A Bridge (which holds `K` raw; an App's `K` is not extractable) makes a new `R` on `recovery_reset`, and on every
    connection while `/devices` shows no `phraseSealed`, and sends it to `POST /api/account/recovery` (bridge token).
    The first one is kept (`attribute_not_exists(phraseSealed)`), the rest get `{ok: false}`. Until a computer is
-   online the account has no working phrase; Settings says to turn one on.
+   online the account has no working phrase; Settings says to turn one on (after removing the last computer:
+   until a computer joins again).
 - Trade-off (as in those products): a removed device still has `K`. It cannot connect (no token) or recover (no
   `R`); reading new data would need the relay or storage to hand it ciphertext.
 - Accounts made before `R` (phrase = `K`, no `phraseSealed`) get their `R` from the first Bridge that connects.

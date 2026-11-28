@@ -210,11 +210,12 @@ export function createAccounts({ env, table, auth, devices, sockets, log, place 
     await perIp('recover', request, 5);
     const digest = await sha256(body.joinSecret);
     const account = (await table.getItem({ Key: { pk: `JOIN#${digest}`, sk: '-' }, ConsistentRead: true })).Item?.accountId;
-    if (!account || !compareDigest((await meta(account)).joinSecretHash ?? '', digest)) {
+    const current = account ? await meta(account) : {};
+    if (!account || !compareDigest(current.joinSecretHash ?? '', digest)) {
       throw new HTTPError(403, 'Recovery phrase does not match an account.');
     }
     await rate(`recover#${account}`, 5);
-    return { token: await issue(account, 'app', body.deviceName, body.install), accountId: account, keySealed: (await meta(account)).keySealed };
+    return { token: await issue(account, 'app', body.deviceName, body.install), accountId: account, keySealed: current.keySealed };
   }
 
   // A new R from a computer (it holds K raw; an App's K is not extractable) after a device left; the first one wins.
@@ -308,19 +309,23 @@ export function createAccounts({ env, table, auth, devices, sockets, log, place 
   }
 
   // A device leaves: its tokens and sockets go (a Bridge told `notice` first); K stays. A hosted account's recovery
-  // (R, which the leaving device could have read) is voided after that, and the remaining computers make a new one.
+  // (R, which the leaving device could have read) is voided first, so a removal that fails midway is retried with the
+  // tokens still there; the remaining computers then make a new R.
   async function remove(caller, digests, notice = null) {
     if (caller.kind === 'bridge') throw new HTTPError(403, 'Remove devices from an App.');
     const account = caller.accountId;
-    await drop(account, digests, notice);
+    if (!digests.length) return;
     const current = await meta(account);
-    if (!isHosted(current)) return;
-    // Unconditional: an R set meanwhile is voided too (computers make another), and a JOIN# row left behind
-    // without its META hash recovers nothing (recover compares both).
-    await table.updateItem({ Key: { pk: `ACCOUNT#${account}`, sk: 'META' }, UpdateExpression: 'SET hosted = :yes REMOVE joinSecretHash, keySealed, phraseSealed',
-      ExpressionAttributeValues: { ':yes': true } });
-    if (current.joinSecretHash) await table.deleteItem({ Key: { pk: `JOIN#${current.joinSecretHash}`, sk: '-' } });
-    for (const item of await sockets.query(account, 'bridge')) {
+    const hosted = isHosted(current);
+    if (hosted) {
+      // Unconditional: an R set meanwhile is voided too (computers make another), and a JOIN# row left behind
+      // without its META hash recovers nothing (recover compares both).
+      await table.updateItem({ Key: { pk: `ACCOUNT#${account}`, sk: 'META' }, UpdateExpression: 'SET hosted = :yes REMOVE joinSecretHash, keySealed, phraseSealed',
+        ExpressionAttributeValues: { ':yes': true } });
+      if (current.joinSecretHash) await table.deleteItem({ Key: { pk: `JOIN#${current.joinSecretHash}`, sk: '-' } });
+    }
+    await drop(account, digests, notice);
+    for (const item of hosted ? await sockets.query(account, 'bridge') : []) {
       try {
         await sockets.post(env.WS_API_ENDPOINT ?? '', item.connectionId, { action: 'recovery_reset' });
       } catch {}
@@ -353,8 +358,9 @@ export function createAccounts({ env, table, auth, devices, sockets, log, place 
       return { ok: true };
     }
     const rows = await tokenRows(caller.accountId);
-    const digests = ids.map((id) => rows.find((row) => row.sk.slice(6, 18) === id && row.kind === 'app')?.sk.slice(6));
-    if (digests.some((digest) => !digest || digest === caller.tokenHash)) throw new HTTPError(404, 'No such App in this account.');
+    // Ids already gone (removed elsewhere meanwhile) are skipped; none left, or this App itself, is a 404.
+    const digests = ids.map((id) => rows.find((row) => row.sk.slice(6, 18) === id && row.kind === 'app')?.sk.slice(6)).filter(Boolean);
+    if (!digests.length || digests.includes(caller.tokenHash)) throw new HTTPError(404, 'No such App in this account.');
     await remove(caller, digests);
     return { ok: true };
   }
