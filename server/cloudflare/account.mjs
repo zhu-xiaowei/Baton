@@ -174,9 +174,16 @@ export class AccountObject extends DurableObject {
     if (until > Date.now()) for (const role of ['app', 'bridge', 'notify']) for (const [ws] of this.live(role)) await this.retire(ws, 4429, 'monthly_limit');
   }
 
-  // The monitor's operator purge (a test account, through its binding like monthlyLimit): sockets close, every row goes.
-  async purge() {
-    for (const ws of this.ctx.getWebSockets()) { try { ws.close(4401, 'revoked'); } catch {} }
+  // The monitor's operator purge (a test account, through its binding like monthlyLimit): sockets close, every row goes,
+  // with the recovery index row kept in the index objects. Every socket is marked closing before any closes, so their
+  // close handlers (leave) write nothing back.
+  async purge(account) {
+    const table = createTable(this.env, { kind: 'account', name: account, call: this.store });
+    const join = (await table.getItem({ Key: { pk: `ACCOUNT#${account}`, sk: 'META' } })).Item?.joinSecretHash;
+    if (join) await table.deleteItem({ Key: { pk: `JOIN#${join}`, sk: '-' } });
+    const sockets = this.ctx.getWebSockets();
+    for (const ws of sockets) { try { ws.serializeAttachment({ ...ws.deserializeAttachment(), closing: Date.now() }); } catch {} }
+    for (const ws of sockets) { try { ws.close(4401, 'revoked'); } catch {} }
     await this.ctx.storage.deleteAlarm();
     await this.ctx.storage.deleteAll();
     this.store = serve(createItems(this.ctx.storage.sql), (fn) => this.ctx.storage.transactionSync(fn)); // an empty table again

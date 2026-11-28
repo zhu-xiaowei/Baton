@@ -12,6 +12,7 @@ const iso = (t) => new Date(t).toISOString();
 const list = (text) => (text ?? '').split(',').filter(Boolean);
 const sum = (rows, f) => (rows ?? []).reduce((n, r) => n + (f(r) ?? 0), 0);
 // An account's hash in the usage dataset (usage.mjs accountHash); the probe's and purged accounts' points are left out.
+// A copy of usage.mjs accountHash: importing it would bring server/core into this Worker.
 const hashOf = async (name) => [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(name)))].slice(0, 8)
   .map((b) => b.toString(16).padStart(2, '0')).join('');
 const skipped = (env, state) => [env.PROBE_HASH, ...Object.values(state?.purged ?? {}).map((p) => p.hash)].map((h) => `'${h}'`).join(', ');
@@ -321,8 +322,9 @@ export class MonitorStore extends DurableObject {
     // An unblock or a purge may have landed during the awaits above: keep it (a purge's device list is rebuilt next run).
     const saved = await this.ctx.storage.get('state');
     state.lifted = saved?.lifted ?? state.lifted;
-    if (Object.keys(saved?.purged ?? {}).length !== Object.keys(state.purged ?? {}).length) {
+    if (JSON.stringify(saved?.purged ?? {}) !== JSON.stringify(state.purged ?? {})) {
       Object.assign(state, { purged: saved.purged, devicesAt: 0 });
+      for (const name of Object.keys(state.purged)) delete state.blocked?.[name];
       this.sql.exec('DELETE FROM devices');
     }
     for (const [name, m] of Object.entries(state.lifted ?? {})) if (m === month) delete state.blocked[name];
@@ -351,13 +353,16 @@ export class MonitorStore extends DurableObject {
   // device list is rebuilt from the dataset (up to 90 days) at the next run without them.
   async purge(name) {
     if (!/^[0-9a-f]{16}$/.test(name) || name === this.env.PROBE_ACCOUNT) return false;
-    await this.env.ACCOUNT.get(this.env.ACCOUNT.idFromName(name)).purge();
+    await this.env.ACCOUNT.get(this.env.ACCOUNT.idFromName(name)).purge(name);
     const state = (await this.ctx.storage.get('state')) ?? {};
     state.purged = { ...state.purged, [name]: { hash: await hashOf(name), at: Date.now() } };
     state.devicesAt = 0;
+    delete state.blocked?.[name]; // unblocking it later would write into the emptied object
+    delete state.lifted?.[name];
     await this.ctx.storage.put('state', state);
     this.sql.exec('DELETE FROM devices');
     this.cached = null;
+    this.purges = (this.purges ?? 0) + 1; // a data() read in flight meanwhile is not cached
     return true;
   }
 
@@ -376,7 +381,7 @@ export class MonitorStore extends DurableObject {
 
   async data() {
     if (this.cached?.until > Date.now()) return this.cached.value;
-    const now = Date.now();
+    const now = Date.now(), purges = this.purges;
     const midnight = Date.parse(iso(now).slice(0, 10));
     const [latest] = this.sql.exec('SELECT t, data FROM snaps ORDER BY t DESC LIMIT 1').toArray();
     const series = this.sql.exec('SELECT t, ok, online, data FROM snaps WHERE t > ? ORDER BY t', now - 1440 * MIN).toArray().map((r) => {
@@ -392,7 +397,7 @@ export class MonitorStore extends DurableObject {
       relays: Object.fromEntries([...(await this.ctx.storage.list({ prefix: 'relay:' }))].map(([k, r]) => [k.slice(6), r])),
       devices: Object.fromEntries(this.sql.exec('SELECT role, count(*) AS n FROM devices GROUP BY role').toArray().map((r) => [r.role, r.n])),
       live: await live(this.env, skipped(this.env, state)).catch((error) => ({ error: error.message })) };
-    this.cached = { until: now + MIN, value };
+    if (purges === this.purges) this.cached = { until: now + MIN, value };
     return value;
   }
 }

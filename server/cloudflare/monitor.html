@@ -155,7 +155,8 @@ function pointAt(svg, clientX) {
 document.addEventListener('click', async (e) => {
   const purge = e.target.dataset?.purge;
   if (purge && confirm(`清除测试账户 ${purge}？\n它的设备、Session 路由和所有数据都会删除，不能恢复；统计里也不再计入它。`)) {
-    await fetch('api/purge', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ account: purge }) });
+    const res = await fetch('api/purge', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ account: purge }) });
+    if (!(await res.json().catch(() => null))?.ok) alert(`清除失败（HTTP ${res.status}）`);
     return load();
   }
   const name = e.target.dataset?.unblock;
