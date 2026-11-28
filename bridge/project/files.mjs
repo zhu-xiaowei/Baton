@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
+import { finished } from 'stream/promises';
 import { WS_FRAME_LIMIT } from '../config.mjs';
 import { contentHash, forgetContentHash } from '../content-hash.mjs';
 import { PUT_MAX, transfer, transferKeys } from '../transfer-store.mjs';
@@ -76,7 +77,7 @@ async function putFile(absPath, stat, hash, info, fetchFn, home) {
       if (response.status === 400) rejected = (await response.text()).includes('BadDigest');
       else await response.body?.cancel();
       if (response.ok) return;
-    } catch {} finally { file.destroy(); }
+    } catch {} finally { file.destroy(); await finished(file).catch(() => {}); } // an unread stream still opens
     if (rejected || changed) {
       await forgetContentHash(absPath, stat, home);
       throw new Error('File changed while preparing the download. Try again.');
