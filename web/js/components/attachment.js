@@ -104,9 +104,14 @@ async function putPart(url, body, onProgress, signal) {
 
 // A large file goes up in parts, each sealed on its own. Three at once: while some upload another
 // seals, so the upload never waits between parts and at most three parts are in memory.
-async function uploadParts(file, prepared, onProgress, signal) {
+async function uploadParts(file, prepared, id, onProgress, cancelled) {
   const { parts } = prepared;
-  const id = await parts.start();
+  // One failed part stops the others too.
+  const stop = new AbortController();
+  const { signal } = stop;
+  const cancel = () => stop.abort();
+  cancelled.addEventListener('abort', cancel, { once: true });
+  if (cancelled.aborted) cancel();
   const count = Math.max(1, Math.ceil(file.size / parts.size));
   const etags = [];
   const sent = new Array(count).fill(0);
@@ -116,7 +121,7 @@ async function uploadParts(file, prepared, onProgress, signal) {
       const body = new Blob([await prepared.seal(file.slice(n * parts.size, (n + 1) * parts.size), n * parts.records)]);
       etags[n] = await putPart(() => parts.url(id, n + 1), body, loaded => {
         sent[n] = loaded * body.size;
-        onProgress(Math.round(100 * Math.min(1, sent.reduce((a, b) => a + b, 0) / file.size)));
+        if (!signal.aborted) onProgress(Math.round(100 * Math.min(1, sent.reduce((a, b) => a + b, 0) / file.size)));
       }, signal);
     }
   };
@@ -125,13 +130,18 @@ async function uploadParts(file, prepared, onProgress, signal) {
     await parts.complete(id, etags);
   } catch (error) {
     next = count;
+    stop.abort();
     parts.abort(id);
     throw error;
+  } finally {
+    cancelled.removeEventListener('abort', cancel);
   }
 }
 
 export async function uploadAttachment(file, prepared, onProgress, signal) {
-  if (prepared.parts) return uploadParts(file, prepared, onProgress, signal);
+  // A self-hosted stack whose CORS predates multipart refuses the start: one PUT instead.
+  const id = prepared.parts && await prepared.parts.start().catch(() => null);
+  if (id) return uploadParts(file, prepared, id, onProgress, signal);
   const urls = [...new Set([prepared.url, prepared.fallbackUrl].filter(Boolean))];
   const body = prepared.seal ? new Blob([await prepared.seal(file)]) : file;
   for (const url of urls) {

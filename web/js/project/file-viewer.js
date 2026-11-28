@@ -80,6 +80,11 @@ function uploadAgain(target, local) {
   return local ? requestProjectFiles('download', { ...fileContext(), path: local }, { timeout: 30 * 60_000 }).then(m => m.key) : null;
 }
 
+// An attachment's file info once its stored copy is uploaded again (playback and PDF ranges).
+function attachmentAgain(key) {
+  return async () => transfer.fileInfo(await uploadAgain(_downloadTarget, _view?.options.local) || key, _view?.name);
+}
+
 // Identical content shares one stored file, so the name it was opened under wins over the stored one.
 async function prepareViewedDownload(target) {
   return transfer.fileInfo(await uploadedKey(target), target.name).catch(error => {
@@ -787,7 +792,12 @@ async function showAttachment(key, again) {
       }
       const controller = new AbortController();
       _pdfLoadController = controller;
-      const source = file.sealed ? (begin, end) => transfer.range(key, begin, end, file.stored) : file.previewUrl;
+      let fresh = null;
+      const source = file.sealed ? (begin, end) => transfer.range(key, begin, end, file.stored).catch(async error => {
+        if (!error.missing) throw error;
+        const next = await (fresh ??= attachmentAgain(key)());
+        return transfer.range(next.key, begin, end, next.stored);
+      }) : file.previewUrl;
       const pdfPreview = await mountPdfPreview(body, source, file.size, controller.signal, cacheKey, {
         data: file.data, onFile: !file.data && (bytes => cacheAttachment(key, file.name, bytes)),
       });
@@ -804,7 +814,7 @@ async function showAttachment(key, again) {
       _objectUrl = objectUrl;
       return;
     } else if (/^(video|audio)\//.test(file.previewType)) {
-      const src = escapeAttachment(await mediaUrl(file));
+      const src = escapeAttachment(await mediaUrl(file, { refresh: attachmentAgain(key) }));
       if (token !== _fileRequestToken) return;
       if (file.previewType.startsWith('video/')) return showVideoBody(src);
       preview = '<audio controls preload="metadata" src="' + src + '"></audio>';

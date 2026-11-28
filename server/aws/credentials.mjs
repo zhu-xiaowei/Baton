@@ -38,7 +38,7 @@ export function sessionPolicy(accountId, roleArn, region) {
   const policy = callbackPolicy(dataEndpoint(), roleArn, region);
   const storage = storageInfo(accountId);
   if (storage) {
-    policy.Statement.push({ Effect: 'Allow', Action: ['s3:GetObject', 's3:PutObject'],
+    policy.Statement.push({ Effect: 'Allow', Action: ['s3:GetObject', 's3:PutObject', 's3:AbortMultipartUpload'],
       Resource: `arn:${roleArn.split(':')[1]}:s3:::${storage.bucket}/t/${accountId}/*` });
   }
   return policy;

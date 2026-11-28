@@ -6,12 +6,12 @@
 const encoder = new TextEncoder();
 const KEY = /^[0-9a-f]{8,64}(?:\.[a-z0-9]{1,16})?$/;
 const MAX_EXPIRES = 3600;
-// Objects expire 1 hour after they were written on Cloudflare (7 days on S3); R2 checks about hourly.
-// One older than REUSE_MS is written again, and a key is remembered for REMEMBER_MS (`transferKeys`),
-// so a key handed out still has ≥ 15 min for the App to read it (ranges while open).
-const REUSE_MS = 30 * 60_000;
+// Objects expire 1 hour after they were written on Cloudflare (R2 checks about hourly), 7 days on S3.
+// One older than its store's reuse window is written again, and a key is remembered for REMEMBER_MS
+// (`transferKeys`), so a key handed out still has ≥ 15 min for the App to read it (ranges while open).
+const REUSE_MS = { r2: 30 * 60_000, s3: 21.5 * 3600_000 };
 const REMEMBER_MS = 15 * 60_000;
-export const reusable = (object) => !!object && Date.now() - object.modified < REUSE_MS;
+export const reusable = (object) => !!object && Date.now() - object.modified < object.reuse;
 // A single PUT holds at most 5 GiB; the sealing overhead stays below it.
 export const PUT_MAX = 5e9;
 export const transferKeys = (limit) => recentKeys(limit, REMEMBER_MS);
@@ -35,10 +35,10 @@ const OFFICE = /^(docx|pptx|xlsx|doc|ppt|xls)$/;
 // index | last), so any range can be read. They carry `x-amz-meta-sealed: 1` and are keyed by
 // HMAC(content hash), so dedup stays within the account.
 export const RECORD = 64 * 1024;
-export const SEALED_RECORD = RECORD + 28;
+const SEALED_RECORD = RECORD + 28;
 const records = (stored) => Math.max(1, Math.ceil(stored / SEALED_RECORD));
 export const plainSize = (stored) => Math.max(0, stored - 28 * records(stored));
-export const sealedSize = (size) => size + 28 * Math.max(1, Math.ceil(size / RECORD));
+const sealedSize = (size) => size + 28 * Math.max(1, Math.ceil(size / RECORD));
 // Files written before the account had K are read as they are for the 7 days S3 keeps them.
 const PLAIN_GRACE_MS = 7 * 86400_000;
 let fileKeys = () => null;
@@ -233,7 +233,8 @@ const disposition = (name) => `attachment; filename*=UTF-8''${rfc3986(name)}`;
 // `access()` resolves fresh credentials and the account's storage.
 export function createTransferStore(access, fetchFn = (...args) => fetch(...args)) {
   async function head(key) {
-    const response = await fetchFn(await presign(await access(), 'HEAD', key, { headers: { 'x-amz-checksum-mode': 'ENABLED' } }),
+    const storage = await access();
+    const response = await fetchFn(await presign(storage, 'HEAD', key, { headers: { 'x-amz-checksum-mode': 'ENABLED' } }),
       { method: 'HEAD', headers: { 'x-amz-checksum-mode': 'ENABLED' } });
     // Without list permission S3 answers 403 for a missing object.
     if (response.status === 404 || response.status === 403) return null;
@@ -246,6 +247,7 @@ export function createTransferStore(access, fetchFn = (...args) => fetch(...args
       contentType: meta('content-type'),
       sealed: meta('sealed') === '1',
       modified: Date.parse(response.headers.get('last-modified') || '') || 0,
+      reuse: storage.endpoint ? REUSE_MS.r2 : REUSE_MS.s3,
     };
   }
 
@@ -396,6 +398,7 @@ export function createTransferStore(access, fetchFn = (...args) => fetch(...args
       const last = Math.floor((end - 1) / RECORD);
       const response = await fetchFn(await this.url(key, { plain: true }),
         { headers: { Range: `bytes=${first * SEALED_RECORD}-${Math.min(stored, (last + 1) * SEALED_RECORD) - 1}` } });
+      if (response.status === 404 || response.status === 403) throw Object.assign(new Error('File not found'), { missing: true });
       if (response.status !== 206 && response.status !== 200) throw new Error(`Storage read failed (${response.status})`);
       let bytes = new Uint8Array(await response.arrayBuffer());
       if (response.status === 200) bytes = bytes.subarray(first * SEALED_RECORD, (last + 1) * SEALED_RECORD);

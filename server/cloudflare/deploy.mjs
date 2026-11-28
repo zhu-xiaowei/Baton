@@ -170,7 +170,7 @@ async function bucket() {
   await cf('PUT', `/r2/buckets/${flags.bucket}/cors`, { rules: [{ allowed: { origins: ['*'], methods: ['GET', 'PUT', 'HEAD', 'POST', 'DELETE'], headers: ['*'] },
     exposeHeaders: ['ETag', 'Content-Length', 'Content-Type', 'x-amz-checksum-sha256', 'x-amz-meta-filename', 'x-amz-meta-content-type',
       'x-amz-meta-sealed'], maxAgeSeconds: 3600 }] });
-  // Transfer objects live an hour (bridge/transfer-store.mjs REUSE_MS); unfinished multipart uploads a day.
+  // Transfer objects live an hour (reused for 30 min, bridge/transfer-store.mjs); unfinished multipart uploads a day.
   await cf('PUT', `/r2/buckets/${flags.bucket}/lifecycle`, { rules: [{ id: 'transfers-1-hour', enabled: true, conditions: { prefix: 't/' },
     deleteObjectsTransition: { condition: { type: 'Age', maxAge: 3600 } },
     abortMultipartUploadsTransition: { condition: { type: 'Age', maxAge: 86400 } } }] });

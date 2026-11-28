@@ -1,7 +1,7 @@
 # Sealed media and large files
 
 Every file in the transfer area is sealed (`bridge/transfer-store.mjs`: 64 KiB records, nonce ‖ AES-GCM ‖ tag,
-AAD `key|index|last`). Videos, audio, PDFs and files over 256 MB are read by range and decrypted in the page.
+AAD `key|index|last`). All but images and Office files up to 256 MB are read by range and decrypted in the page.
 
 - **Responses** (`web/js/media/source.js`): no `Range` → 200 with the whole length; `a-`, `a-b`, `-n` → 206 with
   the whole range (never shortened: WebKitGTK takes the size from `Content-Length`); a dropped connection stops
@@ -14,9 +14,13 @@ AAD `key|index|last`). Videos, audio, PDFs and files over 256 MB are read by ran
   parallel 4–16 MiB reads). Each record is fetched once per file whichever player request wants it. The first
   and last 16 records stay in memory (probes, `moov`) plus an LRU of 128 MB (96 MB on iOS); whole decrypted
   16 MiB blocks go to the attachment cache (IndexedDB, `media:` entries, up to min(2 GB, quota / 4)), so
-  seeking back and reopening send no request. Downloads read one GET and drop it after 2 s without reads,
-  resuming from the record they reached. A short read resumes where it stopped (R2 resets a stalled GET
-  after ~120 s, S3 after ~300 s).
+  seeking back and reopening send no request. Downloads go the same way; their state is dropped a minute
+  after the last request. GETs of a request that ends stop after a second unless another request claims
+  them, or at once when a seek leaves them behind. A short read resumes where it stopped (R2 resets a
+  stalled GET after ~120 s, S3 after ~300 s); an expired stored copy is uploaded again by the Bridge.
+- **Uploads** (`web/js/components/attachment.js`): up to 32 MB one PUT; larger 16 MiB multipart parts, three
+  in flight, a failed part retried after 0/1/3/5 s with a fresh URL, a failed upload aborted (≈ 66 writes per
+  GB). A stack whose CORS predates multipart gets one PUT.
 - **Channels** (`web/js/media/serve.js`): Tauri shells answer `http://127.0.0.1|localhost:<port>/m/<token>` on a
   `preview_proxy` listener (Host-checked, unguessable token); the page parses the request and writes the
   response with the raw `media_write` invoke (256 KiB, 3 in flight, reordered by `x-seq` in Rust). Android's

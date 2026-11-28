@@ -22,7 +22,7 @@ const files = new Map(); // token → entry
 // again (the Bridge uploads it once more) when its stored copy is gone.
 export function register(file, { download = false, refresh } = {}) {
   const token = crypto.randomUUID().replace(/-/g, '');
-  files.set(token, { file, download, refresh, cache: new Map(), bytes: 0, waits: new Map(), pending: new Set(),
+  files.set(token, { token, file, download, refresh, active: 0, cache: new Map(), bytes: 0, waits: new Map(), pending: new Set(),
     runs: new Set(), loaded: new Set(), saved: new Set(), reading: new Map(), poke: deferred() });
   if (files.size > 8) close(files.keys().next().value);
   return token;
@@ -31,6 +31,7 @@ export function register(file, { download = false, refresh } = {}) {
 function close(token) {
   const entry = files.get(token);
   if (!entry) return;
+  entry.closed = true;
   for (const run of entry.runs) run.abort.abort();
   poke(entry);
   files.delete(token);
@@ -187,7 +188,7 @@ async function record(entry, owner, index, limit) {
     for (const run of entry.runs) {
       if (run.owner.done && !waitIn(entry, run.at, run.b) && (run.b <= index || run.at >= index + AHEAD + BLOCK)) run.abort.abort();
     }
-    const end = Math.min(limit, BACKPRESSURE ? limit : (block + 1) * BLOCK);
+    const end = BACKPRESSURE ? limit : Math.min(limit, (block + 1) * BLOCK);
     let at = index;
     for (const size of START) { fetchRuns(entry, owner, at, Math.min(end, at + size)); at = Math.min(end, at + size); }
     fetchRuns(entry, owner, at, end);
@@ -200,13 +201,13 @@ async function record(entry, owner, index, limit) {
   return wait.promise;
 }
 
-// A stored copy that is gone is uploaded again once; requests that miss together share it.
+// A stored copy that is gone is uploaded again; requests that miss together share one upload.
 async function again(entry, error) {
   if (!error.missing || !entry.refresh) throw error;
   entry.file = await (entry.refreshing ??= entry.refresh().then((next) => {
     entry.cache.clear(); entry.bytes = 0; entry.loaded.clear(); entry.saved.clear();
     return next;
-  }));
+  }).finally(() => { entry.refreshing = null; }));
 }
 
 // A request that ends (the player closed it, or sought elsewhere) stops the GETs it started that
@@ -214,24 +215,28 @@ async function again(entry, error) {
 async function* read(entry, start, end, signal) {
   const limit = Math.ceil(end / RECORD);
   const owner = { at: Math.floor(start / RECORD), from: Math.floor(start / RECORD), runs: new Set() };
-  let refreshed = false;
+  let refreshed = false; // since the last record served
+  entry.active++;
   try {
-    for (let index = owner.at; index < limit && !signal?.aborted;) {
+    for (let index = owner.at; index < limit && !signal?.aborted && !entry.closed;) {
       let bytes;
       try {
         bytes = await record(entry, owner, index, limit);
       } catch (error) {
-        if (error.retry) continue;
+        if (error.retry && !entry.closed) continue;
         if (refreshed) throw error;
         refreshed = true;
         await again(entry, error);
         continue;
       }
+      refreshed = false;
       yield bytes.subarray(Math.max(0, start - index * RECORD), Math.min(bytes.length, end - index * RECORD));
       index++;
     }
   } finally {
     owner.done = true;
+    // A download's state goes a minute after its last request ends (a save may resume by range).
+    if (!--entry.active && entry.download) setTimeout(() => { if (!entry.active) close(entry.token); }, 60_000);
     // A seek closes the request just before the next one asks: give that one a second to claim them.
     setTimeout(() => {
       for (const run of owner.runs) if (!waitIn(entry, run.at, run.b)) run.abort.abort();

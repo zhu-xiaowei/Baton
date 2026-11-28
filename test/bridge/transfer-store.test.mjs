@@ -22,7 +22,7 @@ test('requests stay inside the account prefix and the credential lifetime', asyn
   await assert.rejects(presign(access, 'GET', 'a'.repeat(32), { now: new Date(now.getTime() + 600_000) }), /expired/);
 });
 
-test('stored content is reused only while it outlives the minutes its writer remembers it', async () => {
+test('stored content is reused only while it outlives the hours its writer remembers it (S3)', async () => {
   const contentHash = 'c'.repeat(64);
   const checksum = Buffer.from(contentHash, 'hex').toString('base64');
   const access = async () => ({ bucket: 'b', region: 'ap-northeast-1', accountId: '0123456789abcdef', accelerate: false,
@@ -30,8 +30,8 @@ test('stored content is reused only while it outlives the minutes its writer rem
   const prepare = (ageMs) => createTransferStore(access, async () => new Response(null, { status: 200, headers: {
     'content-length': '5', 'x-amz-checksum-sha256': checksum, 'last-modified': new Date(Date.now() - ageMs).toUTCString() } }))
     .prepareUpload({ name: 'a.txt', size: 5, contentHash });
-  assert.deepEqual(await prepare(29 * 60_000), { key: 'c'.repeat(32) + '.txt', exists: true, sealed: false, stored: 5 });
-  const old = await prepare(31 * 60_000);
+  assert.deepEqual(await prepare(21 * 3600_000), { key: 'c'.repeat(32) + '.txt', exists: true, sealed: false, stored: 5 });
+  const old = await prepare(22 * 3600_000);
   assert.equal(old.key, 'c'.repeat(32) + '.txt');
   assert.ok(old.url && !old.exists, 'an object near its expiry is written again under the same key');
 });
