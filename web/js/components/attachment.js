@@ -89,8 +89,21 @@ function put(url, body, headers, onProgress, signal) {
   });
 }
 
-// A large file goes up in parts, each sealed on its own. Two at once: one seals while the other
-// uploads, so the upload never waits between parts and at most two parts are in memory.
+// A failed part is sent again after 0, 1, 3 and 5 s, with a freshly signed URL each time.
+const RETRY_MS = [0, 1000, 3000, 5000];
+async function putPart(url, body, onProgress, signal) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await put(await url(), body, {}, onProgress, signal);
+    } catch (error) {
+      if (signal.aborted || attempt === RETRY_MS.length) throw error;
+      await new Promise(resolve => setTimeout(resolve, RETRY_MS[attempt]));
+    }
+  }
+}
+
+// A large file goes up in parts, each sealed on its own. Three at once: while some upload another
+// seals, so the upload never waits between parts and at most three parts are in memory.
 async function uploadParts(file, prepared, onProgress, signal) {
   const { parts } = prepared;
   const id = await parts.start();
@@ -101,14 +114,20 @@ async function uploadParts(file, prepared, onProgress, signal) {
   const lane = async () => {
     for (let n; (n = next++) < count;) {
       const body = new Blob([await prepared.seal(file.slice(n * parts.size, (n + 1) * parts.size), n * parts.records)]);
-      etags[n] = await put(await parts.url(id, n + 1), body, {}, loaded => {
+      etags[n] = await putPart(() => parts.url(id, n + 1), body, loaded => {
         sent[n] = loaded * body.size;
         onProgress(Math.round(100 * Math.min(1, sent.reduce((a, b) => a + b, 0) / file.size)));
       }, signal);
     }
   };
-  await Promise.all([lane(), lane()]);
-  await parts.complete(id, etags);
+  try {
+    await Promise.all([lane(), lane(), lane()]);
+    await parts.complete(id, etags);
+  } catch (error) {
+    next = count;
+    parts.abort(id);
+    throw error;
+  }
 }
 
 export async function uploadAttachment(file, prepared, onProgress, signal) {

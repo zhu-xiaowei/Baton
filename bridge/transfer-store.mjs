@@ -264,6 +264,8 @@ export function createTransferStore(access, fetchFn = (...args) => fetch(...args
       url: async (id, n) => presign(await access(), 'PUT', key, { query: { partNumber: String(n), uploadId: id } }),
       complete: (id, etags) => call('POST', { uploadId: id }, `<CompleteMultipartUpload>${etags
         .map((etag, i) => `<Part><PartNumber>${i + 1}</PartNumber><ETag>${etag}</ETag></Part>`).join('')}</CompleteMultipartUpload>`),
+      // Free on R2; where the credentials may not abort, the lifecycle rule clears it after a day.
+      abort: (id) => call('DELETE', { uploadId: id }).catch(() => {}),
     };
   }
 

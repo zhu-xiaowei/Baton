@@ -919,8 +919,17 @@ async function renderSource(absPath, text, truncated, lineHint, snippet) {
   });
 }
 
+// WebKitGTK's decoder can fail after a seek; loading again once at the same point recovers.
 function showVideoBody(src) {
   setBody('<video class="file-video" controls playsinline preload="metadata" src="' + src + '"></video>');
+  const video = document.querySelector('#fileOverlayBody .file-video');
+  video.addEventListener('error', () => {
+    if (video.error?.code !== MediaError.MEDIA_ERR_DECODE || video.dataset.reloaded) return;
+    video.dataset.reloaded = '1';
+    const at = video.currentTime;
+    video.addEventListener('loadedmetadata', () => { video.currentTime = at; video.play().catch(() => {}); }, { once: true });
+    video.load();
+  });
 }
 
 // A project video: the Bridge uploaded it whole; it plays by range from the stored copy.

@@ -167,7 +167,7 @@ async function zoneRule(phase, rule) {
 
 async function bucket() {
   if (!(await cf('GET', `/r2/buckets/${flags.bucket}`, undefined, { ok404: true }))) await cf('POST', '/r2/buckets', { name: flags.bucket });
-  await cf('PUT', `/r2/buckets/${flags.bucket}/cors`, { rules: [{ allowed: { origins: ['*'], methods: ['GET', 'PUT', 'HEAD', 'POST'], headers: ['*'] },
+  await cf('PUT', `/r2/buckets/${flags.bucket}/cors`, { rules: [{ allowed: { origins: ['*'], methods: ['GET', 'PUT', 'HEAD', 'POST', 'DELETE'], headers: ['*'] },
     exposeHeaders: ['ETag', 'Content-Length', 'Content-Type', 'x-amz-checksum-sha256', 'x-amz-meta-filename', 'x-amz-meta-content-type',
       'x-amz-meta-sealed'], maxAgeSeconds: 3600 }] });
   // Transfer objects live an hour (bridge/transfer-store.mjs REUSE_MS); unfinished multipart uploads a day.

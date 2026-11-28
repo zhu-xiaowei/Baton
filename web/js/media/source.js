@@ -150,7 +150,8 @@ function fetchRuns(entry, owner, first, stop) {
       const records = transfer.records(file.key, file.stored, a, { sealed: file.sealed, end: b, signal: run.abort.signal });
       try {
         while (run.at < run.b) {
-          while (run.at > owner.at + AHEAD && !waitIn(entry, run.at, run.b) && !run.abort.signal.aborted) await entry.poke.promise;
+          // Only a fetch with backpressure waits for its reader; elsewhere the whole response is already here.
+          while (BACKPRESSURE && run.at > owner.at + AHEAD && !waitIn(entry, run.at, run.b) && !run.abort.signal.aborted) await entry.poke.promise;
           if (run.abort.signal.aborted) throw Object.assign(new Error('Read stopped'), { retry: true });
           const next = await records.next();
           if (next.done) break;
