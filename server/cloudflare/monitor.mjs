@@ -301,15 +301,6 @@ export class MonitorStore extends DurableObject {
         `It relays again next month; meanwhile mainland clients use the API host directly.`);
     }
     // Devices seen since the last run (overlapping; up to AE's 90 days the first time) join the all-time list.
-    // A one-off reset (secret DEVICES_RESET = {"from": <ms>, "keep": [[id, role, acct], …]}): applied once (`from`
-    // marks it), the list becomes exactly `keep`, and points before `from` are not read again.
-    let reset = null;
-    try { reset = JSON.parse(env.DEVICES_RESET || 'null'); } catch {}
-    if (reset?.from && reset.from !== state.devicesFrom && reset.keep?.length) {
-      this.sql.exec('DELETE FROM devices');
-      for (const [id, role, acct] of reset.keep) this.sql.exec('INSERT OR IGNORE INTO devices VALUES (?, ?, ?, ?)', id, role, now, acct);
-      Object.assign(state, { devicesFrom: reset.from, devicesAt: Math.max(state.devicesAt ?? 0, reset.from) });
-    }
     if (env.DATASET && env.ANALYTICS_TOKEN) {
       const minutes = Math.min(90 * 1440, Math.ceil((now - (state.devicesAt ?? 0)) / MIN) + 15);
       try {
@@ -368,8 +359,8 @@ export class MonitorStore extends DurableObject {
   async purge(name) {
     if (!/^[0-9a-f]{16}$/.test(name) || name === this.env.PROBE_ACCOUNT) return false;
     await this.env.ACCOUNT.get(this.env.ACCOUNT.idFromName(name)).purge(name);
+    const hash = await hashOf(name); // before reading state: no await between its read and write
     const state = (await this.ctx.storage.get('state')) ?? {};
-    const hash = await hashOf(name);
     state.purged = { ...state.purged, [name]: { hash, at: Date.now() } };
     delete state.blocked?.[name]; // unblocking it later would write into the emptied object
     delete state.lifted?.[name];

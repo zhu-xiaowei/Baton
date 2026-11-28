@@ -175,7 +175,7 @@ export class AccountObject extends DurableObject {
   }
 
   // The monitor's operator purge (a test account, through its binding like monthlyLimit): sockets close, every row goes,
-  // with the recovery index row kept in the index objects. Every socket is marked closing before any closes, so their
+  // and so does its recovery row in the index objects (JOIN#). Every socket is marked closing before any closes, so their
   // close handlers (leave) write nothing back.
   async purge(account) {
     const table = createTable(this.env, { kind: 'account', name: account, call: this.store });
