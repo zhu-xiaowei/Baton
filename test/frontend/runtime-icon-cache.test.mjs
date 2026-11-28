@@ -105,7 +105,9 @@ test('restoring a saved home snapshot replaces old icon URLs before attaching it
     assert.equal(dom.window.__homePreviewRestored, true);
     const images = dom.window.document.querySelectorAll('#content .runtime-icon');
     assert.equal(images[0].src, 'data:image/svg+xml,' + encodeURIComponent(assets.claude));
-    assert.equal(images[1].src, 'data:image/svg+xml,' + encodeURIComponent(assets.codex));
+    assert.equal(images[1].tagName, 'svg');
+    assert.equal(images[1].getAttribute('fill'), 'currentColor');
+    assert.doesNotMatch(images[1].outerHTML, /#BABBBC/);
   } finally { dom.window.close(); }
 });
 
