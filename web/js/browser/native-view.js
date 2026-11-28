@@ -39,8 +39,8 @@ export function createNativePreview({ root, area, onState, onError }) {
     const offsetLeft = viewport?.offsetLeft || 0;
     const offsetTop = viewport?.offsetTop || 0;
     // Native views cover all web content: start below the in-app banners.
-    const stack = document.querySelector('.inapp-stack'), last = stack?.lastElementChild;
-    const banner = last ? stack.getBoundingClientRect().top + last.offsetTop + last.offsetHeight - stack.scrollTop - offsetTop : 0;
+    const stack = document.querySelector('.inapp-stack'), last = stack?.lastElementChild, box = stack?.getBoundingClientRect();
+    const banner = last ? Math.min(box.top + last.offsetTop + last.offsetHeight, box.bottom) - offsetTop : 0;
     const top = Math.max(0, rect.top - offsetTop, banner);
     const bounds = {
       left: rect.left - offsetLeft, top,
