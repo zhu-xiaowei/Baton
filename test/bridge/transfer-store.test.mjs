@@ -46,7 +46,7 @@ test('a sealed stream reads back by record and stores nothing when its source fa
   const sealed = Buffer.concat(parts);
   const store = createTransferStore(async () => ({ bucket: 'b', region: 'r', accountId: 'a', credentials: { accessKeyId: 'A', secretAccessKey: 'S', expiresAt: Date.now() / 1000 + 600 } }),
     async (url, { headers }) => { const [, a, b] = /(\d+)-(\d+)/.exec(headers.Range); return new Response(sealed.subarray(+a, +b + 1), { status: 206 }); });
-  const read = []; for await (const record of store.records(key, sealed.length, 1, { segments: [1, 2] })) read.push(record);
+  const read = []; for await (const record of store.records(key, sealed.length, 1)) read.push(record);
   assert.deepEqual(Buffer.concat(read), Buffer.from(plain.subarray(RECORD)));
   const failing = (async function* () { yield plain; throw new Error('changed'); })();
   const out = []; await assert.rejects(async () => { for await (const record of sealStream(keys, key, plain.length, failing)) out.push(record); });

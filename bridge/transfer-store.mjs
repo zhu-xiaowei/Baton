@@ -276,51 +276,31 @@ export function createTransferStore(access, fetchFn = (...args) => fetch(...args
   return {
     head,
 
-    // Plain records of `key` (`stored` bytes) from record `first`, opened when sealed. `segments` lists
-    // record counts per GET (the last repeats; none: one GET to the end); the next segment is requested
-    // when the current one is, so one is always on its way. Reads stop at record `end`. A short read
-    // resumes where it stopped.
-    async *records(key, stored, first = 0, { sealed = true, segments = [], signal, end } = {}) {
+    // Plain records of `key` (`stored` bytes) from record `first` up to record `end`, opened when sealed,
+    // in one GET; a short read resumes where it stopped.
+    async *records(key, stored, first = 0, { sealed = true, signal, end } = {}) {
       const unit = sealed ? SEALED_RECORD : RECORD;
       const count = Math.max(1, Math.ceil(stored / unit));
       const limit = Math.min(count, end ?? count);
       const keys = sealed ? await fileKeys() : null;
       if (sealed && !keys) throw new Error('File storage key is unavailable');
-      let segment = 0;
-      const get = (at) => {
-        const stop = Math.min(limit, at + (segments.length ? segments[Math.min(segment++, segments.length - 1)] : count));
-        const response = (async () => {
+      for (let at = first, tries = 0; at < limit;) {
+        const begin = at;
+        try {
           const reply = await fetchFn(await presign(await access(), 'GET', key), { signal, cache: 'no-store',
-            headers: { Range: `bytes=${at * unit}-${Math.min(stored, stop * unit) - 1}` } });
+            headers: { Range: `bytes=${at * unit}-${Math.min(stored, limit * unit) - 1}` } });
           if (reply.status === 404 || reply.status === 403) throw Object.assign(new Error('File not found'), { missing: true });
           if (reply.status !== 206) { await reply.body?.cancel(); throw new Error(`Storage read failed (${reply.status})`); }
-          return reply;
-        })();
-        response.catch(() => {});
-        return { at, stop, response };
-      };
-      const drop = (part) => part?.response.then((reply) => reply.body.cancel(), () => {});
-      let next = null;
-      try {
-        for (let at = first, tries = 0; at < limit;) {
-          const part = next?.at === at ? next : get(at);
-          if (next !== part) drop(next);
-          next = segments.length && part.stop < limit ? get(part.stop) : null;
-          const begin = at;
-          try {
-            for await (const record of split(chunksOf((await part.response).body), unit)) {
-              if (record.length !== (at === count - 1 ? stored - at * unit : unit)) break; // cut short: read again
-              yield keys ? await openRecords(keys, key, record, at, count) : record.slice();
-              if (++at === part.stop) break;
-            }
-          } catch (error) {
-            if (error.missing || signal?.aborted) throw error;
+          for await (const record of split(chunksOf(reply.body), unit)) {
+            if (record.length !== (at === count - 1 ? stored - at * unit : unit)) break; // cut short: read again
+            yield keys ? await openRecords(keys, key, record, at, count) : record.slice();
+            if (++at === limit) break;
           }
-          if (at === begin && ++tries > 2) throw new Error('Storage read failed');
-          if (at > begin) tries = 0;
+        } catch (error) {
+          if (error.missing || signal?.aborted) throw error;
         }
-      } finally {
-        drop(next);
+        if (at === begin && ++tries > 2) throw new Error('Storage read failed');
+        if (at > begin) tries = 0;
       }
     },
 
