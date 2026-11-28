@@ -806,9 +806,8 @@ async function showAttachment(key, again) {
     } else if (/^(video|audio)\//.test(file.previewType)) {
       const src = escapeAttachment(await mediaUrl(file));
       if (token !== _fileRequestToken) return;
-      preview = file.previewType.startsWith('video/')
-        ? '<video class="file-video" controls playsinline preload="metadata" src="' + src + '"></video>'
-        : '<audio controls preload="metadata" src="' + src + '"></audio>';
+      if (file.previewType.startsWith('video/')) return showVideoBody(src);
+      preview = '<audio controls preload="metadata" src="' + src + '"></audio>';
     }
     setBody(preview);
   } catch (error) {
@@ -920,6 +919,16 @@ async function renderSource(absPath, text, truncated, lineHint, snippet) {
   });
 }
 
+// The player shows nothing while it waits for data (seeking, the next segment), so a spinner does.
+function showVideoBody(src) {
+  setBody('<div class="file-video-host"><video class="file-video" controls playsinline preload="metadata" src="' + src
+    + '"></video><div class="file-video-wait" hidden>' + loadingSpinner({ label: 'Loading video' }) + '</div></div>');
+  const video = document.querySelector('#fileOverlayBody .file-video');
+  const wait = video.nextElementSibling;
+  ['waiting', 'seeking'].forEach(name => video.addEventListener(name, () => { wait.hidden = false; }));
+  ['playing', 'canplay', 'error'].forEach(name => video.addEventListener(name, () => { wait.hidden = true; }));
+}
+
 // A project video: the Bridge uploaded it whole; it plays by range from the stored copy.
 async function showVideo(msg, token) {
   const file = { key: msg.key, name: msg.name, size: msg.size, stored: msg.stored ?? msg.size, sealed: !!msg.sealed, previewType: previewType(msg.key) };
@@ -927,7 +936,7 @@ async function showVideo(msg, token) {
     const url = await mediaUrl(file, { refresh: () => requestProjectFiles('read', { ...fileContext(), path: msg.path })
       .then(next => ({ ...file, key: next.key, stored: next.stored ?? next.size, sealed: !!next.sealed })) });
     if (token !== _fileRequestToken) return;
-    setBody('<video class="file-video" controls playsinline preload="metadata" src="' + esc(url) + '"></video>');
+    showVideoBody(esc(url));
   } catch (error) {
     if (token === _fileRequestToken) setBody('<div class="file-error">' + esc(error.message || 'Failed to load video.') + '</div>');
   }

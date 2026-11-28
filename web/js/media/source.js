@@ -6,7 +6,7 @@ import { RECORD, transfer } from '../../../bridge/transfer-store.mjs';
 const agent = globalThis.navigator?.userAgent || '';
 const IOS = /iPhone|iPad|iPod/.test(agent) || (globalThis.navigator?.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 const BACKPRESSURE = !IOS && Number(/Chrome\/(\d+)/.exec(agent)?.[1]) >= 126;
-const SEGMENTS = [16, 64, 256]; // records: 1, 4, then 16 MiB per GET
+const SEGMENTS = [16, 32, 64, 128, 256]; // records: 1, 2, 4, 8, then 16 MiB per GET
 const CACHE_BYTES = (IOS ? 48 : 32) * 1024 * 1024;
 const RESIDENT = 16; // records kept at each end (probes, moov)
 const STALL_MS = 2000;
@@ -82,7 +82,7 @@ async function* read(entry, start, end, signal) {
         const { file } = entry;
         if (source?.at !== index) {
           close();
-          source = { records: transfer.records(file.key, file.stored, index, { sealed: file.sealed, segments, signal }), at: index };
+          source = { records: transfer.records(file.key, file.stored, index, { sealed: file.sealed, segments, signal, end: Math.ceil(end / RECORD) }), at: index };
         }
         try {
           const next = await source.records.next();

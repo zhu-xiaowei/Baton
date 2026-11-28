@@ -278,15 +278,17 @@ export function createTransferStore(access, fetchFn = (...args) => fetch(...args
 
     // Plain records of `key` (`stored` bytes) from record `first`, opened when sealed. `segments` lists
     // record counts per GET (the last repeats; none: one GET to the end); the next segment is requested
-    // halfway through the current one. A short read resumes where it stopped.
-    async *records(key, stored, first = 0, { sealed = true, segments = [], signal } = {}) {
+    // when the current one is, so one is always on its way. Reads stop at record `end`. A short read
+    // resumes where it stopped.
+    async *records(key, stored, first = 0, { sealed = true, segments = [], signal, end } = {}) {
       const unit = sealed ? SEALED_RECORD : RECORD;
       const count = Math.max(1, Math.ceil(stored / unit));
+      const limit = Math.min(count, end ?? count);
       const keys = sealed ? await fileKeys() : null;
       if (sealed && !keys) throw new Error('File storage key is unavailable');
       let segment = 0;
       const get = (at) => {
-        const stop = Math.min(count, at + (segments.length ? segments[Math.min(segment++, segments.length - 1)] : count));
+        const stop = Math.min(limit, at + (segments.length ? segments[Math.min(segment++, segments.length - 1)] : count));
         const response = (async () => {
           const reply = await fetchFn(await presign(await access(), 'GET', key), { signal, cache: 'no-store',
             headers: { Range: `bytes=${at * unit}-${Math.min(stored, stop * unit) - 1}` } });
@@ -300,15 +302,14 @@ export function createTransferStore(access, fetchFn = (...args) => fetch(...args
       const drop = (part) => part?.response.then((reply) => reply.body.cancel(), () => {});
       let next = null;
       try {
-        for (let at = first, tries = 0; at < count;) {
+        for (let at = first, tries = 0; at < limit;) {
           const part = next?.at === at ? next : get(at);
           if (next !== part) drop(next);
-          next = null;
+          next = segments.length && part.stop < limit ? get(part.stop) : null;
           const begin = at;
           try {
             for await (const record of split(chunksOf((await part.response).body), unit)) {
               if (record.length !== (at === count - 1 ? stored - at * unit : unit)) break; // cut short: read again
-              if (segments.length && !next && part.stop < count && (at - begin) * 2 >= part.stop - begin) next = get(part.stop);
               yield keys ? await openRecords(keys, key, record, at, count) : record.slice();
               if (++at === part.stop) break;
             }
