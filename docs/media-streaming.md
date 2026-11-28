@@ -9,9 +9,12 @@ AAD `key|index|last`). Videos, audio, PDFs and files over 256 MB are read by ran
   the whole decrypted file in `/var/tmp`).
 - **Reads**: Chromium ≥ 126 pauses a fetch the page stops reading, so it opens one GET per player request
   (1–5 GETs per GB played). WebKit (Safari, WKWebView, WebKitGTK) and Android WebView < 126 download a whole
-  response into memory regardless, so playback reads closed ranges of 1, 4, then 16 MiB, the next one requested
-  halfway through the current one (`cache: 'no-store'`). The first and last 16 records stay cached (probes,
-  `moov`), plus an LRU of 32 MB (48 MB on iOS). Downloads read one GET and drop it after 2 s without reads,
+  response into memory regardless, so playback reads closed ranges (`cache: 'no-store'`): after an open or a
+  seek 1, 4, 4 and 8 MiB at once, then 16 MiB blocks with two ahead (≈ 64 GETs per GB, like Proton/MEGA's
+  parallel 4–16 MiB reads). Each record is fetched once per file whichever player request wants it. The first
+  and last 16 records stay in memory (probes, `moov`) plus an LRU of 128 MB (96 MB on iOS); whole decrypted
+  16 MiB blocks go to the attachment cache (IndexedDB, `media:` entries, up to min(2 GB, quota / 4)), so
+  seeking back and reopening send no request. Downloads read one GET and drop it after 2 s without reads,
   resuming from the record they reached. A short read resumes where it stopped (R2 resets a stalled GET
   after ~120 s, S3 after ~300 s).
 - **Channels** (`web/js/media/serve.js`): Tauri shells answer `http://127.0.0.1|localhost:<port>/m/<token>` on a
