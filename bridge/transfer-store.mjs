@@ -6,13 +6,15 @@
 const encoder = new TextEncoder();
 const KEY = /^(?:b\/)?[0-9a-f]{8,64}(?:\.[a-z0-9]{1,16})?$/;
 const MAX_EXPIRES = 3600;
-// Objects expire 1 day after they were written on Cloudflare. One older than REUSE_MS is written again,
-// and a key is remembered for REMEMBER_MS (`transferKeys`), so a key handed out still has 2 h for
-// the App to read it (videos and PDFs keep reading ranges while open).
+// On Cloudflare t/ objects expire after 1 day and b/ (files over 8 MB) after 1 hour, checked about hourly.
+// One older than its reuse window is written again, and a key is remembered for REMEMBER_MS
+// (`transferKeys`), so a key handed out still has ≥ 15 min for the App to read it (ranges while open).
 const REUSE_MS = 21.5 * 3600_000;
-const REMEMBER_MS = 30 * 60_000;
-export const reusable = (object) => !!object && Date.now() - object.modified < REUSE_MS;
-// Files over 8 MB live under t/<accountId>/b/, so they can get a shorter lifecycle rule of their own.
+const BIG_REUSE_MS = 30 * 60_000;
+const REMEMBER_MS = 15 * 60_000;
+export const reusable = (object, key = '') => !!object
+  && Date.now() - object.modified < (key.startsWith('b/') ? BIG_REUSE_MS : REUSE_MS);
+// A key `b/<name>` is stored at b/<accountId>/<name>, which has its own lifecycle rule.
 const BIG_BYTES = 8 * 1024 * 1024;
 export const objectKey = (key, size) => (size > BIG_BYTES ? 'b/' + key : key);
 // A single PUT holds at most 5 GiB; the sealing overhead stays below it.
@@ -209,7 +211,7 @@ export async function signHeaders({ method, url, region, service, credentials, h
   return { ...added, authorization: `AWS4-HMAC-SHA256 Credential=${credentials.accessKeyId}/${scope}, SignedHeaders=${names.join(';')}, Signature=${signature}` };
 }
 
-// A URL for `t/<accountId>/<key>`. `access` is { bucket, region, accountId, accelerate, endpoint?,
+// A URL for `t/<accountId>/<key>` (or `b/<accountId>/<name>`). `access` is { bucket, region, accountId, accelerate, endpoint?,
 // credentials: { accessKeyId, secretAccessKey, sessionToken, expiresAt } }. With `endpoint` (R2) the
 // bucket goes in the path.
 export async function presign(access, method, key, { headers = {}, query = {}, accelerate = false, now = new Date() } = {}) {
@@ -217,7 +219,8 @@ export async function presign(access, method, key, { headers = {}, query = {}, a
   const { bucket, region, accountId, credentials, endpoint } = access;
   const expires = Math.min(MAX_EXPIRES, Math.floor(credentials.expiresAt - now.getTime() / 1000) - 5);
   if (expires < 1) throw new Error('Storage credentials expired');
-  const path = `/t/${rfc3986(accountId)}/${key.split('/').map(rfc3986).join('/')}`;
+  const [top, name] = key.startsWith('b/') ? ['b', key.slice(2)] : ['t', key];
+  const path = `/${top}/${rfc3986(accountId)}/${rfc3986(name)}`;
   return signUrl({
     method, region, credentials, expires, headers, query, now,
     ...(endpoint ? { host: new URL(endpoint).host, path: `/${rfc3986(bucket)}${path}` }
@@ -341,7 +344,7 @@ export function createTransferStore(access, fetchFn = (...args) => fetch(...args
         const key = objectKey(await this.keyFor(/^[0-9a-f]{64}$/.test(contentHash) ? contentHash : crypto.randomUUID(), ext), size);
         const stored = sealedSize(size);
         const existing = contentHash ? await head(key) : null;
-        if (existing?.sealed && existing.size === stored && reusable(existing)) return { key, exists: true, sealed: true, stored };
+        if (existing?.sealed && existing.size === stored && reusable(existing, key)) return { key, exists: true, sealed: true, stored };
         const headers = { 'Content-Type': 'application/octet-stream', 'x-amz-meta-content-type': rfc3986(contentType), 'x-amz-meta-sealed': '1' };
         const storage = await access();
         const url = await presign(storage, 'PUT', key, { headers });
@@ -357,7 +360,7 @@ export function createTransferStore(access, fetchFn = (...args) => fetch(...args
         const hashed = objectKey(contentHash.slice(0, 32) + ext, size);
         const existing = await head(hashed);
         const same = existing?.checksum === checksum && existing.size === size;
-        if (same && reusable(existing)) return { key: hashed, exists: true, sealed: false, stored: size };
+        if (same && reusable(existing, hashed)) return { key: hashed, exists: true, sealed: false, stored: size };
         if (!existing || same) key = hashed;
       }
       const headers = {

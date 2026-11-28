@@ -39,7 +39,7 @@ export function sessionPolicy(accountId, roleArn, region) {
   const storage = storageInfo(accountId);
   if (storage) {
     policy.Statement.push({ Effect: 'Allow', Action: ['s3:GetObject', 's3:PutObject'],
-      Resource: `arn:${roleArn.split(':')[1]}:s3:::${storage.bucket}/t/${accountId}/*` });
+      Resource: ['t', 'b'].map((top) => `arn:${roleArn.split(':')[1]}:s3:::${storage.bucket}/${top}/${accountId}/*`) });
   }
   return policy;
 }
