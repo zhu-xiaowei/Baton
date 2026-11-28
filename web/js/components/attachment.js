@@ -89,16 +89,25 @@ function put(url, body, headers, onProgress, signal) {
   });
 }
 
-// A large file goes up in parts, each sealed on its own, so only one part is in memory.
+// A large file goes up in parts, each sealed on its own. Two at once: one seals while the other
+// uploads, so the upload never waits between parts and at most two parts are in memory.
 async function uploadParts(file, prepared, onProgress, signal) {
   const { parts } = prepared;
   const id = await parts.start();
+  const count = Math.max(1, Math.ceil(file.size / parts.size));
   const etags = [];
-  for (let n = 0; n * parts.size < file.size || n === 0; n++) {
-    const body = new Blob([await prepared.seal(file.slice(n * parts.size, (n + 1) * parts.size), n * parts.records)]);
-    etags.push(await put(await parts.url(id, n + 1), body, {}, loaded =>
-      onProgress(Math.round(100 * Math.min(1, (n * parts.size + loaded * body.size) / file.size))), signal));
-  }
+  const sent = new Array(count).fill(0);
+  let next = 0;
+  const lane = async () => {
+    for (let n; (n = next++) < count;) {
+      const body = new Blob([await prepared.seal(file.slice(n * parts.size, (n + 1) * parts.size), n * parts.records)]);
+      etags[n] = await put(await parts.url(id, n + 1), body, {}, loaded => {
+        sent[n] = loaded * body.size;
+        onProgress(Math.round(100 * Math.min(1, sent.reduce((a, b) => a + b, 0) / file.size)));
+      }, signal);
+    }
+  };
+  await Promise.all([lane(), lane()]);
   await parts.complete(id, etags);
 }
 
