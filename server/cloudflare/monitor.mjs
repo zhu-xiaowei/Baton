@@ -301,8 +301,8 @@ export class MonitorStore extends DurableObject {
         `It relays again next month; meanwhile mainland clients use the API host directly.`);
     }
     // Devices seen since the last run (overlapping; up to AE's 90 days the first time) join the all-time list.
-    // A one-off reset (secret DEVICES_RESET = {"from": <ms>, "keep": [[id, role, acct], …]}): applied once, the list
-    // becomes exactly `keep`, and points before `from` are never read again.
+    // A one-off reset (secret DEVICES_RESET = {"from": <ms>, "keep": [[id, role, acct], …]}): applied once (`from`
+    // marks it), the list becomes exactly `keep`, and points before `from` are not read again.
     let reset = null;
     try { reset = JSON.parse(env.DEVICES_RESET || 'null'); } catch {}
     if (reset?.from && reset.from !== state.devicesFrom && reset.keep?.length) {
@@ -311,7 +311,7 @@ export class MonitorStore extends DurableObject {
       Object.assign(state, { devicesFrom: reset.from, devicesAt: Math.max(state.devicesAt ?? 0, reset.from) });
     }
     if (env.DATASET && env.ANALYTICS_TOKEN) {
-      const minutes = Math.min(90 * 1440, Math.ceil((now - Math.max(state.devicesAt ?? 0, state.devicesFrom ?? 0)) / MIN) + 15);
+      const minutes = Math.min(90 * 1440, Math.ceil((now - (state.devicesAt ?? 0)) / MIN) + 15);
       try {
         for (const r of await ae(env, `SELECT blob8 AS id, blob1 AS role, blob2 AS acct FROM ${env.DATASET} WHERE timestamp > NOW() - INTERVAL '${minutes}' MINUTE`
           + ` AND blob1 IN ('app', 'bridge') AND blob8 != '' AND blob2 NOT IN (${skipped(env, state)}) GROUP BY id, role, acct`)) {
