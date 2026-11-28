@@ -222,9 +222,9 @@ function render(d) {
   h.push('<div class="kpis">',
     kpi('服务状态', healthy ? '正常' : '异常', healthy ? `${probes.map((p) => p.ms).join(' / ')} ms` : `<span style="white-space:normal">${esc(problems.join('、') || '无快照')}</span>`, healthy ? 'ok' : 'bad'),
     kpi('当前在线', n(online.awake), `账户 ${n(online.awake)} · 连接 ${n(online.sockets)}`),
-    `<div class="card"><div class="big">${n(dau)}</div><div class="label">今日日活</div><div class="sub">${u.error ? '— 数据不足' : `较昨日 ${dau - before >= 0 ? '+' : ''}${dau - before}`}</div>`
+    `<div class="card"><div class="big">${n(dau)}</div><div class="label">今日日活 <span title="较昨日" style="color:var(--muted)">${u.error ? '—' : `${dau - before >= 0 ? '+' : ''}${dau - before}`}</span></div>`
       + kv('今日 App', n(u.devices?.app ?? 0)) + kv('今日 Bridge', n(u.devices?.bridge ?? 0))
-      + kv('累计设备', n((d.devices?.app ?? 0) + (d.devices?.bridge ?? 0))) + '</div>',
+      + kv('累计 App', n(d.devices?.app ?? 0)) + kv('累计 Bridge', n(d.devices?.bridge ?? 0)) + '</div>',
     `<div class="card"><div class="big">${usd(paid ? c.bill : c.usage)}</div><div class="label">本月费用</div><div class="sub">月底预计 ${usd(paid ? c.projectedBill : c.projectedUsage)}</div>`
       + (quotas[0] ? `<div class="sub flex"><span style="white-space:normal">${paid ? '最接近免费包含量的项目' : '最接近上限的额度'}</span>${info(paid
         ? '付费版每月包含用量中，用量占比最高的一项；超出部分按量计费' : '免费套餐各项额度中（多数按天计），用量占比最高的一项')}</div>`

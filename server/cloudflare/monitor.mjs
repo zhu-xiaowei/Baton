@@ -147,7 +147,8 @@ async function usage(env, now) {
   const quotas = Object.fromEntries(Object.entries(PLANS[plan]).map(([k, limit]) => [k, [used[k] ?? 0, limit]]));
   const names = (rows) => new Set(rows.map((r) => r.dimensions.name).filter((n) => n !== env.PROBE_ACCOUNT));
   // Analytics cannot tell an App's socket from a Bridge's: accounts with any activity, and all open sockets.
-  const online = { awake: names(v.awake).size, sockets: sum(v.sockets, (r) => r.max.activeWebsocketConnections) };
+  const online = { awake: names(v.awake).size,
+    sockets: sum(v.sockets.filter((r) => r.dimensions.name !== env.PROBE_ACCOUNT), (r) => r.max.activeWebsocketConnections) };
   const errors = { requests: sum(v.errors, (r) => r.sum.requests), errors: sum(v.errors, (r) => r.sum.errors) };
   return { accounts, totals, cost, plan, quotas, online, errors, storage: { sqlBytes, r2Bytes: r2Bytes(mine(buckets)), r2Objects: sum(mine(buckets), (r) => r.max.objectCount) } };
 }
@@ -299,8 +300,15 @@ export class MonitorStore extends DurableObject {
         `It relays again next month; meanwhile mainland clients use the API host directly.`);
     }
     // Devices seen since the last run (overlapping; up to AE's 90 days the first time) join the all-time list.
+    // A one-off reset (secret DEVICES_RESET = {"from": <ms>, "keep": [ids]}): applied once; rebuilds start at `from`.
+    let reset = null;
+    try { reset = JSON.parse(env.DEVICES_RESET || 'null'); } catch {}
+    if (reset?.from && reset.from !== state.devicesFrom && reset.keep?.length) {
+      this.sql.exec(`DELETE FROM devices WHERE id NOT IN (${reset.keep.map(() => '?').join(', ')})`, ...reset.keep);
+      Object.assign(state, { devicesFrom: reset.from, devicesAt: Math.max(state.devicesAt ?? 0, reset.from) });
+    }
     if (env.DATASET && env.ANALYTICS_TOKEN) {
-      const minutes = Math.min(90 * 1440, Math.ceil((now - (state.devicesAt ?? 0)) / MIN) + 15);
+      const minutes = Math.min(90 * 1440, Math.ceil((now - Math.max(state.devicesAt ?? 0, state.devicesFrom ?? 0)) / MIN) + 15);
       try {
         for (const r of await ae(env, `SELECT blob8 AS id, blob1 AS role FROM ${env.DATASET} WHERE timestamp > NOW() - INTERVAL '${minutes}' MINUTE`
           + ` AND blob1 IN ('app', 'bridge') AND blob8 != '' AND blob2 NOT IN (${skipped(env, state)}) GROUP BY id, role`)) {
