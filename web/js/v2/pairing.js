@@ -109,5 +109,5 @@ export async function viaComputer(method, params = {}) {
 // phrase is replaced by one of its computers.
 export async function removeDevice(path, body) {
   await post(state.SERVER, path, body, state.KEY);
-  await devices();
+  return devices();
 }

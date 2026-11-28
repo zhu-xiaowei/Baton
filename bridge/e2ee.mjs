@@ -161,7 +161,7 @@ export const fingerprint = async (k) => hex(await bits(k, 'fp', 64));
 
 // Recovery (design §8): the phrase is a separate key R, replaced when a device leaves; K never changes.
 // The server keeps K sealed under R (recover) and R sealed under K (any member shows the phrase).
-export const joinSecretOf = async (rawR) => b64url(await bits(await importAccountKey(rawR), 'join'));
+export const joinSecretOf = async (rawR) => b64url(await bits(await importAccountKey(rawR), 'recovery-join')); // not 'join': older Apps took the phrase for K
 export async function recoveryOf(rawR, rawK) {
   const [r, k] = await Promise.all([importAccountKey(rawR), importAccountKey(rawK)]);
   const id = hex(await bits(k, 'account', 64));

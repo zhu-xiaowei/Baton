@@ -220,9 +220,10 @@ export function createAccounts({ env, table, auth, devices, sockets, log, place 
   // A new R from a computer (it holds K raw; an App's K is not extractable) after a device left; the first one wins.
   async function setRecovery({ body, auth: caller }) {
     need(body, 'joinSecret', 'keySealed', 'phraseSealed');
-    if (caller.kind !== 'bridge' || !isHosted(await meta(caller.accountId))) throw new HTTPError(403, 'Only a computer of a paired account renews recovery.');
+    const current = await meta(caller.accountId);
+    if (caller.kind !== 'bridge' || !isHosted(current)) throw new HTTPError(403, 'Only a computer of a paired account renews recovery.');
     const join = await sha256(body.joinSecret);
-    const old = (await meta(caller.accountId)).joinSecretHash; // an account from before R: its phrase was K
+    const old = current.joinSecretHash; // an account from before R: its phrase was K
     if (await conditional(() => table.updateItem({ Key: { pk: `ACCOUNT#${caller.accountId}`, sk: 'META' },
       UpdateExpression: 'SET hosted = :yes, joinSecretHash = :join, keySealed = :key, phraseSealed = :phrase', ConditionExpression: 'attribute_not_exists(phraseSealed)',
       ExpressionAttributeValues: { ':yes': true, ':join': join, ':key': body.keySealed, ':phrase': body.phraseSealed } })) === false) return { ok: false };
@@ -312,16 +313,13 @@ export function createAccounts({ env, table, auth, devices, sockets, log, place 
     if (caller.kind === 'bridge') throw new HTTPError(403, 'Remove devices from an App.');
     const account = caller.accountId;
     await drop(account, digests, notice);
-    if (!isHosted(await meta(account))) return;
-    for (let attempt = 0; attempt < 3; attempt++) {
-      const { joinSecretHash } = await meta(account);
-      if (!joinSecretHash || await conditional(() => table.updateItem({ Key: { pk: `ACCOUNT#${account}`, sk: 'META' },
-        UpdateExpression: 'SET hosted = :yes REMOVE joinSecretHash, keySealed, phraseSealed', ConditionExpression: 'joinSecretHash = :join',
-        ExpressionAttributeValues: { ':join': joinSecretHash, ':yes': true } }))) {
-        if (joinSecretHash) await table.deleteItem({ Key: { pk: `JOIN#${joinSecretHash}`, sk: '-' } });
-        break;
-      }
-    }
+    const current = await meta(account);
+    if (!isHosted(current)) return;
+    // Unconditional: an R set meanwhile is voided too (computers make another), and a JOIN# row left behind
+    // without its META hash recovers nothing (recover compares both).
+    await table.updateItem({ Key: { pk: `ACCOUNT#${account}`, sk: 'META' }, UpdateExpression: 'SET hosted = :yes REMOVE joinSecretHash, keySealed, phraseSealed',
+      ExpressionAttributeValues: { ':yes': true } });
+    if (current.joinSecretHash) await table.deleteItem({ Key: { pk: `JOIN#${current.joinSecretHash}`, sk: '-' } });
     for (const item of await sockets.query(account, 'bridge')) {
       try {
         await sockets.post(env.WS_API_ENDPOINT ?? '', item.connectionId, { action: 'recovery_reset' });

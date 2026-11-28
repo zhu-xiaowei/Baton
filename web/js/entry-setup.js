@@ -136,8 +136,7 @@ setNativeTabTitle('Settings');
       'It is signed out at once and cannot reach your computers again; to use it again, add it with a new code.')) return;
     button.disabled = true;
     try {
-      await removeDevice('/api/tokens/revoke', { id: button.dataset.id });
-      listing = await devices();
+      listing = await removeDevice('/api/tokens/revoke', { id: button.dataset.id });
       renderApps();
     } catch (e) {
       button.disabled = false;
@@ -151,8 +150,7 @@ setNativeTabTitle('Settings');
       'They are signed out at once; your computers stay. To use one again, add it with a new code.')) return;
     button.disabled = true;
     try {
-      await removeDevice('/api/tokens/revoke', { ids: others.map(function (app) { return app.id; }).join(',') });
-      listing = await devices();
+      listing = await removeDevice('/api/tokens/revoke', { ids: others.map(function (app) { return app.id; }).join(',') });
       renderApps();
     } catch (e) {
       await failed('Could not remove them', e);
@@ -186,7 +184,7 @@ setNativeTabTitle('Settings');
     var run = phraseRun;
     try {
       var r = await recoveryKey();
-      if (!r) throw new Error('A device was just removed: turn on one of your computers to make the new phrase.');
+      if (!r) throw new Error('Turn on one of your computers, then try again: it makes the phrase.');
       var phrase = await toPhrase(r);
       if (run !== phraseRun) return;
       // Shown as it is pasted: words separated by spaces, no numbers.

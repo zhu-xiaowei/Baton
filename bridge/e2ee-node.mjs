@@ -116,7 +116,7 @@ export const fingerprint = (k) => hkdf(k, 'fp', 8).toString('hex');
 // Twins of e2ee.mjs recoveryOf / openRecovery: a computer makes a new R once a device has left.
 export function recoveryOf(r, k) {
   const id = hkdf(k, 'account', 8).toString('hex');
-  return { joinSecret: hkdf(r, 'join').toString('base64url'), keySealed: sealKey(hkdf(r, 'recover'), k, id), phraseSealed: sealKey(hkdf(k, 'phrase'), r, id) };
+  return { joinSecret: hkdf(r, 'recovery-join').toString('base64url'), keySealed: sealKey(hkdf(r, 'recover'), k, id), phraseSealed: sealKey(hkdf(k, 'phrase'), r, id) };
 }
 export const openRecovery = (r, sealed, accountId) => openKey(hkdf(r, 'recover'), sealed, accountId);
 
