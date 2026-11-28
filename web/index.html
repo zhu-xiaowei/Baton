@@ -51,6 +51,7 @@
   .runtime-mark{display:inline-flex;width:16px;height:16px;flex:0 0 16px;align-items:center;justify-content:center;vertical-align:middle}
   .runtime-icon{display:block;width:16px;height:16px;object-fit:contain}
   .runtime-mark-mono{position:relative}.runtime-mark-mono .runtime-icon{visibility:hidden}.runtime-mark-mono::before{content:"";position:absolute;left:50%;top:50%;width:16px;height:16px;background:var(--text-primary);transform:translate(-50%,-50%);-webkit-mask:var(--runtime-mask) center/contain no-repeat;mask:var(--runtime-mask) center/contain no-repeat;transition:background .15s}
+  .runtime-mark-svg{color:var(--text-primary)}
   @media(hover:hover) and (pointer:fine){#top-right>.runtime-mark-mono:hover::before,.runtime-switch:hover .runtime-mark-mono::before{background:var(--text-primary)}}
   html.native-mobile .top-bar{min-height:calc(var(--sat,env(safe-area-inset-top,0px)) + 44px);padding:var(--sat,env(safe-area-inset-top,0px)) 8px 0 12px;border-bottom:0;box-shadow:inset 0 -1px var(--border)}
   html.native-mobile .top-left{min-height:44px;gap:6px;font-size:17px;line-height:21px}
@@ -210,6 +211,13 @@
       : './assets/' + (runtimeIconTable[runtime] || runtimeIconTable.claude)[1];
   }
   window.__runtimeIconSource = runtimeIconSource;
+  // Mono marks are inlined once their SVG is cached: a CSS mask on a fresh node paints a frame late.
+  function runtimeIconSvg(runtime) {
+    var svg = runtimeIconTable[runtime] && runtimeIconTable[runtime][2] && runtimeIconCache[runtime];
+    return svg ? svg.replace(/(fill|stroke)="#[0-9a-f]{3,8}"/gi, '$1="currentColor"')
+      .replace(/^<svg\s/, '<svg class="runtime-icon" fill="currentColor" aria-hidden="true" focusable="false" ') : '';
+  }
+  window.__runtimeIconSvg = runtimeIconSvg;
   function markRuntime(image) {
     var mark = image.closest('.runtime-mark');
     return mark && runtimeIconTable[mark.dataset.runtime] ? mark.dataset.runtime : 'claude';
@@ -234,6 +242,8 @@
     var prefix = String(s.sessionId || '').split(':')[0];
     var runtime = runtimeIconTable[prefix] ? prefix : 'claude';
     var label = runtimeIconTable[runtime][0];
+    var svg = runtimeIconSvg(runtime);
+    if (svg) return '<span class="runtime-mark runtime-mark-svg" data-runtime="' + runtime + '" role="img" aria-label="' + label + '" title="' + label + '">' + svg + '</span>';
     var src = esc(new URL(runtimeIconSource(runtime), document.baseURI).href);
     return '<span class="runtime-mark' + (runtimeIconTable[runtime][2] ? ' runtime-mark-mono" style="--runtime-mask:url(&quot;' + src + '&quot;)' : '') + '" data-runtime="' + runtime + '" role="img" aria-label="' + label + '" title="' + label + '">'
       + '<img class="runtime-icon" width="16" height="16" decoding="sync" src="' + src + '" alt="" aria-hidden="true"></span>';
@@ -347,6 +357,12 @@
     preview.innerHTML = snapshot.contentHtml;
     preview.content.querySelectorAll('img.runtime-icon').forEach(function (image) {
       var runtime = markRuntime(image);
+      var svg = runtimeIconSvg(runtime);
+      if (svg) {
+        image.parentNode.classList.add('runtime-mark-svg');
+        image.outerHTML = svg;
+        return;
+      }
       image.src = runtimeIconSource(runtime);
       if (!runtimeIconTable[runtime][2]) return;
       image.parentNode.classList.add('runtime-mark-mono');

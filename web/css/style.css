@@ -172,6 +172,7 @@ body.browse-view #content { overflow-y: scroll; scrollbar-gutter: stable; }
 .runtime-icon { display: block; width: 16px; height: 16px; object-fit: contain; }
 :root[data-theme="dark"] .runtime-mark[data-runtime="dsh"] .runtime-icon { filter: brightness(1.45); } /* brand blue is too dark on the dark canvas */
 .runtime-mark[data-runtime="kiro"] .runtime-icon { transform: scale(1.06); } /* a solid disc reads small beside open marks */
+.runtime-mark-svg { color: var(--text-primary); }
 .runtime-mark-mono { position: relative; }
 .runtime-mark-mono .runtime-icon { visibility: hidden; }
 .runtime-mark-mono::before {
