@@ -174,6 +174,23 @@ export class AccountObject extends DurableObject {
     if (until > Date.now()) for (const role of ['app', 'bridge', 'notify']) for (const [ws] of this.live(role)) await this.retire(ws, 4429, 'monthly_limit');
   }
 
+  // The monitor's operator purge (a test account, through its binding like monthlyLimit): sockets close, every row goes,
+  // and so does its recovery row in the index objects (JOIN#). Every socket is marked closing before any closes, so their
+  // close handlers (leave) write nothing back.
+  async purge(account) {
+    const table = createTable(this.env, { kind: 'account', name: account, call: this.store });
+    const join = (await table.getItem({ Key: { pk: `ACCOUNT#${account}`, sk: 'META' } })).Item?.joinSecretHash;
+    if (join) await table.deleteItem({ Key: { pk: `JOIN#${join}`, sk: '-' } });
+    const sockets = this.ctx.getWebSockets();
+    for (const ws of sockets) { try { ws.serializeAttachment({ ...ws.deserializeAttachment(), closing: Date.now() }); } catch {} }
+    for (const ws of sockets) { try { ws.close(4401, 'revoked'); } catch {} }
+    await this.ctx.storage.deleteAlarm();
+    await this.ctx.storage.deleteAll();
+    this.store = serve(createItems(this.ctx.storage.sql), (fn) => this.ctx.storage.transactionSync(fn)); // an empty table again
+    this.server = null;
+    this.usage = new Usage(this.ctx, this.env);
+  }
+
   // An alarm armed by an older version: sweep once, re-arm nothing.
   async alarm() {
     this.swept = 0;

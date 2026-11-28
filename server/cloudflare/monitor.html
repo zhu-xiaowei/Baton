@@ -40,6 +40,8 @@
   .trio .big { font-size: 26px; }
   .row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(60px, 38%) 64px; gap: 10px; align-items: center; margin: 7px 0; font-size: 14px; }
   .row .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .row.account { grid-template-columns: minmax(0, 1fr) minmax(40px, 28%) 64px 56px; }
+  .row.account .mini { width: 100%; padding: 2px 0; }
   .line { display: grid; gap: 8px; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 14px; white-space: nowrap; }
   .line:last-child { border-bottom: 0; }
   .line > * { overflow: hidden; text-overflow: ellipsis; }
@@ -153,6 +155,12 @@ function pointAt(svg, clientX) {
   document.getElementById(`cap${svg.dataset.chart}`).textContent = `${c.kind === 'bar' ? c.label(p) : hm(p[0])}　${c.fmt(p[1])}`;
 }
 document.addEventListener('click', async (e) => {
+  const purge = e.target.dataset?.purge;
+  if (purge && confirm(`清除测试账户 ${purge}？\n它的设备、Session 路由和所有数据都会删除，不能恢复；统计里也不再计入它。`)) {
+    const res = await fetch('api/purge', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ account: purge }) }).catch(() => null);
+    if (!(await res?.json().catch(() => null))?.ok) alert(`清除失败（${res ? `HTTP ${res.status}` : '网络错误'}）`);
+    return load();
+  }
   const name = e.target.dataset?.unblock;
   if (!name || !confirm(`解除 ${name} 的封禁？`)) return;
   await fetch('api/unblock', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ account: name }) });
@@ -214,9 +222,9 @@ function render(d) {
   h.push('<div class="kpis">',
     kpi('服务状态', healthy ? '正常' : '异常', healthy ? `${probes.map((p) => p.ms).join(' / ')} ms` : `<span style="white-space:normal">${esc(problems.join('、') || '无快照')}</span>`, healthy ? 'ok' : 'bad'),
     kpi('当前在线', n(online.awake), `账户 ${n(online.awake)} · 连接 ${n(online.sockets)}`),
-    `<div class="card"><div class="big">${n(dau)}</div><div class="label">今日日活</div><div class="sub">${u.error ? '— 数据不足' : `较昨日 ${dau - before >= 0 ? '+' : ''}${dau - before}`}</div>`
+    `<div class="card"><div class="big">${n(dau)}</div><div class="label">今日日活 <span title="较昨日" style="color:var(--muted)">${u.error ? '—' : `${dau - before >= 0 ? '+' : ''}${dau - before}`}</span></div>`
       + kv('今日 App', n(u.devices?.app ?? 0)) + kv('今日 Bridge', n(u.devices?.bridge ?? 0))
-      + kv('累计设备', n((d.devices?.app ?? 0) + (d.devices?.bridge ?? 0))) + '</div>',
+      + kv('累计 App', n(d.devices?.app ?? 0)) + kv('累计 Bridge', n(d.devices?.bridge ?? 0)) + '</div>',
     `<div class="card"><div class="big">${usd(paid ? c.bill : c.usage)}</div><div class="label">本月费用</div><div class="sub">月底预计 ${usd(paid ? c.projectedBill : c.projectedUsage)}</div>`
       + (quotas[0] ? `<div class="sub flex"><span style="white-space:normal">${paid ? '最接近免费包含量的项目' : '最接近上限的额度'}</span>${info(paid
         ? '付费版每月包含用量中，用量占比最高的一项；超出部分按量计费' : '免费套餐各项额度中（多数按天计），用量占比最高的一项')}</div>`
@@ -270,8 +278,9 @@ function render(d) {
       + `<div class="track"><div class="fill ${level(share)}" style="width:${Math.max(2, Math.min(100, share * 100))}%"></div></div><span class="num">${pct(share)}</span></div>`
       + `<div class="sub" style="margin:-4px 0 8px">${(QUOTA[k]?.[2] ?? n)(used)} / ${(QUOTA[k]?.[2] ?? n)(limit)}</div>`).join('') : NA()),
     card(`账户费用 Top 10 ${info('本月至今，按账户的 Durable Object 用量估算；超过上限的账户封禁到下月 1 日。')}`,
-      (L0.accounts ?? []).length ? L0.accounts.map((a, i) => `<div class="row"><span class="name">${i + 1}. <code>${esc(a.name)}</code>${d.blocked?.[a.name] ? ' <span class="bad">已封禁</span>' : ''}</span>`
-        + `<div class="track"><div class="fill ${level(a.capCost / d.cap)}" style="width:${Math.max(2, Math.min(100, (100 * a.capCost) / d.cap))}%"></div></div><span class="num">${usd(a.cost)}</span></div>`).join('')
+      (L0.accounts ?? []).length ? L0.accounts.map((a, i) => `<div class="row account"><span class="name">${i + 1}. <code>${esc(a.name)}</code>${d.blocked?.[a.name] ? ' <span class="bad">已封禁</span>' : ''}</span>`
+        + `<div class="track"><div class="fill ${level(a.capCost / d.cap)}" style="width:${Math.max(2, Math.min(100, (100 * a.capCost) / d.cap))}%"></div></div><span class="num">${usd(a.cost)}</span>`
+        + `${a.name === d.probe ? '<span></span>' : `<button class="mini" data-purge="${esc(a.name)}" type="button" title="${esc(a.name)}">清除</button>`}</div>`).join('')
         + `<div class="sub">条长 = 计入上限的费用 / ${usd(d.cap)}</div>` : NA(), '本月'),
     card('已封禁账户', Object.keys(d.blocked ?? {}).length ? Object.entries(d.blocked).map(([k, b]) => `<div class="line blocked"><code title="${esc(k)}">${esc(k)}</code>`
       + `<span>${usd(b.cost)}</span><span class="sub" style="margin:0">至 ${new Date(b.until).toISOString().slice(5, 10).replace('-', '/')}</span>`
