@@ -178,7 +178,7 @@ acceptance on separate test resources → report → squash merge on OK → dele
 ## 7. Carried over from earlier phases
 
 - Hosted Android notifications (accounts plan D4): off until phase 4.
-- Videos and attachments over 50 MB stay plain under the account prefix until phase 4 (`SEALED_MAX`).
+- Videos and large files are sealed too (`docs/media-streaming.md`).
 - "Being viewed" suppression may move to the relay object, which knows live subscriptions (optional).
 - REST limits from PR #229 (register / recover / pair-start per IP, computers per account) carry over to both
   adapters.

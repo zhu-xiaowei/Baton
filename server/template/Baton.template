@@ -481,7 +481,7 @@
             "Effect": "Allow", "Action": "execute-api:ManageConnections",
             "Resource": { "Fn::Sub": "arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${TerminalDirectApi}/v1/POST/@connections/*" }
           }, {
-            "Effect": "Allow", "Action": ["s3:GetObject", "s3:PutObject"],
+            "Effect": "Allow", "Action": ["s3:GetObject", "s3:PutObject", "s3:AbortMultipartUpload"],
             "Resource": { "Fn::Sub": "arn:${AWS::Partition}:s3:::${ImagesBucketName}/t/*" }
           }] }
         }]

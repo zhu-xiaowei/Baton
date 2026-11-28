@@ -149,13 +149,13 @@ appears in the device list (removal rotates `K`).
 - **Compress, then encrypt** stays (traffic and per-32 KB charges): the length leak (CRIME class) needs an
   attacker who controls the relay and injects chosen text into the same payload; accepted and stated in
   SECURITY.md.
-- **Attachments**: non-video files up to 50 MB are sealed in 64 KiB records (STREAM construction: each record
+- **Attachments**: all files are sealed in 64 KiB records (STREAM construction: each record
   `nonce ‖ AES-GCM ‖ tag`, AAD = key | index | last) before the S3 PUT and marked `x-amz-meta-sealed: 1`; a PDF
   still loads by range (only the records it needs). Files without the marker that do not open are read as
   written before K, for 7 days after K arrived (the S3 lifetime); the content-hash key becomes `HMAC(K-derived key,
-  sha256(file))` so dedup stays per account; integrity comes from the GCM tags (no S3 checksum). Videos and larger files
-  stay as today (account-scoped prefix, 7-day lifecycle) so videos keep streaming with Range; chunked records
-  for video come with the EC2 relay (phase 4). Competitors: Happy encrypts server attachments whole
+  sha256(file))` so dedup stays per account; integrity comes from the GCM tags (no S3 checksum). Since then every
+  file is sealed, videos and files up to 5 GB included; they play and download by range through the page's
+  media server (`docs/media-streaming.md`). Competitors: Happy encrypts server attachments whole
   up to 10 MB and streams video only over a direct link to the computer; Paseo sends files whole (≤ 50 MB
   up, 64 MB down) through its encrypted channel and has no video preview.
 - **Notifications**: Bridge encrypts title and body; the server stores and forwards ciphertext only (§12

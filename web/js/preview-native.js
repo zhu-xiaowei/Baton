@@ -37,6 +37,13 @@ export function previewInvoke(command, args = {}) {
   }
 }
 
+// A reloaded page releases the listeners its last load left (once: previews and media share them).
+let reset = null;
+export function previewReset() {
+  reset ??= previewInvoke('preview_reset').catch(() => {});
+  return reset;
+}
+
 export function previewListen(event, handler) {
   if (!harmonyBridge()) return listen(event, handler);
   return Promise.resolve(onHarmonyEvent(message => {

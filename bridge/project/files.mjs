@@ -4,7 +4,7 @@ import path from 'path';
 import { finished } from 'stream/promises';
 import { WS_FRAME_LIMIT } from '../config.mjs';
 import { contentHash, forgetContentHash } from '../content-hash.mjs';
-import { previewType, reusable, transfer, transferKeys } from '../transfer-store.mjs';
+import { PUT_MAX, transfer, transferKeys } from '../transfer-store.mjs';
 import { projectHashToPath } from '../session.mjs';
 import { resolveProjectPath } from '../project-path.mjs';
 import { sendTextFrames } from './ws-frames.mjs';
@@ -12,7 +12,6 @@ import { sendTextFrames } from './ws-frames.mjs';
 // Larger text previews stall phones; Download fetches the full file.
 const FILE_MAX_BYTES = 1024 * 1024;
 const IMAGE_MAX_BYTES = 10 * 1024 * 1024;
-const VIDEO_MAX_BYTES = 5 * 1024 * 1024 * 1024;
 const INLINE_FRAME_LIMIT = Math.min(28_000, WS_FRAME_LIMIT - 3_000);
 const TEXT_WS_MAX_BYTES = 300 * 1024;
 const DIRECTORY_PAGE_LIMIT = 200;
@@ -25,55 +24,66 @@ const VIDEO_EXTENSIONS = new Set([
 const uploadedFileKeys = transferKeys(1000);
 const downloadFileKeys = transferKeys(100); // file identity → key
 
+// Requests from Apps that cannot open sealed videos or large files carry no `files: 2`.
+const OLD_APP = 'Update Baton to open this file';
+
 async function prepareFileDownload(message, { projectRoot, store = transfer, fetchFn = fetch, send, home }) {
   const absPath = resolveReadablePath(projectRoot, message.path);
   const stat = await fs.promises.stat(absPath);
   if (!stat.isFile()) throw new Error('not a regular file');
-  if (stat.size > 512 * 1024 * 1024) throw new Error('Download exceeds the 512 MB limit');
+  if (stat.size > PUT_MAX) throw new Error('File exceeds the 5 GB limit');
+  if (message.files !== 2 && (stat.size > 50 * 1024 * 1024 || /^\.(mp4|m4v|mov|webm|mkv|avi|mp3|wav|m4a|ogg)$/i.test(path.extname(absPath)))) {
+    throw new Error(OLD_APP);
+  }
   const identity = `${absPath}\0${stat.mtimeMs}\0${stat.size}`;
-  let key = downloadFileKeys.get(identity);
-  if (!key) {
+  let stored = downloadFileKeys.get(identity);
+  if (!stored) {
     sendProgress(message, send, { downloading: true });
     const hash = await contentHash(absPath, stat, home);
     const info = await store.prepareUpload({
       name: path.basename(absPath), size: stat.size, contentType: 'application/octet-stream', contentHash: hash,
     });
     if (!info.key || (!info.exists && (!info.url || !info.headers))) throw new Error('Invalid upload response');
-    const urls = info.exists ? [] : [...new Set([info.url, info.fallbackUrl].filter(Boolean))];
-    let uploaded = !!info.exists;
-    let rejected = false;
-    const read = info.seal && !info.exists ? await fs.promises.readFile(absPath) : null;
-    // The key comes from the hash: bytes that changed since it was taken must not be stored under it.
-    if (read && crypto.createHash('sha256').update(read).digest('hex') !== hash) throw new Error('File changed while preparing the download. Try again.');
-    const sealed = read && await info.seal(read);
-    for (const url of urls) {
-      const body = sealed ? Buffer.from(sealed) : fs.createReadStream(absPath);
-      const closed = sealed ? null : finished(body).catch(() => {});
-      try {
-        const response = await fetchFn(url, {
-          method: 'PUT', headers: { ...info.headers, 'Content-Length': String(sealed ? sealed.length : stat.size) },
-          body, duplex: 'half', signal: AbortSignal.timeout(30 * 60_000),
-        });
-        // S3 refuses bytes that differ from the hashed content: the file changed, so another URL cannot help.
-        if (response.status === 400) rejected = (await response.text()).includes('BadDigest');
-        else await response.body?.cancel();
-        if (response.ok) { uploaded = true; break; }
-        if (rejected) break;
-      } catch {} finally { body.destroy?.(); await closed; }
-    }
-    if (rejected) {
-      await forgetContentHash(absPath, stat, home);
-      throw new Error('File changed while preparing the download. Try again.');
-    }
-    if (!uploaded) throw new Error('File upload failed. Try downloading again.');
+    if (!info.exists) await putFile(absPath, stat, hash, info, fetchFn, home);
     const current = await fs.promises.stat(absPath);
     if (current.size !== stat.size || current.mtimeMs !== stat.mtimeMs) {
       throw new Error('File changed while preparing the download. Try again.');
     }
-    key = info.key;
-    downloadFileKeys.set(identity, key);
+    stored = { key: info.key, sealed: !!info.sealed, stored: info.stored ?? stat.size };
+    downloadFileKeys.set(identity, stored);
   }
-  send(responseBase(message, { ok: true, key, path: absPath, name: path.basename(absPath), size: stat.size }));
+  send(responseBase(message, { ok: true, ...stored, path: absPath, name: path.basename(absPath), size: stat.size }));
+}
+
+// Streams the file (sealed as it is read) into one PUT. The key comes from the hash: bytes that
+// changed since it was taken end the upload before its last record, so nothing is stored under it.
+async function putFile(absPath, stat, hash, info, fetchFn, home) {
+  let changed = false;
+  let rejected = false;
+  async function* checked(file) {
+    const digest = crypto.createHash('sha256');
+    let size = 0;
+    for await (const chunk of file) { digest.update(chunk); if ((size += chunk.length) > stat.size) break; yield chunk; }
+    if (size !== stat.size || digest.digest('hex') !== hash) { changed = true; throw new Error('File changed'); }
+  }
+  for (const url of [...new Set([info.url, info.fallbackUrl].filter(Boolean))]) {
+    const file = fs.createReadStream(absPath);
+    try {
+      const response = await fetchFn(url, {
+        method: 'PUT', headers: { ...info.headers, 'Content-Length': String(info.stored ?? stat.size) },
+        body: info.sealStream ? info.sealStream(checked(file)) : file, duplex: 'half', signal: AbortSignal.timeout(3 * 3600_000),
+      });
+      // S3 refuses bytes that differ from the hashed content: the file changed, so another URL cannot help.
+      if (response.status === 400) rejected = (await response.text()).includes('BadDigest');
+      else await response.body?.cancel();
+      if (response.ok) return;
+    } catch {} finally { file.destroy(); await finished(file).catch(() => {}); } // an unread stream still opens
+    if (rejected || changed) {
+      await forgetContentHash(absPath, stat, home);
+      throw new Error('File changed while preparing the download. Try again.');
+    }
+  }
+  throw new Error('File upload failed. Try downloading again.');
 }
 
 function inside(root, target) {
@@ -167,23 +177,6 @@ async function browseDirectories(message, options) {
   });
 }
 
-// Content-addressed: a video already in the transfer area is not sent again.
-async function uploadVideo(absPath, key, size, store) {
-  try {
-    if (reusable(await store.head(key))) return true;
-    const { url, headers } = await store.uploadUrl(key, { contentType: previewType(key) });
-    const response = await fetch(url, {
-      method: 'PUT',
-      headers: { ...headers, 'Content-Length': String(size) },
-      body: fs.createReadStream(absPath),
-      duplex: 'half',
-    });
-    return response.ok;
-  } catch {
-    return false;
-  }
-}
-
 function responseBase(message, extra = {}) {
   return {
     action: 'project_files',
@@ -218,19 +211,9 @@ async function readProjectFile(message, context) {
   const base = responseBase(message, { ok: true });
 
   if (VIDEO_EXTENSIONS.has(extension)) {
-    if (stat.size > VIDEO_MAX_BYTES) throw new Error('video too large');
-    const key = crypto.createHash('sha256')
-      .update(`${absPath}#${stat.mtimeMs}#${stat.size}`)
-      .digest('hex').slice(0, 16) + extension;
-    sendProgress(message, send, { video: true });
-    const uploaded = await uploadVideo(absPath, key, stat.size, store);
-    if (!uploaded) throw new Error('upload failed');
-    send({
-      ...base,
-      key,
-      path: absPath,
-      size: stat.size,
-      video: true,
+    await prepareFileDownload(message, {
+      ...context,
+      send: response => send(response.progress ? { ...response, video: true } : { ...response, ...base, video: true }),
     });
     return;
   }

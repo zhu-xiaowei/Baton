@@ -131,7 +131,9 @@ class FileDownloadPlugin(private val activity: Activity) : Plugin(activity) {
     try {
       val args = invoke.parseArgs(DownloadArgs::class.java)
       val uri = Uri.parse(args.url)
-      require(uri.scheme == "https" && uri.host != null && uri.userInfo == null) { "Downloads require an HTTPS URL" }
+      // The page's media server serves sealed files on loopback.
+      val loopback = uri.scheme == "http" && uri.host in setOf("127.0.0.1", "localhost")
+      require((uri.scheme == "https" || loopback) && uri.host != null && uri.userInfo == null) { "Downloads require an HTTPS URL" }
       val name = args.name.replace('\\', '/').substringAfterLast('/').replace(Regex("[\\p{Cntrl}<>:\"|?*]"), "_").trim(' ', '.')
       require(name.isNotEmpty()) { "Invalid filename" }
       val dot = name.lastIndexOf('.')

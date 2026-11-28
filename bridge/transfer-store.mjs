@@ -6,12 +6,14 @@
 const encoder = new TextEncoder();
 const KEY = /^[0-9a-f]{8,64}(?:\.[a-z0-9]{1,16})?$/;
 const MAX_EXPIRES = 3600;
-// Objects expire 1 day after they were written on Cloudflare. One older than REUSE_MS is written again,
-// and a key is remembered for REMEMBER_MS (`transferKeys`), so a key handed out still has 2 h for
-// the App to read it (videos and PDFs keep reading ranges while open).
-const REUSE_MS = 21.5 * 3600_000;
-const REMEMBER_MS = 30 * 60_000;
-export const reusable = (object) => !!object && Date.now() - object.modified < REUSE_MS;
+// Objects expire 1 hour after they were written on Cloudflare (R2 checks about hourly), 7 days on S3.
+// One older than its store's reuse window is written again, and a key is remembered for REMEMBER_MS
+// (`transferKeys`), so a key handed out still has ≥ 15 min for the App to read it (ranges while open).
+const REUSE_MS = { r2: 30 * 60_000, s3: 21.5 * 3600_000 };
+const REMEMBER_MS = 15 * 60_000;
+export const reusable = (object) => !!object && Date.now() - object.modified < object.reuse;
+// A single PUT holds at most 5 GiB; the sealing overhead stays below it.
+export const PUT_MAX = 5e9;
 export const transferKeys = (limit) => recentKeys(limit, REMEMBER_MS);
 
 export const IMAGE_TYPES = {
@@ -20,50 +22,91 @@ export const IMAGE_TYPES = {
 };
 const PREVIEW_TYPES = {
   pdf: 'application/pdf', ...IMAGE_TYPES,
-  mp4: 'video/mp4', m4v: 'video/mp4', mov: 'video/quicktime', webm: 'video/webm',
+  mp4: 'video/mp4', m4v: 'video/mp4', mov: 'video/mp4', webm: 'video/webm',
   mkv: 'video/x-matroska', avi: 'video/x-msvideo',
   mp3: 'audio/mpeg', wav: 'audio/wav', m4a: 'audio/mp4', ogg: 'audio/ogg',
 };
 
 const extension = (key) => (key.includes('.') ? key.slice(key.lastIndexOf('.') + 1).toLowerCase() : '');
 export const previewType = (key) => PREVIEW_TYPES[extension(key)] || 'application/octet-stream';
+const OFFICE = /^(docx|pptx|xlsx|doc|ppt|xls)$/;
 
-// With K, files up to SEALED_MAX that are not played as streams are sealed in 64 KiB records (STREAM:
-// each nonce ‖ AES-GCM ‖ tag, AAD = key | index | last), so a PDF still loads by range. They carry
-// `x-amz-meta-sealed: 1` and are keyed by HMAC(content hash), so dedup stays within the account.
-// Videos, audio and larger files stay as they are and keep ranged reads (plan §6 "Attachments").
-export const SEALED_MAX = 50 * 1024 * 1024;
-const RECORD = 64 * 1024;
+// With K, every file is sealed in 64 KiB records (STREAM: each nonce ‖ AES-GCM ‖ tag, AAD = key |
+// index | last), so any range can be read. They carry `x-amz-meta-sealed: 1` and are keyed by
+// HMAC(content hash), so dedup stays within the account.
+export const RECORD = 64 * 1024;
 const SEALED_RECORD = RECORD + 28;
 const records = (stored) => Math.max(1, Math.ceil(stored / SEALED_RECORD));
 export const plainSize = (stored) => Math.max(0, stored - 28 * records(stored));
 const sealedSize = (size) => size + 28 * Math.max(1, Math.ceil(size / RECORD));
-const STREAMED = /^(mp4|m4v|mov|webm|mkv|avi|mp3|wav|m4a|ogg)$/;
 // Files written before the account had K are read as they are for the 7 days S3 keeps them.
 const PLAIN_GRACE_MS = 7 * 86400_000;
 let fileKeys = () => null;
 // `next()` resolves { key: AES-GCM CryptoKey, id: HMAC CryptoKey, since: when K arrived } or null.
 export function setTransferKeys(next) { fileKeys = next; }
-const sealedKeys = async (name, size) => (size <= SEALED_MAX && !STREAMED.test(extension(name)) ? fileKeys() : null);
-// An unmarked file of a kind and size that is sealed: only one written before K, within the grace.
-async function plainRefused(key, stored) {
-  if (STREAMED.test(extension(key)) || stored > SEALED_MAX) return false;
+// An unmarked file: only one written before K, within the grace.
+async function plainRefused() {
   const keys = await fileKeys();
   return !!keys && !(Date.now() - keys.since < PLAIN_GRACE_MS);
 }
 const recordAad = (key, index, count) => encoder.encode(`${key}|${index}|${index === count - 1 ? 1 : 0}`);
+const join = (a, b) => { if (!a.length) return b; const out = new Uint8Array(a.length + b.length); out.set(a); out.set(b, a.length); return out; };
 
-async function sealBytes(keys, key, body) {
+// Views of `unit` bytes each (the last may be shorter); each chunk is copied at most once.
+async function* split(chunks, unit) {
+  let buffer = new Uint8Array(0);
+  let at = 0;
+  for await (const chunk of chunks) {
+    buffer = join(buffer.subarray(at), chunk);
+    for (at = 0; buffer.length - at >= unit; at += unit) yield buffer.subarray(at, at + unit);
+  }
+  if (at < buffer.length) yield buffer.subarray(at);
+}
+
+async function* chunksOf(body) {
+  const reader = body.getReader();
+  try {
+    for (let next; !(next = await reader.read()).done;) yield next.value;
+  } finally {
+    reader.cancel().catch(() => {});
+  }
+}
+
+async function sealRecord(keys, key, plain, index, total) {
+  const out = new Uint8Array(plain.length + 28);
+  const nonce = crypto.getRandomValues(new Uint8Array(12));
+  out.set(nonce);
+  out.set(new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv: nonce, additionalData: recordAad(key, index, total) },
+    keys.key, plain)), 12);
+  return out;
+}
+
+// `body` holds records from `first` of a file with `total` records (a multipart part), or a whole file.
+async function sealBytes(keys, key, body, first = 0, total) {
   const bytes = new Uint8Array(await new Response(body).arrayBuffer());
   const count = Math.max(1, Math.ceil(bytes.length / RECORD));
   const out = new Uint8Array(sealedSize(bytes.length));
   for (let i = 0; i < count; i++) {
-    const nonce = crypto.getRandomValues(new Uint8Array(12));
-    out.set(nonce, i * SEALED_RECORD);
-    out.set(new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv: nonce, additionalData: recordAad(key, i, count) },
-      keys.key, bytes.subarray(i * RECORD, (i + 1) * RECORD))), i * SEALED_RECORD + 12);
+    out.set(await sealRecord(keys, key, bytes.subarray(i * RECORD, (i + 1) * RECORD), first + i, total ?? count), i * SEALED_RECORD);
   }
   return out;
+}
+
+// Seals `source` (byte chunks, `size` in all) as it is read. The last record waits for the source to
+// end, so a source that throws there (content check) leaves the upload short and S3 stores nothing.
+export async function* sealStream(keys, key, size, source) {
+  const total = Math.max(1, Math.ceil(size / RECORD));
+  let held = new Uint8Array(0);
+  let index = 0;
+  let read = 0;
+  for await (const record of split(source, RECORD)) {
+    if (read + record.length > size) throw new Error('File changed while uploading');
+    if (read) yield await sealRecord(keys, key, held, index++, total);
+    held = record;
+    read += record.length;
+  }
+  if (read !== size) throw new Error('File changed while uploading');
+  yield await sealRecord(keys, key, held, total - 1, total);
 }
 
 // `bytes` are whole records starting at record `first` of `count`.
@@ -184,12 +227,14 @@ function base64FromHex(value) {
 }
 
 const randomKey = (ext) => crypto.randomUUID().replace(/-/g, '') + ext;
+const PART = 16 * 1024 * 1024; // multipart part, a whole number of records
 const disposition = (name) => `attachment; filename*=UTF-8''${rfc3986(name)}`;
 
 // `access()` resolves fresh credentials and the account's storage.
 export function createTransferStore(access, fetchFn = (...args) => fetch(...args)) {
   async function head(key) {
-    const response = await fetchFn(await presign(await access(), 'HEAD', key, { headers: { 'x-amz-checksum-mode': 'ENABLED' } }),
+    const storage = await access();
+    const response = await fetchFn(await presign(storage, 'HEAD', key, { headers: { 'x-amz-checksum-mode': 'ENABLED' } }),
       { method: 'HEAD', headers: { 'x-amz-checksum-mode': 'ENABLED' } });
     // Without list permission S3 answers 403 for a missing object.
     if (response.status === 404 || response.status === 403) return null;
@@ -202,29 +247,91 @@ export function createTransferStore(access, fetchFn = (...args) => fetch(...args
       contentType: meta('content-type'),
       sealed: meta('sealed') === '1',
       modified: Date.parse(response.headers.get('last-modified') || '') || 0,
+      reuse: storage.endpoint ? REUSE_MS.r2 : REUSE_MS.s3,
+    };
+  }
+
+  // S3 multipart: `start()` → upload id, `url(id, n)` signs part n (1-based), `complete(id, etags)`.
+  function multipart(key, headers) {
+    const call = async (method, query, body) => {
+      const response = await fetchFn(await presign(await access(), method, key, { headers: 'uploads' in query ? headers : {}, query }),
+        { method, headers: 'uploads' in query ? headers : {}, body });
+      const text = await response.text();
+      if (!response.ok || /<Error>/.test(text)) throw new Error(`Storage upload failed (${response.status})`);
+      return text;
+    };
+    return {
+      start: async () => /<UploadId>([^<]+)<\/UploadId>/.exec(await call('POST', { uploads: '' }))?.[1]
+        || Promise.reject(new Error('Storage upload failed')),
+      url: async (id, n) => presign(await access(), 'PUT', key, { query: { partNumber: String(n), uploadId: id } }),
+      complete: (id, etags) => call('POST', { uploadId: id }, `<CompleteMultipartUpload>${etags
+        .map((etag, i) => `<Part><PartNumber>${i + 1}</PartNumber><ETag>${etag}</ETag></Part>`).join('')}</CompleteMultipartUpload>`),
+      // Free on R2; where the credentials may not abort, the lifecycle rule clears it after a day.
+      abort: (id) => call('DELETE', { uploadId: id }).catch(() => {}),
     };
   }
 
   return {
     head,
 
+    // Plain records of `key` (`stored` bytes) from record `first` up to record `end`, opened when sealed,
+    // in one GET; a short read resumes where it stopped.
+    async *records(key, stored, first = 0, { sealed = true, signal, end } = {}) {
+      const unit = sealed ? SEALED_RECORD : RECORD;
+      const count = Math.max(1, Math.ceil(stored / unit));
+      const limit = Math.min(count, end ?? count);
+      const keys = sealed ? await fileKeys() : null;
+      if (sealed && !keys) throw new Error('File storage key is unavailable');
+      for (let at = first, tries = 0; at < limit;) {
+        const begin = at;
+        try {
+          const reply = await fetchFn(await presign(await access(), 'GET', key), { signal, cache: 'no-store',
+            headers: { Range: `bytes=${at * unit}-${Math.min(stored, limit * unit) - 1}` } });
+          if (reply.status === 404 || reply.status === 403) throw Object.assign(new Error('File not found'), { missing: true });
+          if (reply.status !== 206) { await reply.body?.cancel(); throw new Error(`Storage read failed (${reply.status})`); }
+          for await (const record of split(chunksOf(reply.body), unit)) {
+            if (record.length !== (at === count - 1 ? stored - at * unit : unit)) break; // cut short: read again
+            yield keys ? await openRecords(keys, key, record, at, count) : record.slice();
+            if (++at === limit) break;
+          }
+        } catch (error) {
+          if (error.missing || signal?.aborted) throw error;
+        }
+        if (at === begin && ++tries > 2) throw new Error('Storage read failed');
+        if (at > begin) tries = 0;
+      }
+    },
+
+    // The plain records of a whole sealed object read as `body` (`stored` bytes).
+    async *openBody(key, stored, body) {
+      const keys = await fileKeys();
+      const count = records(stored);
+      let at = 0;
+      for await (const record of split(body, SEALED_RECORD)) yield await openRecords(keys, key, record, at++, count);
+      if (at !== count) throw new Error('Sealed file is truncated');
+    },
+
     // An attachment upload: identical content (by SHA-256) is stored once; S3 refuses other bytes.
-    // A sealed upload returns `seal(body)`: the caller PUTs what it returns.
+    // A sealed upload returns `seal(body, first)` (the caller PUTs what it returns), `sealStream(source)`
+    // and, over PART, `parts` for a multipart upload; `stored` is the size to PUT.
     async prepareUpload({ name, size, contentType = 'application/octet-stream', contentHash = '' }) {
       name = String(name || '').replace(/\\/g, '/').split('/').pop();
       if (!name || /[\u0000-\u001f]/.test(name)) throw new Error('Invalid file name');
       const ext = (name.toLowerCase().match(/\.[a-z0-9]{1,16}$/) || [''])[0];
-      const keys = await sealedKeys(name, size);
+      const keys = await fileKeys();
       if (keys) {
         const key = await this.keyFor(/^[0-9a-f]{64}$/.test(contentHash) ? contentHash : crypto.randomUUID(), ext);
+        const stored = sealedSize(size);
         const existing = contentHash ? await head(key) : null;
-        if (existing?.sealed && existing.size === sealedSize(size) && reusable(existing)) return { key, exists: true };
-        const headers = { 'Content-Type': 'application/octet-stream', 'x-amz-meta-filename': rfc3986(name),
-          'x-amz-meta-content-type': rfc3986(contentType), 'x-amz-meta-sealed': '1' };
+        if (existing?.sealed && existing.size === stored && reusable(existing)) return { key, exists: true, sealed: true, stored };
+        const headers = { 'Content-Type': 'application/octet-stream', 'x-amz-meta-content-type': rfc3986(contentType), 'x-amz-meta-sealed': '1' };
         const storage = await access();
         const url = await presign(storage, 'PUT', key, { headers });
+        const total = Math.max(1, Math.ceil(size / RECORD));
         return { key, url: storage.accelerate ? await presign(storage, 'PUT', key, { headers, accelerate: true }) : url, fallbackUrl: url,
-          headers, seal: (body) => sealBytes(keys, key, body) };
+          headers, sealed: true, stored, seal: (body, first = 0) => sealBytes(keys, key, body, first, total),
+          sealStream: (source) => sealStream(keys, key, size, source),
+          ...(size > 2 * PART ? { parts: { size: PART, records: PART / RECORD, ...multipart(key, headers) } } : {}) };
       }
       let key = randomKey(ext);
       const checksum = /^[0-9a-f]{64}$/.test(contentHash) ? base64FromHex(contentHash) : '';
@@ -232,7 +339,7 @@ export function createTransferStore(access, fetchFn = (...args) => fetch(...args
         const hashed = contentHash.slice(0, 32) + ext;
         const existing = await head(hashed);
         const same = existing?.checksum === checksum && existing.size === size;
-        if (same && reusable(existing)) return { key: hashed, exists: true };
+        if (same && reusable(existing)) return { key: hashed, exists: true, sealed: false, stored: size };
         if (!existing || same) key = hashed;
       }
       const headers = {
@@ -244,7 +351,7 @@ export function createTransferStore(access, fetchFn = (...args) => fetch(...args
       const storage = await access();
       const url = await presign(storage, 'PUT', key, { headers });
       const accelerated = storage.accelerate ? await presign(storage, 'PUT', key, { headers, accelerate: true }) : url;
-      return { key, url: accelerated, fallbackUrl: url, headers };
+      return { key, url: accelerated, fallbackUrl: url, headers, sealed: false, stored: size };
     },
 
     // A PUT URL for bytes the caller streams itself, with the headers to send.
@@ -263,7 +370,7 @@ export function createTransferStore(access, fetchFn = (...args) => fetch(...args
     },
 
     async put(key, body, { contentType = 'application/octet-stream' } = {}) {
-      const keys = await sealedKeys(key, body.size ?? body.length ?? 0);
+      const keys = await fileKeys();
       if (keys) body = await sealBytes(keys, key, body);
       const { url, headers } = await this.uploadUrl(key, { contentType, sealed: !!keys });
       const response = await fetchFn(url, { method: 'PUT', headers, body });
@@ -276,12 +383,12 @@ export function createTransferStore(access, fetchFn = (...args) => fetch(...args
       const response = await fetchFn(await this.url(key, { plain: true }));
       if (!response.ok) throw new Error(`Storage read failed (${response.status})`);
       const bytes = new Uint8Array(await response.arrayBuffer());
-      const keys = STREAMED.test(extension(key)) || bytes.length > sealedSize(SEALED_MAX) ? null : await fileKeys();
+      const keys = await fileKeys();
       if (!keys) return bytes;
       if (sealed !== false) {
         try { return await openRecords(keys, key, bytes, 0, records(bytes.length)); } catch (error) { if (sealed) throw error; }
       }
-      if (await plainRefused(key, bytes.length)) throw new Error('File is not sealed');
+      if (await plainRefused()) throw new Error('File is not sealed');
       return bytes;
     },
 
@@ -291,6 +398,7 @@ export function createTransferStore(access, fetchFn = (...args) => fetch(...args
       const last = Math.floor((end - 1) / RECORD);
       const response = await fetchFn(await this.url(key, { plain: true }),
         { headers: { Range: `bytes=${first * SEALED_RECORD}-${Math.min(stored, (last + 1) * SEALED_RECORD) - 1}` } });
+      if (response.status === 404 || response.status === 403) throw Object.assign(new Error('File not found'), { missing: true });
       if (response.status !== 206 && response.status !== 200) throw new Error(`Storage read failed (${response.status})`);
       let bytes = new Uint8Array(await response.arrayBuffer());
       if (response.status === 200) bytes = bytes.subarray(first * SEALED_RECORD, (last + 1) * SEALED_RECORD);
@@ -301,7 +409,7 @@ export function createTransferStore(access, fetchFn = (...args) => fetch(...args
     // A GET URL shown inline with the type its key implies, or downloaded under `download`. A sealed
     // file is fetched and opened here and comes back as a Blob URL.
     async url(key, { download = '', contentType = previewType(key), plain = false, sealed } = {}) {
-      if (!plain && sealed !== false && typeof document !== 'undefined' && !STREAMED.test(extension(key)) && await fileKeys()) {
+      if (!plain && sealed !== false && typeof document !== 'undefined' && await fileKeys()) {
         return opened.get(key) || blobUrl(key, await this.bytes(key, sealed), contentType);
       }
       return presign(await access(), 'GET', key, { query: download
@@ -317,9 +425,9 @@ export function createTransferStore(access, fetchFn = (...args) => fetch(...args
       const shown = name && name.length <= 255 && !/[\u0000-\u001f/\\]/.test(name) ? name : object.name || key;
       const type = previewType(key);
       const { sealed } = object;
-      if (!sealed && await plainRefused(key, object.size)) throw new Error('File is not sealed');
-      // A sealed PDF is read by range (range()); the rest is opened here.
-      const lazy = sealed && type === 'application/pdf';
+      if (!sealed && await plainRefused()) throw new Error('File is not sealed');
+      // Only images and Office files up to 256 MB are opened whole here; the rest is read by range.
+      const lazy = sealed && !(type.startsWith('image/') || (OFFICE.test(extension(key)) && object.size <= 256 * 1024 * 1024));
       return {
         key, name: shown, size: sealed ? plainSize(object.size) : object.size, stored: object.size,
         contentType: object.contentType || 'application/octet-stream', sealed,

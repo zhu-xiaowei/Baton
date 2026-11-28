@@ -1,4 +1,4 @@
-import { previewInvoke as invoke, previewListen as listen } from './preview-native.js';
+import { previewInvoke as invoke, previewListen as listen, previewReset } from './preview-native.js';
 import { previewSizes, validatePreviewMessage } from '../../bridge/preview-protocol.mjs';
 import { openStream, relayFrameBytes } from './v2/direct-transport.js';
 
@@ -13,9 +13,6 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 // Bridge output arrives in chunks of `previewSizes().chunk` (larger on relay); native writes take CHUNK_BYTES.
 const NATIVE_CHARS = 4 * Math.floor(CHUNK_BYTES / 3);
 const sizes = () => previewSizes(relayFrameBytes());
-
-// Native listeners outlive a webview reload; release this window's leftovers before the first start.
-let nativeReset = null;
 
 function decodedLength(value) {
   return value.length / 4 * 3 - (value.endsWith('==') ? 2 : value.endsWith('=') ? 1 : 0);
@@ -160,7 +157,7 @@ export class PreviewTunnel {
         }
         this.unlisteners.push(unlisten);
       }
-      await (nativeReset ??= invoke('preview_reset').catch(() => {}));
+      await previewReset();
       this.localOrigin = await invoke('preview_start', {
         tunnelId: this.localId, preferredPort: this.target.port, mode: this.mode,
       });

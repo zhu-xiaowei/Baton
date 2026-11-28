@@ -210,21 +210,25 @@ Office files, images and PDFs that load in one request (≤ 8 MB) are kept in In
 
 Files between the App and its Bridges travel through `t/<accountId>/<key>` in the attachment
 bucket. It is a transfer channel, not storage: a lifecycle rule empties it after 7 days
-(`server/install.sh`; the pre-v2 prefixes `images/`, `files/`, `videos/`, `attachments/` expire after
-1 day), and the Bridge can upload any object again from its own disk.
+(`server/install.sh`; on Cloudflare after 1 hour, `server/cloudflare/deploy.mjs`; the pre-v2 prefixes
+`images/`, `files/`, `videos/`, `attachments/` expire after 1 day; unfinished multipart uploads after
+1 day), and the Bridge can upload any object again from its own disk. Every object is sealed
+(64 KiB AES-GCM records, `docs/media-streaming.md`).
 
 Both sides sign their own requests (SigV4 query authentication, presigned URLs only) in
 `bridge/transfer-store.mjs`, which the App imports too. Credentials are the direct-channel STS
 credentials (1 h, reused by the server while more than 10 minutes are left); their session policy
-adds `s3:GetObject` / `s3:PutObject` on `t/<accountId>/*` only. `storage` =
+adds `s3:GetObject` / `s3:PutObject` / `s3:AbortMultipartUpload` on `t/<accountId>/*` only. `storage` =
 `{bucket, region, accountId, accelerate}` comes with them: the App gets both from `/devices`, the
 Bridge from the `direct_rpc` `credentials` message on its control socket, and each renews them on
-demand. A URL never outlives its credentials (at most 1 h). The bucket's CORS exposes
-`x-amz-checksum-sha256`, `x-amz-meta-filename` and `x-amz-meta-content-type`.
+demand. A URL never outlives its credentials (at most 1 h). The bucket's CORS allows GET, PUT, HEAD,
+POST and DELETE (multipart) and exposes `ETag`, `x-amz-checksum-sha256`, `x-amz-meta-content-type`
+and `x-amz-meta-sealed`.
 
-`transfer` operations: `head`, `prepareUpload`, `uploadUrl`, `put`, `url` (inline with the type
-the key implies, or a download under a name), `fileInfo` (`{key, name, size, contentType, url,
-previewUrl, previewType}`) and `text`.
+`transfer` operations: `head`, `prepareUpload` (sealed: `seal`, `sealStream`, multipart `parts`),
+`uploadUrl`, `put`, `url` (inline with the type the key implies, or a download under a name), `bytes`,
+`range`, `records` (plain records by range, one GET), `openBody` (a whole sealed body as it streams),
+`fileInfo` (`{key, name, size, stored, sealed, contentType, url, previewUrl, previewType}`) and `text`.
 
 Attachment content IDs (`prepareUpload`): the App and Bridge compute `contentHash`, the SHA-256 of
 the whole file. The key becomes its first 32 hex digits plus the extension. A HEAD with

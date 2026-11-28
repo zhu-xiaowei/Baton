@@ -47,6 +47,7 @@ class FakeUpload {
   constructor() { this.upload = {}; this.headers = {}; }
   open(method, url) { this.method = method; this.url = url; }
   setRequestHeader(name, value) { this.headers[name] = value; }
+  getResponseHeader() { return '"etag"'; }
   send(body) {
     this.body = body;
     FakeUpload.requests.push(this);
