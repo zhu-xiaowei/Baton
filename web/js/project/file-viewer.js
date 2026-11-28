@@ -919,14 +919,8 @@ async function renderSource(absPath, text, truncated, lineHint, snippet) {
   });
 }
 
-// The player shows nothing while it waits for data (seeking, the next segment), so a spinner does.
 function showVideoBody(src) {
-  setBody('<div class="file-video-host"><video class="file-video" controls playsinline preload="metadata" src="' + src
-    + '"></video><div class="file-video-wait" hidden>' + loadingSpinner({ label: 'Loading video' }) + '</div></div>');
-  const video = document.querySelector('#fileOverlayBody .file-video');
-  const wait = video.nextElementSibling;
-  ['waiting', 'seeking'].forEach(name => video.addEventListener(name, () => { wait.hidden = false; }));
-  ['playing', 'canplay', 'error'].forEach(name => video.addEventListener(name, () => { wait.hidden = true; }));
+  setBody('<video class="file-video" controls playsinline preload="metadata" src="' + src + '"></video>');
 }
 
 // A project video: the Bridge uploaded it whole; it plays by range from the stored copy.
