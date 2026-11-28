@@ -11,6 +11,10 @@ const PROBES = ['version', 'rest', 'ws'];
 const iso = (t) => new Date(t).toISOString();
 const list = (text) => (text ?? '').split(',').filter(Boolean);
 const sum = (rows, f) => (rows ?? []).reduce((n, r) => n + (f(r) ?? 0), 0);
+// An account's hash in the usage dataset (usage.mjs accountHash); the probe's and purged accounts' points are left out.
+const hashOf = async (name) => [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(name)))].slice(0, 8)
+  .map((b) => b.toString(16).padStart(2, '0')).join('');
+const skipped = (env, state) => [env.PROBE_HASH, ...Object.values(state?.purged ?? {}).map((p) => p.hash)].map((h) => `'${h}'`).join(', ');
 
 // Until the operator adds the read-only token, analytics, the cost cap and their alerts stay off (probes still run).
 const NO_TOKEN = 'ANALYTICS_TOKEN is not set';
@@ -163,8 +167,8 @@ const LIVE = `query($a:string!,$z:string!,$day:Time!,$service:string!,$push:stri
     status:httpRequestsAdaptiveGroups(limit:20,filter:{datetime_geq:$day,clientRequestHTTPHost_in:$hosts},orderBy:[count_DESC]){count dimensions{edgeResponseStatus}}
   }}}`;
 
-async function users(env) {
-  const from = (days) => `FROM ${env.DATASET} WHERE timestamp > NOW() - INTERVAL '${days}' DAY AND blob2 != '${env.PROBE_HASH}'`;
+async function users(env, skip) {
+  const from = (days) => `FROM ${env.DATASET} WHERE timestamp > NOW() - INTERVAL '${days}' DAY AND blob2 NOT IN (${skip})`;
   const day = iso(Date.now()).slice(0, 10);
   const relayed = (days, when) => `SELECT blob4 AS role, count(DISTINCT blob2) AS n ${from(days)} AND blob1 = 'relay' AND ${when} GROUP BY role`;
   const [daily, wau, mau, dist, time, bridges, conns, relayDay, relayMonth, devices] = await Promise.all([
@@ -190,11 +194,11 @@ async function users(env) {
     relay: { day: roles(relayDay), month: roles(relayMonth) }, devices: roles(devices) };
 }
 
-async function live(env) {
+async function live(env, skip) {
   const day = iso(Date.now() - 1440 * MIN);
   const [v, u] = await Promise.all([
     gql(env, LIVE, { z: env.ZONE_ID, day, service: env.SERVICE_SCRIPT, push: env.PUSH_SCRIPT, nss: list(env.NAMESPACES), hosts: list(env.HOSTS) }),
-    env.DATASET ? users(env).catch((error) => ({ error: error.message })) : { error: 'no usage dataset' }]);
+    env.DATASET ? users(env, skip).catch((error) => ({ error: error.message })) : { error: 'no usage dataset' }]);
   const zone = v.zones[0];
   return { users: u, service: v.accounts[0].service, push: v.accounts[0].push, objects: v.accounts[0].objects, cpu: v.accounts[0].cpu[0]?.sum ?? {},
     countries: zone.countries.map((r) => [r.dimensions.clientCountryName, r.count]), devices: zone.devices.map((r) => [r.dimensions.clientDeviceType, r.count]),
@@ -245,6 +249,7 @@ export class MonitorStore extends DurableObject {
       if (p.ok && (state.fails[name] ?? 0) >= 2) this.alert(state, null, `${name} probe recovered`, `Answered in ${p.ms} ms.`);
       state.fails[name] = fails;
     }
+    if (used.accounts) used.accounts = used.accounts.filter((a) => !state.purged?.[a.name]);
     state.usageFails = used.error && used.error !== NO_TOKEN ? (state.usageFails ?? 0) + 1 : 0;
     if (state.usageFails === 2) this.alert(state, null, 'usage collection failing', `The cost cap is not enforced while this lasts: ${used.error}`);
     if (!used.error) {
@@ -297,7 +302,7 @@ export class MonitorStore extends DurableObject {
       const minutes = Math.min(90 * 1440, Math.ceil((now - (state.devicesAt ?? 0)) / MIN) + 15);
       try {
         for (const r of await ae(env, `SELECT blob8 AS id, blob1 AS role FROM ${env.DATASET} WHERE timestamp > NOW() - INTERVAL '${minutes}' MINUTE`
-          + ` AND blob1 IN ('app', 'bridge') AND blob8 != '' AND blob2 != '${env.PROBE_HASH}' GROUP BY id, role`)) {
+          + ` AND blob1 IN ('app', 'bridge') AND blob8 != '' AND blob2 NOT IN (${skipped(env, state)}) GROUP BY id, role`)) {
           this.sql.exec('INSERT OR IGNORE INTO devices VALUES (?, ?, ?)', r.id, r.role, now);
         }
         state.devicesAt = now;
@@ -313,8 +318,13 @@ export class MonitorStore extends DurableObject {
       state.log = [...fresh.map(([s]) => ({ t: now, subject: s, result })), ...(state.log ?? [])].slice(0, 30);
       state.unsent = result === 'sent' ? [] : alerts.slice(-20);
     }
-    // An unblock may have landed during the awaits above: keep it.
-    state.lifted = (await this.ctx.storage.get('state'))?.lifted ?? state.lifted;
+    // An unblock or a purge may have landed during the awaits above: keep it (a purge's device list is rebuilt next run).
+    const saved = await this.ctx.storage.get('state');
+    state.lifted = saved?.lifted ?? state.lifted;
+    if (Object.keys(saved?.purged ?? {}).length !== Object.keys(state.purged ?? {}).length) {
+      Object.assign(state, { purged: saved.purged, devicesAt: 0 });
+      this.sql.exec('DELETE FROM devices');
+    }
     for (const [name, m] of Object.entries(state.lifted ?? {})) if (m === month) delete state.blocked[name];
     const relays = new Set([...(await this.ctx.storage.list({ prefix: 'relay:' })).keys()].map((k) => k.slice(6))); // a retire meanwhile
     for (const name of Object.keys(state.relayStale ?? {})) if (!relays.has(name)) delete state.relayStale[name];
@@ -333,6 +343,20 @@ export class MonitorStore extends DurableObject {
     delete state.blocked[name];
     state.lifted = { ...state.lifted, [name]: iso(Date.now()).slice(0, 7) };
     await this.ctx.storage.put('state', state);
+    this.cached = null;
+    return true;
+  }
+
+  // The operator's purge of a test account (dashboard): its object is emptied, and its points leave every figure. The
+  // device list is rebuilt from the dataset (up to 90 days) at the next run without them.
+  async purge(name) {
+    if (!/^[0-9a-f]{16}$/.test(name) || name === this.env.PROBE_ACCOUNT) return false;
+    await this.env.ACCOUNT.get(this.env.ACCOUNT.idFromName(name)).purge();
+    const state = (await this.ctx.storage.get('state')) ?? {};
+    state.purged = { ...state.purged, [name]: { hash: await hashOf(name), at: Date.now() } };
+    state.devicesAt = 0;
+    await this.ctx.storage.put('state', state);
+    this.sql.exec('DELETE FROM devices');
     this.cached = null;
     return true;
   }
@@ -361,11 +385,13 @@ export class MonitorStore extends DurableObject {
     });
     const uptime = (from) => this.sql.exec('SELECT count(*) AS n, sum(ok & 1) AS v, sum((ok >> 1) & 1) AS r, sum((ok >> 2) & 1) AS w FROM snaps WHERE t >= ?', from).one();
     const state = (await this.ctx.storage.get('state')) ?? {};
-    const value = { now, latest: latest && { t: latest.t, ...JSON.parse(latest.data) }, series, uptime: { today: uptime(midnight), week: uptime(now - 7 * 1440 * MIN) },
+    const last = latest && { t: latest.t, ...JSON.parse(latest.data) };
+    if (last?.accounts) last.accounts = last.accounts.filter((a) => !state.purged?.[a.name]); // a snapshot taken before a purge
+    const value = { now, latest: last, series, probe: this.env.PROBE_ACCOUNT, uptime: { today: uptime(midnight), week: uptime(now - 7 * 1440 * MIN) },
       blocked: state.blocked ?? {}, alerts: state.log ?? [], cap: Number(this.env.COST_CAP || 1),
       relays: Object.fromEntries([...(await this.ctx.storage.list({ prefix: 'relay:' }))].map(([k, r]) => [k.slice(6), r])),
       devices: Object.fromEntries(this.sql.exec('SELECT role, count(*) AS n FROM devices GROUP BY role').toArray().map((r) => [r.role, r.n])),
-      live: await live(this.env).catch((error) => ({ error: error.message })) };
+      live: await live(this.env, skipped(this.env, state)).catch((error) => ({ error: error.message })) };
     this.cached = { until: now + MIN, value };
     return value;
   }
@@ -425,6 +451,9 @@ export default {
     // JSON only: a cross-site form cannot send it without a preflight, which this Worker never answers.
     if (pathname === '/api/unblock' && request.method === 'POST' && request.headers.get('content-type') === 'application/json') {
       return Response.json({ ok: await store(env).unblock(String((await request.json()).account ?? '')) }, { headers: HEADERS });
+    }
+    if (pathname === '/api/purge' && request.method === 'POST' && request.headers.get('content-type') === 'application/json') {
+      return Response.json({ ok: await store(env).purge(String((await request.json()).account ?? '')) }, { headers: HEADERS });
     }
     return new Response('Not Found', { status: 404 });
   },

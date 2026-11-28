@@ -153,6 +153,11 @@ function pointAt(svg, clientX) {
   document.getElementById(`cap${svg.dataset.chart}`).textContent = `${c.kind === 'bar' ? c.label(p) : hm(p[0])}　${c.fmt(p[1])}`;
 }
 document.addEventListener('click', async (e) => {
+  const purge = e.target.dataset?.purge;
+  if (purge && confirm(`清除测试账户 ${purge}？\n它的设备、Session 路由和所有数据都会删除，不能恢复；统计里也不再计入它。`)) {
+    await fetch('api/purge', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ account: purge }) });
+    return load();
+  }
   const name = e.target.dataset?.unblock;
   if (!name || !confirm(`解除 ${name} 的封禁？`)) return;
   await fetch('api/unblock', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ account: name }) });
@@ -270,7 +275,8 @@ function render(d) {
       + `<div class="track"><div class="fill ${level(share)}" style="width:${Math.max(2, Math.min(100, share * 100))}%"></div></div><span class="num">${pct(share)}</span></div>`
       + `<div class="sub" style="margin:-4px 0 8px">${(QUOTA[k]?.[2] ?? n)(used)} / ${(QUOTA[k]?.[2] ?? n)(limit)}</div>`).join('') : NA()),
     card(`账户费用 Top 10 ${info('本月至今，按账户的 Durable Object 用量估算；超过上限的账户封禁到下月 1 日。')}`,
-      (L0.accounts ?? []).length ? L0.accounts.map((a, i) => `<div class="row"><span class="name">${i + 1}. <code>${esc(a.name)}</code>${d.blocked?.[a.name] ? ' <span class="bad">已封禁</span>' : ''}</span>`
+      (L0.accounts ?? []).length ? L0.accounts.map((a, i) => `<div class="row"><span class="name">${i + 1}. <code>${esc(a.name)}</code>${d.blocked?.[a.name] ? ' <span class="bad">已封禁</span>' : ''}`
+        + `${a.name === d.probe ? '' : ` <button class="mini" data-purge="${esc(a.name)}" type="button">清除</button>`}</span>`
         + `<div class="track"><div class="fill ${level(a.capCost / d.cap)}" style="width:${Math.max(2, Math.min(100, (100 * a.capCost) / d.cap))}%"></div></div><span class="num">${usd(a.cost)}</span></div>`).join('')
         + `<div class="sub">条长 = 计入上限的费用 / ${usd(d.cap)}</div>` : NA(), '本月'),
     card('已封禁账户', Object.keys(d.blocked ?? {}).length ? Object.entries(d.blocked).map(([k, b]) => `<div class="line blocked"><code title="${esc(k)}">${esc(k)}</code>`

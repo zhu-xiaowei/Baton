@@ -174,6 +174,16 @@ export class AccountObject extends DurableObject {
     if (until > Date.now()) for (const role of ['app', 'bridge', 'notify']) for (const [ws] of this.live(role)) await this.retire(ws, 4429, 'monthly_limit');
   }
 
+  // The monitor's operator purge (a test account, through its binding like monthlyLimit): sockets close, every row goes.
+  async purge() {
+    for (const ws of this.ctx.getWebSockets()) { try { ws.close(4401, 'revoked'); } catch {} }
+    await this.ctx.storage.deleteAlarm();
+    await this.ctx.storage.deleteAll();
+    this.store = serve(createItems(this.ctx.storage.sql), (fn) => this.ctx.storage.transactionSync(fn)); // an empty table again
+    this.server = null;
+    this.usage = new Usage(this.ctx, this.env);
+  }
+
   // An alarm armed by an older version: sweep once, re-arm nothing.
   async alarm() {
     this.swept = 0;
