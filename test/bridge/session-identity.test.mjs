@@ -4,13 +4,14 @@ import os from 'os';
 import path from 'path';
 import test from 'node:test';
 import {
+  normalizeRuntime,
   parseStorageSessionId,
   projectHashCandidatesFromCwd,
   projectHashFromCwd,
+  registerRuntimeDescriptor,
   storageSessionId,
 } from '../../bridge/session-identity.mjs';
 import { resolveCodexHomes } from '../../bridge/runtime-capabilities.mjs';
-import { detectRegisteredRuntimeCapabilities } from '../../bridge/runtime-registry.mjs';
 
 test('storage ids preserve Claude and prefix Codex exactly once', () => {
   assert.equal(storageSessionId('claude', 'same-id'), 'same-id');
@@ -26,6 +27,13 @@ test('storage ids preserve Claude and prefix Codex exactly once', () => {
     nativeSessionId: 'same-id',
     sessionId: 'same-id',
   });
+});
+
+test('registered runtimes get their own prefix and unknown ones are never claude', () => {
+  registerRuntimeDescriptor({ runtime: 'rt1' });
+  assert.equal(storageSessionId('rt1', 'x'), 'rt1:x');
+  assert.deepEqual(parseStorageSessionId('rt1:x'), { runtime: 'rt1', nativeSessionId: 'x', sessionId: 'rt1:x' });
+  assert.equal(normalizeRuntime('nope'), null);
 });
 
 test('POSIX path hashing matches existing Claude format and collapses worktrees', () => {
@@ -64,33 +72,4 @@ test('Codex homes ignore legacy WSL profile discovery', () => {
     USERPROFILE: 'C:\\Users\\Admin',
   });
   assert.deepEqual(homes, [path.join(os.homedir(), '.codex')]);
-});
-
-test('runtime capabilities distinguish installed binaries from history', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'baton-runtime-'));
-  const claudeProjects = path.join(root, 'claude-projects');
-  const codexHome = path.join(root, 'codex');
-  fs.mkdirSync(path.join(codexHome, 'sessions'), { recursive: true });
-  try {
-    const capabilities = detectRegisteredRuntimeCapabilities({
-      claude: {
-        claudeProjects,
-        claudeBin: null,
-        skipVersions: true,
-      },
-      codex: {
-        codexHomes: [codexHome],
-        codexBin: '/fake/codex',
-        skipVersions: true,
-      },
-    });
-    assert.equal(capabilities.claude.installed, false);
-    assert.equal(capabilities.claude.historyAvailable, false);
-    assert.equal(capabilities.codex.installed, true);
-    assert.equal(capabilities.codex.historyAvailable, true);
-    assert.equal(capabilities.codex.canRead, true);
-    assert.equal(capabilities.codex.canCreate, true);
-  } finally {
-    fs.rmSync(root, { recursive: true, force: true });
-  }
 });

@@ -1,108 +1,41 @@
-import { post, postRequired, get } from './http.mjs';
-import { synced, uploadMessages } from './extract.mjs';
+import { synced } from './extract.mjs';
 import { parseStorageSessionId, storageSessionId } from './session-identity.mjs';
-import {
-  detectRegisteredRuntimeCapabilities,
-  getRuntimeAdapter,
-  runtimeAdapters,
-} from './runtime-registry.mjs';
+import { getRuntimeAdapter, runtimeAdapters } from './runtime-registry.mjs';
 import { heldForAgents, pendingInteractionDetail, poolAwaitsAgents, poolOwns } from './ws.mjs';
-import { rebuildAgentCounts, trackAgentSession } from './agent-counts.mjs';
-
-const INITIAL_SYNC_WINDOW_MS = 86400_000;
+import { activeChildSessions, rebuildAgentCounts } from './agent-counts.mjs';
+import { ObservedMap } from './observed-map.mjs';
+import { observeSessions } from './notify.mjs';
+import { parseClaudeSubagentSessionId } from './claude-subagent.mjs';
+import { sessionIndex } from './session-index.mjs';
 
 // Startup catalog keys let the watcher distinguish new sessions from resumed ones.
 export const recentSessions = new Set();
 
-// Cache of last-known status per sessionId for periodic stopped detection
-export const lastKnownStatus = new Map();
-
-// Seeded project hashes keep the watcher from reconciling existing projects.
-export const knownProjects = new Set();
-
-export function buildCatalogAggregates(sessions, runtimeCapabilities = {}) {
-  sessions = sessions.filter((session) => !session.parentSessionId);
-  const projects = new Map();
-  let deviceLastActive = '';
-  let runningCount = 0;
-  let idleCount = 0;
-  for (const s of sessions) {
-    const activeStatus = s.activeStatus || s.status;
-    if (s.lastActive > deviceLastActive) deviceLastActive = s.lastActive;
-    if (activeStatus === 'running') runningCount++;
-    else if (activeStatus === 'needs_input') idleCount++;
-    let p = projects.get(s.project);
-    if (!p) {
-      p = {
-        projectHash: s.project,
-        projectName: s.projectName || s.project,
-        sessionCount: 0, runningCount: 0, idleCount: 0,
-        lastActive: '',
-      };
-      projects.set(s.project, p);
-    }
-    p.sessionCount++;
-    // idleCount stores needs_input for the existing DDB field.
-    if (activeStatus === 'running') p.runningCount++;
-    else if (activeStatus === 'needs_input') p.idleCount++;
-    if (s.lastActive > p.lastActive) p.lastActive = s.lastActive;
-  }
-  const projectAggregates = Array.from(projects.values());
-  const deviceAggregate = {
-    sessionCount: sessions.length,
-    projectCount: projectAggregates.length,
-    runningCount,
-    idleCount,
-    lastActive: deviceLastActive,
-    runtimeCapabilities,
-  };
-  return { deviceAggregate, projectAggregates };
-}
-
-export function isRecentSession(lastActive, now = Date.now()) {
-  return Date.parse(lastActive) >= now - INITIAL_SYNC_WINDOW_MS;
-}
+// Cache of last-known status per sessionId for periodic stopped detection.
+// Changes also invalidate the v2 list answers (see session-index.mjs).
+export const lastKnownStatus = new ObservedMap();
 
 function publicSession(session) {
   const { _filePath, _lineCount, _provisional, ...item } = session;
   return item;
 }
 
-export async function uploadCatalog(config, sessions, aggregates, catalogComplete, postFn = post) {
-  // ~350-800 bytes per session, 5000 is safely under Lambda's 6MB request limit.
-  const BATCH = 5000;
-  for (let i = 0; i < sessions.length; i += BATCH) {
-    const body = {
-      deviceName: config.deviceName,
-      deviceDisplayName: config.deviceDisplayName || config.deviceName,
-      os: process.platform,
-      sessions: sessions.slice(i, i + BATCH).map(publicSession),
-      catalogComplete,
-    };
-    if (i === 0) {
-      body.device = aggregates.deviceAggregate;
-      body.projects = aggregates.projectAggregates;
-    }
-    await postFn('/api/bridge/sync-sessions', body);
+// Every Session row the runtimes derive ends here: the status cache and the notifier.
+export function reportSessions(config, sessions, extra = {}) {
+  const body = {
+    deviceName: config.deviceName,
+    os: process.platform,
+    sessions: sessions.map(publicSession),
+    ...(extra.agentCountUpdates?.length ? { agentCountUpdates: extra.agentCountUpdates } : {}),
+  };
+  for (const session of body.sessions) {
+    lastKnownStatus.set(storageSessionId(session.runtime, session.nativeSessionId || session.id), session.status);
   }
-  if (sessions.length === 0) {
-    const body = {
-      deviceName: config.deviceName,
-      deviceDisplayName: config.deviceDisplayName || config.deviceName,
-      os: process.platform,
-      sessions: [],
-      catalogComplete,
-    };
-    body.device = aggregates.deviceAggregate;
-    body.projects = aggregates.projectAggregates;
-    await postFn('/api/bridge/sync-sessions', body);
-  }
+  observeSessions(body);
 }
 
-export async function syncSessions(config, opts = {}) {
+export function syncSessions(config, opts = {}) {
   const now = opts.now ?? Date.now();
-  const postFn = opts.postFn || post;
-  const messageUploader = opts.messageUploader || uploadMessages;
   const runtimeCatalogs = opts.runtimeCatalogs || {};
   const runtimeOptions = opts.runtimeOptions || {};
   const catalogs = runtimeAdapters.map((adapter) => ({
@@ -114,24 +47,20 @@ export async function syncSessions(config, opts = {}) {
   }));
   const sessions = catalogs.flatMap(({ catalog }) => catalog.sessions);
   rebuildAgentCounts(sessions);
-  const catalogComplete = catalogs.every(({ catalog }) => catalog.complete);
-  const runtimeCapabilities = opts.runtimeCapabilities
-    || detectRegisteredRuntimeCapabilities(runtimeOptions);
-  const aggregates = buildCatalogAggregates(sessions, runtimeCapabilities);
 
   for (const session of sessions) {
     const sessionKey = storageSessionId(session.runtime, session.nativeSessionId);
     recentSessions.add(sessionKey);
-    lastKnownStatus.set(sessionKey, session.status);
-    knownProjects.add(session.project);
+    // Watchers push only what is written from now on; history is read from the files on demand.
+    try {
+      getRuntimeAdapter(session.runtime).baselineToEnd(session, { storageSessionId: sessionKey, watermarks: synced });
+    } catch {}
   }
+  reportSessions(config, sessions);
 
-  if (!catalogComplete) {
-    console.error('[sync] discovery incomplete; server will preserve existing DEV/PROJ aggregates');
-  }
-  await uploadCatalog(config, sessions, aggregates, catalogComplete, postFn);
-
-  const { runningCount, idleCount: needsInputCount } = aggregates.deviceAggregate;
+  const roots = sessions.filter((session) => !session.parentSessionId);
+  const runningCount = roots.filter((s) => (s.activeStatus || s.status) === 'running').length;
+  const needsInputCount = roots.filter((s) => (s.activeStatus || s.status) === 'needs_input').length;
   const runtimeCounts = catalogs
     .map(({ adapter, catalog }) => `${adapter.displayName} ${catalog.sessions.length}`)
     .join(', ');
@@ -142,101 +71,13 @@ export async function syncSessions(config, opts = {}) {
       console.log(`[sync] ${adapter.displayName} scan: ${diagnostics.files || 0} files, ${diagnostics.malformedLines || 0} malformed lines, ${diagnostics.errors?.length || 0} I/O errors`);
     }
   }
-
-  if (opts.skipMessages) {
-    for (const session of sessions) {
-      const key = storageSessionId(session.runtime, session.nativeSessionId);
-      try {
-        getRuntimeAdapter(session.runtime).baselineToEnd(session, {
-          storageSessionId: key,
-          watermarks: synced,
-        });
-      } catch {}
-    }
-    const runtimeDiagnostics = Object.fromEntries(
-      catalogs.map(({ adapter, catalog }) => [adapter.runtime, catalog.diagnostics || {}]),
-    );
-    return {
-      catalogComplete,
-      sessions,
-      runtimeDiagnostics,
-      messageCount: 0,
-    };
-  }
-
-  const syncJobs = [];
-  const queued = new Set();
-  let messageCount = 0;
-
-  for (const session of sessions) {
-    const sessionKey = storageSessionId(session.runtime, session.nativeSessionId);
-    const adapter = getRuntimeAdapter(session.runtime);
-    if (queued.has(sessionKey)) continue;
-    if (adapter.shouldSkipInitial(session, {
-      storageSessionId: sessionKey,
-      watermarks: synced,
-    })) continue;
-    const status = lastKnownStatus.get(sessionKey) || 'completed';
-    const isLive = status !== 'completed';
-    const isRecent = isRecentSession(session.lastActive, now);
-    if (!isLive && !isRecent) continue;
-    queued.add(sessionKey);
-    syncJobs.push(async () => {
-      const { messages } = await adapter.syncInitialMessages(session, {
-        storageSessionId: sessionKey,
-        watermarks: synced,
-        uploader: messageUploader,
-      });
-      if (messages.length > 0) {
-        console.log(`[init] ${adapter.runtime}:${session.nativeSessionId.slice(0, 8)}: ${messages.length} messages (${isLive ? status : 'recent'})`);
-      }
-      return messages.length;
-    });
-  }
-
-  if (syncJobs.length > 0) {
-    console.log(`[init] syncing ${syncJobs.length} sessions (running/idle + recent 24h)`);
-    // Two concurrent extractions bound startup memory for large rollouts.
-    const CONCURRENCY = 2;
-    let next = 0;
-    const inflight = new Set();
-
-    function launch() {
-      while (inflight.size < CONCURRENCY && next < syncJobs.length) {
-        const idx = next++;
-        const p = syncJobs[idx]()
-          .then((n) => { messageCount += n; })
-          .catch((error) => console.error(`[init] message sync failed: ${error.message}`))
-          .finally(() => inflight.delete(p));
-        inflight.add(p);
-      }
-    }
-
-    launch();
-    while (inflight.size > 0) {
-      await Promise.race(inflight);
-      launch();
-    }
-    if (messageCount > 0) console.log(`[init] ${messageCount} messages synced to DDB`);
-  }
   const runtimeDiagnostics = Object.fromEntries(
     catalogs.map(({ adapter, catalog }) => [adapter.runtime, catalog.diagnostics || {}]),
   );
-  return {
-    catalogComplete,
-    sessions,
-    runtimeDiagnostics,
-    messageCount,
-  };
+  return { sessions, runtimeDiagnostics };
 }
 
-// Recount DEV/PROJ aggregates from DDB session rows.
-export async function reconcile(config) {
-  try { await post('/api/bridge/reconcile', { deviceName: config.deviceName, os: process.platform }); }
-  catch {}
-}
-
-// Push runtime-owned status metadata and counter deltas.
+// Push runtime-owned status metadata.
 export async function updateSessionStatus(
   config,
   sessionId,
@@ -257,54 +98,48 @@ export async function updateSessionStatus(
     detail,
     {
       lastKnownStatus,
-      postFn: postRequired,
+      report: reportSessions,
       ...options,
     },
   );
 }
 
-// Settle stale active rows through runtime status adapters.
-export async function checkStopped(config) {
-  const active = await get('/api/bridge/active-sessions');
-  if (!active || !Array.isArray(active.sessions)) return;
-
+// Settle active root Sessions whose process went away.
+export function checkStopped(config, index = sessionIndex) {
+  const roots = new Map(index.catalog().roots.map((row) => [row.sessionId, row]));
   const updates = [];
-  const statusDeltas = [];
   const agentCountUpdates = [];
   const statusContexts = new Map();
 
-  for (const s of active.sessions) {
-    if (s.deviceName !== config.deviceName || !s.sessionId) continue;
-    const identity = parseStorageSessionId(s.sessionId, s.runtime);
+  for (const [sessionId, status] of [...lastKnownStatus]) {
+    const identity = parseStorageSessionId(sessionId);
+    // A finished root is still checked while it counts active children, so orphans settle.
+    if (status !== 'running' && status !== 'needs_input'
+      && !(roots.get(identity.sessionId)?.agentCount && activeChildSessions(identity.sessionId).length)) continue;
     if (pendingInteractionDetail(identity.sessionId) !== null) continue;
     const adapter = getRuntimeAdapter(identity.runtime);
     if (!adapter.features.statusPolling) continue;
+    const row = roots.get(identity.sessionId);
+    // Children settle with their root; a root without a row is checked only once its file is gone.
+    if (!row && (parseClaudeSubagentSessionId(identity.nativeSessionId)
+      || adapter.findSessionFile(identity.nativeSessionId))) continue;
     if (!statusContexts.has(adapter.runtime)) {
-      statusContexts.set(adapter.runtime, adapter.createStatusContext({
-        lastKnownStatus,
-        poolOwns,
-        poolAwaitsAgents,
-      }));
+      statusContexts.set(adapter.runtime, adapter.createStatusContext({ poolOwns, poolAwaitsAgents }));
     }
     const result = adapter.inspectActiveSession({
-      ...s,
+      sessionId: identity.sessionId,
       nativeSessionId: identity.nativeSessionId,
+      runtime: identity.runtime,
+      status,
+      projectHash: row?.project || '',
+      preview: row?.preview || '',
+      lastActive: row ? new Date(row.ms).toISOString() : '',
     }, statusContexts.get(adapter.runtime));
     if (!result) continue;
     if (adapter.runtime === 'claude' && result.session) heldForAgents.set(identity.sessionId, !!result.session.backgroundAgents);
-    if (result.session) statusDeltas.push(result.statusDelta);
     updates.push(...[result.session || [], ...(result.extraSessions || [])].flat());
     agentCountUpdates.push(...(result.agentCountUpdates || []));
   }
 
-  if (updates.length > 0) {
-    const res = await post('/api/bridge/sync-sessions', {
-      deviceName: config.deviceName,
-      os: process.platform,
-      sessions: updates.map(publicSession),
-      statusDeltas,
-      ...(agentCountUpdates.length ? { agentCountUpdates } : {}),
-    });
-    if (res?.ok) for (const session of updates) if (session.parentSessionId) trackAgentSession(session);
-  }
+  if (updates.length > 0) reportSessions(config, updates, { agentCountUpdates });
 }

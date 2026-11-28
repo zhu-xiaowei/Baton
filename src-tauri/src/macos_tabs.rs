@@ -1,4 +1,4 @@
-// macOS tabs: each window holds a tab-strip webview in the titlebar row plus one content
+// macOS and Windows tabs: each window holds a tab-strip webview in the titlebar row plus one content
 // webview per tab. Hidden tabs keep their own page, draft, navigation and connection.
 use serde::Serialize;
 
@@ -56,10 +56,22 @@ pub async fn macos_tabs_set_title(webview: tauri::Webview, title: String) -> Res
   imp::set_title(&webview, &title)
 }
 
-#[cfg(not(target_os = "macos"))]
+// The root Session a tab shows ('' when none), reported as the page opens or leaves one.
+#[tauri::command]
+pub async fn macos_tabs_set_session(webview: tauri::Webview, session: String) -> Result<(), String> {
+  imp::set_session(&webview, &session)
+}
+
+// A tapped notification: the leftmost tab showing its Session, else a new tab (rightmost) that opens it.
+#[tauri::command]
+pub async fn macos_tabs_open_session(webview: tauri::Webview, session: String, target: serde_json::Value) -> Result<(), String> {
+  imp::open_session(&webview, &session, &target)
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 mod imp {
   use super::TabsState;
-  const UNSUPPORTED: &str = "Tabs are only available on macOS";
+  const UNSUPPORTED: &str = "Tabs are only available on macOS and Windows";
   pub fn state(_: &tauri::Webview) -> Result<TabsState, String> { Err(UNSUPPORTED.into()) }
   pub fn new_tab(_: &tauri::Webview) -> Result<(), String> { Err(UNSUPPORTED.into()) }
   pub fn select(_: &tauri::Webview, _: &str) -> Result<(), String> { Err(UNSUPPORTED.into()) }
@@ -68,21 +80,30 @@ mod imp {
   pub fn move_tab(_: &tauri::Webview, _: &str, _: usize) -> Result<(), String> { Err(UNSUPPORTED.into()) }
   pub fn close(_: &tauri::Webview, _: Option<&str>) -> Result<(), String> { Err(UNSUPPORTED.into()) }
   pub fn set_title(_: &tauri::Webview, _: &str) -> Result<(), String> { Err(UNSUPPORTED.into()) }
+  pub fn set_session(_: &tauri::Webview, _: &str) -> Result<(), String> { Err(UNSUPPORTED.into()) }
+  pub fn open_session(_: &tauri::Webview, _: &str, _: &serde_json::Value) -> Result<(), String> { Err(UNSUPPORTED.into()) }
 }
 
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+pub use imp::attach;
+#[cfg(target_os = "windows")]
+pub use imp::{focus_selected, STRIP_HEIGHT};
 #[cfg(target_os = "macos")]
-pub use imp::{attach, handle_menu, setup_menu};
+pub use imp::{handle_menu, setup_menu};
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 mod imp {
   use super::{Tab, TabsState};
-  use objc2::{msg_send, sel};
-  use objc2_app_kit::{NSAutoresizingMaskOptions, NSView, NSWindow};
-  use objc2_foundation::{NSObjectProtocol, NSPoint, NSRect, NSSize};
+  #[cfg(target_os = "macos")]
+  use {
+    objc2::{msg_send, sel},
+    objc2_app_kit::{NSAutoresizingMaskOptions, NSView, NSWindow},
+    objc2_foundation::{NSObjectProtocol, NSPoint, NSRect, NSSize},
+    tauri::menu::{Menu, MenuItemBuilder, MenuItemKind, PredefinedMenuItem, Submenu, WINDOW_SUBMENU_ID},
+  };
   use std::collections::HashMap;
   use std::sync::atomic::{AtomicUsize, Ordering};
   use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
-  use tauri::menu::{Menu, MenuItemBuilder, MenuItemKind, PredefinedMenuItem, Submenu, WINDOW_SUBMENU_ID};
   use tauri::{
     AppHandle, Emitter, EventTarget, LogicalPosition, LogicalSize, Manager, Webview, WebviewBuilder,
     WebviewUrl, Window,
@@ -99,6 +120,7 @@ mod imp {
     order: Vec<String>,
     selected: String,
     titles: HashMap<String, String>,
+    sessions: HashMap<String, String>,
     fullscreen: bool,
   }
 
@@ -134,6 +156,7 @@ mod imp {
   // AppKit's frame view supports a custom titlebar height and lays the traffic lights out
   // within it. Giving it the strip height makes AppKit itself place them on the strip, so
   // nothing moves them afterwards.
+  #[cfg(target_os = "macos")]
   fn titlebar_follows_strip(window: &Window) {
     let Ok(ptr) = window.ns_window() else { return };
     let ptr = ptr as usize;
@@ -147,6 +170,7 @@ mod imp {
 
   // Wry pins child webviews to the top-left; AppKit autoresizing keeps the strip and content
   // aligned during live resize. Wry's parent view is not flipped, so y grows upwards.
+  #[cfg(target_os = "macos")]
   fn place(webview: &Webview, strip: bool) {
     let _ = webview.with_webview(move |platform| unsafe {
       let Some(view) = (platform.inner() as *const NSView).as_ref() else { return };
@@ -162,8 +186,36 @@ mod imp {
     });
   }
 
+  // No autoresizing on Windows: laid out again on each resize, leaving the caption buttons' column and
+  // the top resize row to the window (windows_caption.rs).
+  #[cfg(target_os = "windows")]
+  fn place(webview: &Webview, strip: bool) {
+    let window = webview.window();
+    let (Ok(size), Ok(scale)) = (window.inner_size(), window.scale_factor()) else { return };
+    if size.width == 0 || size.height == 0 { return; } // minimized
+    let top = ((STRIP_HEIGHT * scale).round() as u32).min(size.height);
+    let (y, width, height) = if strip {
+      let border = crate::windows_caption::top_border(&window).min(top);
+      (border, size.width.saturating_sub(crate::windows_caption::width(scale)), top - border)
+    } else {
+      (top, size.width, size.height - top)
+    };
+    let _ = webview.set_bounds(tauri::Rect {
+      position: tauri::PhysicalPosition::new(0, y as i32).into(),
+      size: tauri::PhysicalSize::new(width.max(1), height.max(1)).into(),
+    });
+  }
+
+  #[cfg(target_os = "windows")]
+  fn layout(window: &Window) {
+    let Ok(tabs) = with_tabs(window.label(), |tabs| tabs.order.clone()) else { return };
+    if let Some(strip) = window.app_handle().get_webview(&strip_label(window.label())) { place(&strip, true); }
+    for tab in tabs.iter().filter_map(|tab| window.app_handle().get_webview(tab)) { place(&tab, false); }
+  }
+
   fn release(app: &AppHandle, tab: &str) {
     crate::preview_proxy::release_owner(Arc::clone(app.state::<Arc<crate::preview_proxy::PreviewProxy>>().inner()), tab.to_string());
+    #[cfg(target_os = "macos")]
     tauri_plugin_preview_webview::release_owner(app, tab);
   }
 
@@ -186,12 +238,18 @@ mod imp {
       order: vec![first.label().to_string()],
       selected: first.label().to_string(),
       titles: HashMap::new(),
+      sessions: HashMap::new(),
       fullscreen: false,
     });
     let owner = window.clone();
+    #[cfg(target_os = "macos")]
     titlebar_follows_strip(window);
     window.on_window_event(move |event| match event {
+      #[cfg(target_os = "windows")]
+      tauri::WindowEvent::ScaleFactorChanged { .. } => layout(&owner),
       tauri::WindowEvent::Resized(_) => {
+        #[cfg(target_os = "windows")]
+        layout(&owner);
         let fullscreen = owner.is_fullscreen().unwrap_or(false);
         let changed = with_tabs(owner.label(), |tabs| std::mem::replace(&mut tabs.fullscreen, fullscreen) != fullscreen);
         if changed.unwrap_or(false) { broadcast(&owner); }
@@ -203,21 +261,31 @@ mod imp {
       }
       _ => {}
     });
+    // The strip webview, created last, would otherwise keep the focus.
+    #[cfg(target_os = "windows")]
+    focus_selected(window);
     Ok(())
+  }
+
+  #[cfg(target_os = "windows")]
+  pub fn focus_selected(window: &Window) {
+    let selected = with_tabs(window.label(), |tabs| tabs.selected.clone());
+    if let Some(tab) = selected.ok().and_then(|id| window.app_handle().get_webview(&id)) { let _ = tab.set_focus(); }
   }
 
   pub fn state(webview: &Webview) -> Result<TabsState, String> {
     with_tabs(webview.window().label(), |tabs| snapshot(tabs))
   }
 
-  fn open(window: &Window) -> Result<(), String> {
+  // `script` runs before the page: the notification a new tab opens.
+  fn open(window: &Window, script: &str) -> Result<(), String> {
     let size = window.inner_size().and_then(|size| Ok(size.to_logical::<f64>(window.scale_factor()?)))
       .map_err(|e| e.to_string())?;
     let label = format!("tab-{}", TAB_SEQ.fetch_add(1, Ordering::Relaxed) + 1);
     let webview = window.add_child(
       WebviewBuilder::new(&label, WebviewUrl::App("index.html".into()))
         .disable_drag_drop_handler()
-        .initialization_script(format!("window.__BATON_NATIVE_THEME__ = {:?};", crate::appearance::current(window.app_handle()).preference))
+        .initialization_script(format!("window.__BATON_NATIVE_THEME__ = {:?};{script}", crate::appearance::current(window.app_handle()).preference))
         .background_color(crate::appearance::current(window.app_handle()).color(false)),
       LogicalPosition::new(0.0, STRIP_HEIGHT),
       LogicalSize::new(size.width, (size.height - STRIP_HEIGHT).max(1.0)),
@@ -228,7 +296,30 @@ mod imp {
   }
 
   pub fn new_tab(webview: &Webview) -> Result<(), String> {
-    open(&webview.window())
+    open(&webview.window(), "")
+  }
+
+  pub fn set_session(webview: &Webview, session: &str) -> Result<(), String> {
+    let id = webview.label().to_string();
+    with_tabs(webview.window().label(), |tabs| {
+      if session.is_empty() { tabs.sessions.remove(&id); } else if tabs.order.contains(&id) { tabs.sessions.insert(id, session.to_string()); }
+    })
+  }
+
+  pub fn open_session(webview: &Webview, session: &str, target: &serde_json::Value) -> Result<(), String> {
+    let window = webview.window();
+    let showing = with_tabs(window.label(), |tabs| {
+      tabs.order.iter().find(|tab| tabs.sessions.get(*tab).map(String::as_str) == Some(session)).cloned()
+    })?;
+    match showing {
+      // That tab opens the exact Session (a thread of its root) unless it shows it already.
+      Some(id) => {
+        let _ = window.emit_to(EventTarget::webview(&id), "macos-tabs-notify", target);
+        show(&window, &id)
+      }
+      // Re-serialized, so the page gets a JSON literal and nothing else.
+      None => open(&window, &format!("window.__BATON_NOTIFY__ = {};", serde_json::to_string(target).map_err(|e| e.to_string())?)),
+    }
   }
 
   // Show the new tab before hiding the old one so the content area never flashes empty.
@@ -240,10 +331,12 @@ mod imp {
     let app = window.app_handle();
     if let Some(next) = app.get_webview(id) {
       next.show().map_err(|e| e.to_string())?;
+      #[cfg(target_os = "macos")]
       tauri_plugin_preview_webview::set_owner_visible(app, id, true);
       let _ = next.set_focus();
     }
     if previous != id {
+      #[cfg(target_os = "macos")]
       tauri_plugin_preview_webview::set_owner_visible(app, &previous, false);
       if let Some(old) = app.get_webview(&previous) { let _ = old.hide(); }
     }
@@ -296,6 +389,7 @@ mod imp {
         with_tabs(window.label(), |tabs| {
           tabs.order.retain(|tab| *tab != id);
           tabs.titles.remove(&id);
+          tabs.sessions.remove(&id);
         })?;
         let app = window.app_handle();
         release(app, &id);
@@ -335,6 +429,7 @@ mod imp {
     Ok(())
   }
 
+  #[cfg(target_os = "macos")]
   pub fn setup_menu(app: &tauri::App, menu: &Menu<tauri::Wry>, file: &Submenu<tauri::Wry>) -> tauri::Result<()> {
     // Cmd+W closes a tab, so drop the predefined Close Window items that also claim it.
     for submenu in [Some(file.clone()), menu.get(WINDOW_SUBMENU_ID).and_then(|item| item.as_submenu().cloned())]
@@ -354,6 +449,7 @@ mod imp {
   }
 
   // Menu events run on the main thread; tab work is dispatched so it never blocks AppKit.
+  #[cfg(target_os = "macos")]
   pub fn handle_menu(app: &AppHandle, id: &str) {
     if !matches!(id, "macos_tab_new" | "macos_tab_close" | "macos_window_close") {
       return;
@@ -365,7 +461,7 @@ mod imp {
         return;
       };
       let result = match id.as_str() {
-        "macos_tab_new" => open(&window),
+        "macos_tab_new" => open(&window, ""),
         "macos_tab_close" => close_tab(&window, None),
         _ => window.close().map_err(|e| e.to_string()),
       };

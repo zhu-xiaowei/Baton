@@ -8,6 +8,7 @@ import { contentHash } from './content-hash.js';
 import { progressRingHtml, setProgressRingPercent } from './progress-ring.js';
 import { syncComposerDraft } from '../drafts/composer-draft.js';
 import { openAttachmentPicker } from './attachment-picker.js';
+import { transfer } from '../../../bridge/transfer-store.mjs';
 
 const stagedAttachmentCards = new WeakMap();
 
@@ -43,8 +44,12 @@ const isFileDrag = event => Array.from(event.dataTransfer?.types || []).includes
 function canDropFiles() {
   const bar = document.getElementById('input-bar');
   const input = document.getElementById('msg-input');
+  // An inline HTML preview and a file viewer docked beside the chat leave the chat usable.
+  const docked = document.body.classList.contains('side-dock') && !document.body.classList.contains('side-dock-max');
   const modalOpen = Array.from(document.querySelectorAll('.modal-overlay, .file-overlay, .img-overlay, dialog[open]'))
-    .some(modal => modal.getClientRects().length > 0);
+    .some(modal => modal.getClientRects().length > 0
+      && !(modal.classList.contains('visualization-surface') && !modal.classList.contains('is-fullscreen'))
+      && !(docked && modal.id === 'fileOverlay'));
   return !!(state.appState.session && bar && input && !bar.hidden && !bar.inert && !modalOpen
     && window.getComputedStyle(bar).display !== 'none' && !input.disabled
     && state.activeThreadCanSend !== false);
@@ -100,7 +105,7 @@ async function uploadStagedFile(entry) {
     if (entry.size > FILE_MAX_BYTES) throw new Error('File exceeds the 512 MB limit');
     const hash = await contentHash(entry.file, entry.controller.signal);
     if (!state.stagedImages.includes(entry)) return;
-    const prepared = await window.apiPost('/api/bridge/file-prepare', {
+    const prepared = await transfer.prepareUpload({
       name: entry.name, size: entry.size, contentType: entry.file.type || 'application/octet-stream',
       contentHash: hash,
     });
@@ -156,11 +161,12 @@ function stageImageFile(file) {
       var key = Math.abs(h).toString(16).padStart(8, '0') + raw.length.toString(16) + '.jpg';
 
       entry.dataUrl = dataUrl;
-      entry.key = key;
       renderStagedImages();
 
-      // Upload immediately
-      apiPost('/api/bridge/upload-image', { key: key, data: base64 })
+      // Upload immediately, under the account's sealed key when files are sealed
+      transfer.keyFor(key.slice(0, -4), '.jpg').then(function (named) { key = entry.key = named; return fetch(dataUrl); })
+        .then(function (response) { return response.blob(); })
+        .then(function (blob) { return transfer.put(key, blob, { contentType: 'image/jpeg' }); })
         .then(function () {
           entry.uploaded = true;
           renderStagedImages();

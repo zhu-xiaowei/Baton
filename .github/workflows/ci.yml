@@ -2,9 +2,9 @@ name: CI
 
 on:
   pull_request:
-    branches: [main]
+    branches: [main, feat/v2]
   push:
-    branches: [main]
+    branches: [main, feat/v2]
 
 permissions:
   contents: read
@@ -27,14 +27,8 @@ jobs:
           cache-dependency-path: |
             package-lock.json
             bridge/package-lock.json
-      - uses: actions/setup-python@v6
-        with:
-          python-version: '3.12'
-          cache: pip
-          cache-dependency-path: server/src/requirements.txt
       - run: npm ci
       - run: npm ci --prefix bridge
-      - run: python3 -m pip install -r server/src/requirements.txt pytest
       - run: npm run build
       - name: Run independent test suites in parallel
         run: |

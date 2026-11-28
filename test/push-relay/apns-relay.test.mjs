@@ -39,7 +39,7 @@ test('delivery carries only the event ID and a placeholder, with the APNs header
   });
   try {
     const result = await sendNotification({
-      token: 'a'.repeat(64), environment: 'development', id: ID,
+      token: 'a'.repeat(64), environment: 'development', id: ID, alert: { e: 'sealed', id: 'x', aps: 1 },
     }, 'signed-provider-token', {
       now: 100,
       connectSession: origin => {
@@ -54,7 +54,7 @@ test('delivery carries only the event ID and a placeholder, with the APNs header
     assert.equal(headers['apns-push-type'], 'alert');
     assert.equal(headers['apns-expiration'], '400');
     assert.equal(headers['apns-collapse-id'], 'b'.repeat(64));
-    assert.deepEqual(JSON.parse(content), placeholder(ID));
+    assert.deepEqual(JSON.parse(content), { ...placeholder(ID), e: 'sealed' }); // the extension opens `e` itself
     assert.equal(JSON.parse(content).aps['mutable-content'], 1);
     assert.deepEqual(result, { status: 410, reason: 'Unregistered' });
   } finally {
@@ -91,9 +91,11 @@ test('the APNs connection is reused, and replaced once it is gone', async () => 
 test('the public URL rejects bad requests before touching the key', async () => {
   const post = body => ({ requestContext: { http: { method: 'POST' } }, body });
   assert.equal((await handler({ requestContext: { http: { method: 'GET' } } })).statusCode, 405);
-  assert.equal((await handler(post('x'.repeat(2000)))).statusCode, 413);
+  assert.equal((await handler(post('x'.repeat(9000)))).statusCode, 413);
+  const big = JSON.stringify({ token: 'a'.repeat(64), environment: 'production', id: ID, alert: { e: 'x'.repeat(5000) } });
+  assert.equal((await handler(post(big))).statusCode, 413); // over APNs' 4096 B payload
   assert.equal((await handler(post('{'))).statusCode, 400);
-  for (const body of ['null', '[]', '7', '{"token":"bad"}']) {
+  for (const body of ['null', '[]', '7', '{"token":"bad"}', JSON.stringify({ token: 'a'.repeat(64), environment: 'production', id: ID, alert: [] })]) {
     assert.equal((await handler(post(body))).statusCode, 400, body);
   }
 });

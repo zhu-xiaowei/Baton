@@ -39,22 +39,24 @@ async fn download<R: Runtime>(app: tauri::AppHandle<R>, url: String, name: Strin
   let directory = app.path().download_dir().map_err(|error| error.to_string())?;
   tauri::async_runtime::spawn_blocking(move || {
     let url = reqwest::Url::parse(&url).map_err(|_| "Invalid download URL".to_string())?;
-    if url.scheme() != "https" || url.host_str().is_none() || !url.username().is_empty() || url.password().is_some() {
+    // The page's media server (web/js/media/serve.js) serves sealed files on loopback.
+    let loopback = url.scheme() == "http" && matches!(url.host_str(), Some("127.0.0.1" | "localhost"));
+    if (url.scheme() != "https" && !loopback) || url.host_str().is_none() || !url.username().is_empty() || url.password().is_some() {
       return Err("Downloads require an HTTPS URL".to_string());
     }
-    let client = reqwest::blocking::Client::builder().timeout(Duration::from_secs(3600))
-      .https_only(true).build().map_err(|error| error.to_string())?;
+    let client = reqwest::blocking::Client::builder().timeout(Duration::from_secs(4 * 3600))
+      .https_only(!loopback).build().map_err(|error| error.to_string())?;
     let response = client.get(url).send().and_then(|response| response.error_for_status())
       .map_err(|error| error.without_url().to_string())?;
-    let max_bytes = 512 * 1024 * 1024;
-    if response.content_length().is_some_and(|size| size > max_bytes) { return Err("File exceeds 512 MB".to_string()); }
+    let max_bytes = 5_000_000_000;
+    if response.content_length().is_some_and(|size| size > max_bytes) { return Err("File exceeds 5 GB".to_string()); }
     std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
     let (path, mut file) = filename::reserve_file(&directory, &name).map_err(|error| error.to_string())?;
     let total = response.content_length();
     let reader = ProgressReader { inner: response, loaded: 0, total, channel: on_progress, reported_at: None };
     let result = std::io::copy(&mut reader.take(max_bytes + 1), &mut file)
       .map_err(|error| error.to_string())
-      .and_then(|size| if size > max_bytes { Err("File exceeds 512 MB".to_string()) } else { Ok(size) });
+      .and_then(|size| if size > max_bytes { Err("File exceeds 5 GB".to_string()) } else { Ok(size) });
     drop(file);
     if let Err(error) = result { let _ = std::fs::remove_file(&path); return Err(error); }
     #[cfg(target_os = "macos")]

@@ -14,7 +14,6 @@ import {
 import {
   extractCodexMessages,
   parseApplyPatchInput,
-  syncCodexMessages,
 } from '../../../bridge/codex-extract.mjs';
 import {
   codexCompletedLiveMessages,
@@ -1554,29 +1553,6 @@ test('incremental extraction rebuilds pairing state before the watermark', () =>
   assert.ok(first.content[0].tool_use_id);
 });
 
-test('Codex watermark advances only after a successful upload', async () => {
-  const watermarks = new Map([['codex:test', 0]]);
-  await assert.rejects(
-    syncCodexMessages(FIXTURE, SESSION_ID, 'codex:test', {
-      watermarks,
-      uploader: async () => { throw new Error('upload failed'); },
-    }),
-    /upload failed/,
-  );
-  assert.equal(watermarks.get('codex:test'), 0);
-
-  let uploaded;
-  const result = await syncCodexMessages(FIXTURE, SESSION_ID, 'codex:test', {
-    watermarks,
-    uploader: async (_sessionId, messages, identity) => {
-      uploaded = { messages, identity };
-    },
-  });
-  assert.deepEqual(uploaded.messages, result.messages);
-  assert.deepEqual(uploaded.identity, { runtime: 'codex', nativeSessionId: SESSION_ID, historyComplete: true });
-  assert.equal(watermarks.get('codex:test'), result.nextLine);
-});
-
 test('late patch metadata overwrites the fallback output instead of duplicating it', () => {
   const { root, target } = tempRollout();
   try {
@@ -1690,6 +1666,18 @@ test('Codex hides apply_patch preflight failures but keeps the corrected FileCha
     assert.equal(results.length, 1);
     assert.equal(results[0].tool_use_id, uses[0].id);
     assert.doesNotMatch(JSON.stringify(extracted.messages), /verification failed|missing\.js/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('a Codex exec custom tool shows its JS source as input', () => {
+  const { root, target } = tempRollout();
+  try {
+    const call = { type: 'response_item', timestamp: '2026-08-10T05:10:00.000Z', payload: { type: 'custom_tool_call', name: 'exec', call_id: 'c1', input: 'await tools.ls()' } };
+    fs.writeFileSync(target, `${JSON.stringify(call)}\n`);
+    const uses = extractCodexMessages(target, SESSION_ID).messages.flatMap((m) => m.content || []).filter((b) => b.type === 'tool_use');
+    assert.deepEqual(uses.map((b) => b.input), [{ input: 'await tools.ls()' }]);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Baton Bridge — syncs supported local agent runtimes to the server.
+ * Baton Bridge — serves local agent runtimes to the App over the direct channel.
  *
  * Config: ~/.baton-bridge/config.json
  *   { "server": "https://xxx.execute-api.xxx.amazonaws.com/v1", "apiKey": "sk-xxx", "deviceName": "MyMac" }
@@ -11,96 +11,92 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { CLAUDE_PROJECTS, CHECK_STOPPED_INTERVAL, BRIDGE_HOME } from './config.mjs';
-import { loadConfig, fetchServerConfig, removeServiceKeyArgs, saveConfig } from './config.mjs';
+import { loadConfig, removeServiceKeyArgs, saveConfig, writeCliLauncher } from './config.mjs';
 import { acquireInstanceLock } from './instance-lock.mjs';
 import { initHttp } from './http.mjs';
-import { syncSessions, checkStopped, reconcile } from './sync.mjs';
+import { syncSessions, checkStopped, lastKnownStatus } from './sync.mjs';
+import { sessionIndex } from './session-index.mjs';
 import { startRuntimeWatchers } from './runtime-watcher-registry.mjs';
-import { closeTerminalsForUpdate, initWs, shutdownInteractions, setUpdateChecker, wsSendWhenConnected } from './ws.mjs';
-import { loadSynced, saveSynced } from './extract.mjs';
+import { registerInstalledRuntimes } from './runtime-registry.mjs';
+import { killLeftovers } from './turn-process.mjs';
+import { busySessions, closeTerminalsForUpdate, initWs, shutdownInteractions, setUpdateChecker } from './ws.mjs';
 import { BRIDGE_VERSION } from './version.mjs';
+import { pickEntry } from './entry.mjs';
 import {
   cleanupStagedBridge,
   cleanupUpdateWorkspace,
   createUpdateWorkspace,
   installStagedBridge,
+  unmetNodeFloor,
 } from './updater.mjs';
 import { extractTar, installProductionDependencies } from './platform.mjs';
+
+const cliCommand = ['pair', 'leave'].includes(process.argv[2]);
+try { writeCliLauncher(undefined, undefined, cliCommand); } catch (error) { console.error(`[init] could not write the baton command: ${error.message}`); }
+// Not the service: shows a pairing QR code in this terminal, while the service keeps running.
+if (cliCommand) process.exit(await (await import('./accounts.mjs')).runPair().catch((error) => { console.error(error.message); return 1; }));
 
 const releaseInstanceLock = await acquireInstanceLock(BRIDGE_HOME);
 if (!releaseInstanceLock) {
   console.log('[init] another Bridge instance is already running; exiting');
   process.exit(0);
 }
-process.on('exit', () => { try { saveSynced(); } finally { releaseInstanceLock(); } });
+process.on('exit', () => releaseInstanceLock());
 let shuttingDown = false;
 let updateInProgress = false;
 let nextUpdateCheckAt = 0;
-let wsConfigRetry = null;
+let skippedVersion = '';
 async function shutdownBridge(exitCode = 0) {
   if (shuttingDown) return;
   shuttingDown = true;
-  clearInterval(wsConfigRetry);
   await shutdownInteractions();
   process.exit(exitCode);
 }
 process.on('SIGTERM', () => { shutdownBridge(0).catch(() => process.exit(1)); });
 process.on('SIGINT', () => { shutdownBridge(0).catch(() => process.exit(1)); });
+// `leave` saved another account: exit non-zero, so the service manager starts it again.
+process.on('SIGHUP', () => { shutdownBridge(1).catch(() => process.exit(1)); });
 
 const CONFIG = loadConfig();
 if (removeServiceKeyArgs()) console.log('[init] removed the key from the service definition');
 cleanupStagedBridge(BRIDGE_HOME);
 initHttp(CONFIG);
-loadSynced(); // restore per-session watermarks before initial sync, so old sessions aren't re-read from 0
-setInterval(saveSynced, 60_000).unref(); // crash-fallback flush; exit handler covers clean restarts
-
-const serverConfig = await fetchServerConfig(CONFIG);
-if (serverConfig.wsUrl) { CONFIG.wsUrl = serverConfig.wsUrl; saveConfig(CONFIG); }
 
 console.log('Baton Bridge started');
 console.log(`  device:   ${CONFIG.deviceName}`);
 console.log(`  server:   ${CONFIG.server}`);
-if (CONFIG.wsUrl) console.log(`  ws:       ${CONFIG.wsUrl}`);
+console.log(`  ws:       ${CONFIG.wsUrl || '-'}`);
 console.log(`  watching: ${CLAUDE_PROJECTS}`);
+CONFIG.entry = await pickEntry(CONFIG.server);
+if (CONFIG.entry !== CONFIG.server) console.log(`  entry:    ${CONFIG.entry}`);
 
-if (CONFIG.wsUrl) {
-  initWs(CONFIG, { onSuperseded: () => shutdownBridge(0) });
-} else {
-  console.log('[ws] wsUrl not available, will retry every 5 seconds');
-  wsConfigRetry = setInterval(async () => {
-    const sc = await fetchServerConfig(CONFIG);
-    if (shuttingDown) return;
-    if (sc.wsUrl) {
-      CONFIG.wsUrl = sc.wsUrl;
-      saveConfig(CONFIG);
-      clearInterval(wsConfigRetry);
-      initWs(CONFIG, { onSuperseded: () => shutdownBridge(0) });
-    }
-  }, 5000);
+// The control socket's address is kept in config.json; the first start asks /devices for it.
+while (!CONFIG.wsUrl && !shuttingDown) {
+  try {
+    const res = await fetch(`${CONFIG.server}/api/bridge/devices`, {
+      headers: { 'x-api-key': CONFIG.apiKey }, signal: AbortSignal.timeout(10_000),
+    });
+    if (res.ok) CONFIG.wsUrl = (await res.json()).wsUrl || '';
+  } catch {}
+  if (CONFIG.wsUrl) saveConfig(CONFIG);
+  else await new Promise((resolve) => setTimeout(resolve, 10_000));
 }
-// Always run metadata sync (status check + DEV/PROJ/SESS items + lastKnownStatus map).
-// --skip-init only skips replaying historical messages — metadata is cheap and required
-// for the periodic checkStopped() to detect disappeared CC processes.
-const initialSync = await syncSessions(CONFIG, { skipMessages: !!CONFIG.skipInit });
-if (CONFIG.skipInit) console.log('[skip-init] metadata synced; skipping historical message upload');
-if (initialSync?.messageCount > 0 && CONFIG.wsUrl) {
-  wsSendWhenConnected({
-    action: 'bridge_recovery_complete',
-    deviceName: CONFIG.deviceName,
-    count: initialSync.messageCount,
-  });
-}
-// syncSessions has awaited every SESS# write, so DDB is complete — recount now
-// (covers first boot + post-upgrade restart). New projects reconcile via the watcher.
-if (initialSync?.catalogComplete !== false) await reconcile(CONFIG);
-else console.log('[sync] reconcile skipped because local discovery was incomplete');
-checkStopped(CONFIG); // run once on boot — pool is empty after restart, so settle just-orphaned running rows now
+killLeftovers();
+await registerInstalledRuntimes();
+initWs(CONFIG, { onSuperseded: () => shutdownBridge(0) });
+sessionIndex.statuses = lastKnownStatus;
+lastKnownStatus.onChange = () => sessionIndex.markStatus();
+const warmed = sessionIndex.warm().catch((error) => console.error(`[session-index] warm failed: ${error.message}`));
+const initialSync = syncSessions(CONFIG);
+// Once the index knows every root, settle the rows left running by the previous process.
+warmed.then(() => checkStopped(CONFIG));
 setInterval(() => checkStopped(CONFIG), CHECK_STOPPED_INTERVAL);
 
-// Compare the immutable package version; config.json is user state.
-async function checkUpdate() {
-  if (shuttingDown || updateInProgress || Date.now() < nextUpdateCheckAt) return;
-  nextUpdateCheckAt = Date.now() + 4 * 60_000;
+// Compare the immutable package version; config.json is user state. An update waits until nothing this Bridge runs
+// would be cut short (checked again at each heartbeat that reports another version); `force` is the App's Update.
+async function checkUpdate(force = false) {
+  if (shuttingDown || updateInProgress || (!force && Date.now() < nextUpdateCheckAt)) return;
+  nextUpdateCheckAt = Date.now() + 3 * 60_000; // under the 4-minute heartbeat, so each one checks
   updateInProgress = true;
   try {
     const res = await fetch(`${CONFIG.server}/api/version`, {
@@ -110,7 +106,12 @@ async function checkUpdate() {
     if (!res.ok) return;
     const info = await res.json();
     const version = info.bridgeVersion || info.version;
-    if (!version || version === 'dev' || version === BRIDGE_VERSION) return;
+    if (version === BRIDGE_VERSION) sessionIndex.updatePending = null;
+    if (!version || version === 'dev' || version === BRIDGE_VERSION || version === skippedVersion) return;
+    const busy = busySessions();
+    const since = sessionIndex.updatePending?.version === version ? sessionIndex.updatePending.since : Date.now();
+    sessionIndex.updatePending = { version, since };
+    if (!force && busy.length) return;
     console.log(`[update] ${BRIDGE_VERSION} → ${version}, updating...`);
     const serverBase = CONFIG.server.replace(/\/$/, '');
     const nameParam = encodeURIComponent(CONFIG.deviceName || os.hostname());
@@ -133,6 +134,13 @@ async function checkUpdate() {
         if (!packageRes.ok) throw new Error(`package HTTP ${packageRes.status}`);
         fs.writeFileSync(tgz, Buffer.from(await packageRes.arrayBuffer()));
         extractTar(tgz, stage);
+        const floor = unmetNodeFloor(stage);
+        if (floor) {
+          skippedVersion = version;
+          sessionIndex.updatePending = null;
+          console.log(`[update] ${version} needs Node.js >= ${floor} (running ${process.versions.node}), update skipped`);
+          return;
+        }
         execFileSync(process.execPath, ['--check', path.join(stage, 'bridge.mjs')], { stdio: 'ignore' });
         installProductionDependencies(stage);
 
@@ -141,6 +149,7 @@ async function checkUpdate() {
           throw new Error('downloaded Bridge version does not match server');
         }
 
+        if (!force && busySessions().length) return; // a turn started while downloading: the next heartbeat tries again
         if (process.platform === 'win32') await closeTerminalsForUpdate();
         installStagedBridge(stage, BRIDGE_HOME);
       } finally {

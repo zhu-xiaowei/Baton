@@ -4,7 +4,7 @@ import path from 'path';
 import { finished } from 'stream/promises';
 import { WS_FRAME_LIMIT } from '../config.mjs';
 import { contentHash, forgetContentHash } from '../content-hash.mjs';
-import { post } from '../http.mjs';
+import { PUT_MAX, transfer, transferKeys } from '../transfer-store.mjs';
 import { projectHashToPath } from '../session.mjs';
 import { resolveProjectPath } from '../project-path.mjs';
 import { sendTextFrames } from './ws-frames.mjs';
@@ -12,7 +12,6 @@ import { sendTextFrames } from './ws-frames.mjs';
 // Larger text previews stall phones; Download fetches the full file.
 const FILE_MAX_BYTES = 1024 * 1024;
 const IMAGE_MAX_BYTES = 10 * 1024 * 1024;
-const VIDEO_MAX_BYTES = 5 * 1024 * 1024 * 1024;
 const INLINE_FRAME_LIMIT = Math.min(28_000, WS_FRAME_LIMIT - 3_000);
 const TEXT_WS_MAX_BYTES = 300 * 1024;
 const DIRECTORY_PAGE_LIMIT = 200;
@@ -22,81 +21,74 @@ const IMAGE_EXTENSIONS = new Set([
 const VIDEO_EXTENSIONS = new Set([
   '.mp4', '.m4v', '.mov', '.webm', '.mkv', '.avi',
 ]);
-const uploadedFileKeys = new Set();
-const downloadFileKeys = new Map();
+const uploadedFileKeys = transferKeys(1000);
+const downloadFileKeys = transferKeys(100); // file identity → key
 
-async function prepareFileDownload(message, { projectRoot, postFn = post, fetchFn = fetch, send, home }) {
+// Requests from Apps that cannot open sealed videos or large files carry no `files: 2`.
+const OLD_APP = 'Update Baton to open this file';
+
+async function prepareFileDownload(message, { projectRoot, store = transfer, fetchFn = fetch, send, home }) {
   const absPath = resolveReadablePath(projectRoot, message.path);
   const stat = await fs.promises.stat(absPath);
   if (!stat.isFile()) throw new Error('not a regular file');
-  if (stat.size > 512 * 1024 * 1024) throw new Error('Download exceeds the 512 MB limit');
+  if (stat.size > PUT_MAX) throw new Error('File exceeds the 5 GB limit');
+  if (message.files !== 2 && (stat.size > 50 * 1024 * 1024 || /^\.(mp4|m4v|mov|webm|mkv|avi|mp3|wav|m4a|ogg)$/i.test(path.extname(absPath)))) {
+    throw new Error(OLD_APP);
+  }
   const identity = `${absPath}\0${stat.mtimeMs}\0${stat.size}`;
-  let key = downloadFileKeys.get(identity);
-  if (!key) {
+  let stored = downloadFileKeys.get(identity);
+  if (!stored) {
     sendProgress(message, send, { downloading: true });
     const hash = await contentHash(absPath, stat, home);
-    const prepared = await postFn('/api/bridge/file-prepare', {
+    const info = await store.prepareUpload({
       name: path.basename(absPath), size: stat.size, contentType: 'application/octet-stream', contentHash: hash,
     });
-    if (!prepared?.ok) throw new Error('Could not prepare file download');
-    const info = await prepared.json();
     if (!info.key || (!info.exists && (!info.url || !info.headers))) throw new Error('Invalid upload response');
-    const urls = info.exists ? [] : [...new Set([info.url, info.fallbackUrl].filter(Boolean))];
-    let uploaded = !!info.exists;
-    let rejected = false;
-    for (const url of urls) {
-      const body = fs.createReadStream(absPath);
-      const closed = finished(body).catch(() => {});
-      try {
-        const response = await fetchFn(url, {
-          method: 'PUT', headers: { ...info.headers, 'Content-Length': String(stat.size) },
-          body, duplex: 'half', signal: AbortSignal.timeout(30 * 60_000),
-        });
-        // S3 refuses bytes that differ from the hashed content: the file changed, so another URL cannot help.
-        if (response.status === 400) rejected = (await response.text()).includes('BadDigest');
-        else await response.body?.cancel();
-        if (response.ok) { uploaded = true; break; }
-        if (rejected) break;
-      } catch {} finally { body.destroy(); await closed; }
-    }
-    if (rejected) {
-      await forgetContentHash(absPath, stat, home);
-      throw new Error('File changed while preparing the download. Try again.');
-    }
-    if (!uploaded) throw new Error('File upload failed. Try downloading again.');
+    if (!info.exists) await putFile(absPath, stat, hash, info, fetchFn, home);
     const current = await fs.promises.stat(absPath);
     if (current.size !== stat.size || current.mtimeMs !== stat.mtimeMs) {
       throw new Error('File changed while preparing the download. Try again.');
     }
-    key = info.key;
-    if (downloadFileKeys.size >= 100) downloadFileKeys.delete(downloadFileKeys.keys().next().value);
-    downloadFileKeys.set(identity, key);
+    stored = { key: info.key, sealed: !!info.sealed, stored: info.stored ?? stat.size };
+    downloadFileKeys.set(identity, stored);
   }
-  send(responseBase(message, { ok: true, key, path: absPath, name: path.basename(absPath), size: stat.size }));
+  send(responseBase(message, { ok: true, ...stored, path: absPath, name: path.basename(absPath), size: stat.size }));
+}
+
+// Streams the file (sealed as it is read) into one PUT. The key comes from the hash: bytes that
+// changed since it was taken end the upload before its last record, so nothing is stored under it.
+async function putFile(absPath, stat, hash, info, fetchFn, home) {
+  let changed = false;
+  let rejected = false;
+  async function* checked(file) {
+    const digest = crypto.createHash('sha256');
+    let size = 0;
+    for await (const chunk of file) { digest.update(chunk); if ((size += chunk.length) > stat.size) break; yield chunk; }
+    if (size !== stat.size || digest.digest('hex') !== hash) { changed = true; throw new Error('File changed'); }
+  }
+  for (const url of [...new Set([info.url, info.fallbackUrl].filter(Boolean))]) {
+    const file = fs.createReadStream(absPath);
+    try {
+      const response = await fetchFn(url, {
+        method: 'PUT', headers: { ...info.headers, 'Content-Length': String(info.stored ?? stat.size) },
+        body: info.sealStream ? info.sealStream(checked(file)) : file, duplex: 'half', signal: AbortSignal.timeout(3 * 3600_000),
+      });
+      // S3 refuses bytes that differ from the hashed content: the file changed, so another URL cannot help.
+      if (response.status === 400) rejected = (await response.text()).includes('BadDigest');
+      else await response.body?.cancel();
+      if (response.ok) return;
+    } catch {} finally { file.destroy(); await finished(file).catch(() => {}); } // an unread stream still opens
+    if (rejected || changed) {
+      await forgetContentHash(absPath, stat, home);
+      throw new Error('File changed while preparing the download. Try again.');
+    }
+  }
+  throw new Error('File upload failed. Try downloading again.');
 }
 
 function inside(root, target) {
   const relative = path.relative(path.resolve(root), path.resolve(target));
   return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
-}
-
-function normalizedRelativePath(value) {
-  return String(value || '')
-    .replaceAll('\\', '/')
-    .replace(/^\/+|\/+$/g, '');
-}
-
-function resolveDirectory(root, relativePath) {
-  if (path.isAbsolute(relativePath || '')) {
-    throw new Error('absolute paths are not allowed');
-  }
-  const resolvedRoot = fs.realpathSync(root);
-  const target = path.resolve(resolvedRoot, relativePath || '.');
-  if (!inside(resolvedRoot, target)) throw new Error('path is outside the project');
-  const realTarget = fs.realpathSync(target);
-  if (!inside(resolvedRoot, realTarget)) throw new Error('path is outside the project');
-  if (!fs.statSync(realTarget).isDirectory()) throw new Error('not a directory');
-  return realTarget;
 }
 
 function resolveReadablePath(root, requestedPath) {
@@ -146,8 +138,9 @@ function pageEntries(entries, cursor, envelope) {
   };
 }
 
-export async function listProjectDirectory(root, relativePath = '', cursor = '', envelope = {}, directoriesOnly = false) {
-  const directory = resolveDirectory(root, relativePath);
+export async function listProjectDirectory(directory, cursor = '', envelope = {}, directoriesOnly = false) {
+  directory = await fs.promises.realpath(directory);
+  if (!(await fs.promises.stat(directory)).isDirectory()) throw new Error('not a directory');
   const entries = (await fs.promises.readdir(directory, { withFileTypes: true }))
     .map((entry) => ({
       name: entry.name,
@@ -176,36 +169,12 @@ async function browseDirectories(message, options) {
     parentPath: path.dirname(targetPath),
     exists,
   });
-  const result = await listProjectDirectory(directory, '', message.cursor, envelope, true);
+  const result = await listProjectDirectory(directory, message.cursor, envelope, true);
   options.send({
     ...envelope,
     entries: result.entries,
     ...(result.nextCursor ? { nextCursor: result.nextCursor } : {}),
   });
-}
-
-async function uploadVideo(absPath, key, size, postFn) {
-  const prep = await postFn('/api/bridge/video-prepare', { key });
-  if (!prep || !prep.ok) return false;
-  let info;
-  try { info = await prep.json(); } catch { return false; }
-  if (info.error) return false;
-  if (info.exists) return true;
-  if (!info.url) return false;
-  try {
-    const response = await fetch(info.url, {
-      method: 'PUT',
-      headers: {
-        'Content-Type': info.contentType,
-        'Content-Length': String(size),
-      },
-      body: fs.createReadStream(absPath),
-      duplex: 'half',
-    });
-    return response.ok;
-  } catch {
-    return false;
-  }
 }
 
 function responseBase(message, extra = {}) {
@@ -220,25 +189,7 @@ function responseBase(message, extra = {}) {
   };
 }
 
-function legacyBase(message, extra = {}) {
-  return {
-    action: 'file_ready',
-    requestId: message.requestId,
-    sessionId: message.sessionId,
-    ...extra,
-  };
-}
-
 function sendProgress(message, send, extra) {
-  if (message.legacy) {
-    send({
-      action: 'file_progress',
-      requestId: message.requestId,
-      sessionId: message.sessionId,
-      ...extra,
-    });
-    return;
-  }
   send(responseBase(message, {
     ok: true,
     progress: true,
@@ -249,7 +200,7 @@ function sendProgress(message, send, extra) {
 async function readProjectFile(message, context) {
   const {
     send,
-    postFn = post,
+    store = transfer,
     projectRoot,
   } = context;
   const absPath = resolveReadablePath(projectRoot, message.path);
@@ -257,24 +208,12 @@ async function readProjectFile(message, context) {
   if (stat.isDirectory()) throw new Error('is a directory');
 
   const extension = path.extname(absPath).toLowerCase();
-  const base = message.legacy
-    ? legacyBase(message)
-    : responseBase(message, { ok: true });
+  const base = responseBase(message, { ok: true });
 
   if (VIDEO_EXTENSIONS.has(extension)) {
-    if (stat.size > VIDEO_MAX_BYTES) throw new Error('video too large');
-    const key = crypto.createHash('sha256')
-      .update(`${absPath}#${stat.mtimeMs}#${stat.size}`)
-      .digest('hex').slice(0, 16) + extension;
-    sendProgress(message, send, { video: true });
-    const uploaded = await uploadVideo(absPath, key, stat.size, postFn);
-    if (!uploaded) throw new Error('upload failed');
-    send({
-      ...base,
-      key,
-      path: absPath,
-      size: stat.size,
-      video: true,
+    await prepareFileDownload(message, {
+      ...context,
+      send: response => send(response.progress ? { ...response, video: true } : { ...response, ...base, video: true }),
     });
     return;
   }
@@ -313,7 +252,7 @@ async function readProjectFile(message, context) {
   const contentVersion = crypto.createHash('sha256').update(buffer).digest('hex');
   const key = crypto.createHash('sha256')
     .update(`${absPath}\0${contentVersion}`)
-    .digest('hex').slice(0, 16) + extension;
+    .digest('hex').slice(0, 16) + (/^\.[a-z0-9]{1,16}$/.test(extension) ? extension : '');
   const metadata = {
     ...base,
     key,
@@ -323,40 +262,20 @@ async function readProjectFile(message, context) {
     image: false,
     contentVersion,
   };
-  if (!message.legacy && stat.size <= TEXT_WS_MAX_BYTES) {
+  if (stat.size <= TEXT_WS_MAX_BYTES) {
     sendTextFrames(metadata, buffer.toString('utf8'), send);
     return;
   }
-  if (message.legacy) {
-    const inline = { ...metadata, content: buffer.toString('utf8') };
-    if (Buffer.byteLength(JSON.stringify(inline)) <= INLINE_FRAME_LIMIT) {
-      send(inline);
-      return;
-    }
-  }
 
-  if (!uploadedFileKeys.has(key)) {
-    const response = await postFn('/api/bridge/upload-file', {
-      key,
-      data: buffer.toString('base64'),
-    });
-    if (!response || !response.ok) throw new Error('upload failed');
-    uploadedFileKeys.add(key);
-    if (uploadedFileKeys.size > 1000) {
-      uploadedFileKeys.delete(uploadedFileKeys.values().next().value);
-    }
+  if (!uploadedFileKeys.get(key)) {
+    await store.put(key, buffer, { contentType: 'text/plain; charset=utf-8' });
+    uploadedFileKeys.set(key);
   }
   send(metadata);
 }
 
 function errorResponse(message, error) {
   const detail = error?.message || String(error);
-  if (message.legacy) {
-    return legacyBase(message, {
-      error: detail,
-      path: message.path || '',
-    });
-  }
   return responseBase(message, {
     ok: false,
     error: detail,
@@ -381,14 +300,11 @@ export async function handleProjectFilesMessage(message, options = {}) {
       await prepareFileDownload(message, { ...options, send, projectRoot });
       return;
     }
+    // Relative paths start at the project folder; absolute paths may leave it.
     if (operation === 'list') {
-      const envelope = responseBase(message, { ok: true });
-      const result = await listProjectDirectory(
-        projectRoot,
-        normalizedRelativePath(message.path),
-        message.cursor,
-        envelope,
-      );
+      const root = await fs.promises.realpath(projectRoot);
+      const envelope = responseBase(message, { ok: true, root, path: path.resolve(root, message.path || '.') });
+      const result = await listProjectDirectory(envelope.path, message.cursor, envelope);
       send({
         ...envelope,
         entries: result.entries,
@@ -410,10 +326,3 @@ export async function handleProjectFilesMessage(message, options = {}) {
   }
 }
 
-export function handleLegacyFileRequest(message, options = {}) {
-  return handleProjectFilesMessage({
-    ...message,
-    operation: 'read',
-    legacy: true,
-  }, options);
-}

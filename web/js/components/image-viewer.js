@@ -5,6 +5,7 @@ import { layoutPixels, layoutRect } from '../page-zoom.js';
 import { setDownloadButtonState } from './download-button.js';
 import { loadingSpinner } from './loading.js';
 import { showToast } from './toast.js';
+import { transfer } from '../../../bridge/transfer-store.mjs';
 
 const MAX_SCALE = 5;
 const SWIPE_MS = 200;
@@ -313,8 +314,7 @@ async function downloadCurrentImage() {
   try {
     let url = item.src;
     if (nativeDownloads()) {
-      url = (await window.api('/api/bridge/image-url/' + encodeURIComponent(item.key),
-        item.attachment ? { attachment: 'true' } : undefined)).url;
+      url = await transfer.url(item.key);
     } else if (!url.startsWith('blob:')) {
       const response = await fetch(url);
       if (!response.ok) throw new Error('Image unavailable');

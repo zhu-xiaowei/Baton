@@ -20,7 +20,10 @@ globalThis.esc = (value) => String(value)
   .replaceAll('&', '&amp;')
   .replaceAll('<', '&lt;')
   .replaceAll('"', '&quot;');
-globalThis.wsSendReliable = (message) => sent.push(message);
+// Replies are direct requests; recorded here in the shape the assertions below read.
+globalThis.bridgeRequest = async (method, params) => {
+  sent.push({ action: method, ...params, device: state.appState.device });
+};
 globalThis.updateSpinner = () => {};
 
 const { state } = await import('../../web/js/state.js');
@@ -412,6 +415,7 @@ test('Claude AskUserQuestion keeps the answerText reply contract', () => {
     requestId: 'ask-approval',
     decision: 'answer',
     answerText: 'Choose a region → AP',
+    answers: { 'Choose a region': ['AP'] },
   });
 });
 

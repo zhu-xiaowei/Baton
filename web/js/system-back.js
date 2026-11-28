@@ -16,7 +16,7 @@ export function handleSystemBack(navigate = () => window.navigateUp?.() === true
     if (dialog.dispatchEvent(event)) dialog.close();
     return true;
   }
-  const overlay = [...document.querySelectorAll('.modal-overlay, .img-overlay')]
+  const overlay = [...document.querySelectorAll('.modal-overlay, .img-overlay, .runtime-menu-layer')]
     .filter(visible).at(-1);
   if (overlay) {
     const close = overlay.querySelector('.cancel, .img-overlay-close');

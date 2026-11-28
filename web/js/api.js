@@ -1,7 +1,7 @@
 // API client — unified util for all pages
 // Credentials default to localStorage; can be overridden per-call via opts.{key,server} (used by landing.html before login)
 
-import { state } from './state.js';
+import { defaultServer, state } from './state.js';
 import { clearListCaches } from './list-cache.js';
 import { clearProjectDataCache } from './cache/project-data-cache.js';
 import { showImageViewer } from './components/image-viewer.js';
@@ -11,8 +11,14 @@ import { cacheAttachment, cachedAttachmentBlob } from './components/attachment-c
 import { imageMimeType } from './components/image-type.js';
 import { requestProjectFiles } from './project/rpc.js';
 import { currentProjectHash, relativeProjectImagePath } from './project/project-hash.js';
+import { loadHomeV2 } from './v2/home.js';
+import { request as requestBridge, resetDirectTransport } from './v2/direct-transport.js';
+import { forgetAccountKey } from './v2/account-key.js';
+import { loadLatestHistory, loadOlderHistory } from './v2/history.js';
+import { transfer } from '../../bridge/transfer-store.mjs';
+import { entryUrl } from './v2/entry.js';
 
-state.SERVER = (localStorage.getItem('_as') || (location.origin + location.pathname.replace(/\/[^/]*$/, ''))).replace(/\/$/, '');
+state.SERVER = (localStorage.getItem('_as') || defaultServer()).replace(/\/$/, '');
 state.KEY = (function () {
   try {
     var v = localStorage.getItem('_ak');
@@ -28,18 +34,19 @@ state.KEY = (function () {
     return '';
   }
 })();
-state.WS_URL = localStorage.getItem('_wsurl') || '';
 
 function clearCachedAccountData() {
   window.closeProjectTerminal?.({ keepAlive: false });
   window.closePreviewConnections?.();
   window.disconnectWs?.();
-  state.WS_URL = '';
-  localStorage.removeItem('_wsurl');
   localStorage.removeItem('apeek_home_cache');
+  localStorage.removeItem('apeek_v2_home_devices');
+  localStorage.removeItem('baton-device-names:' + state.SERVER);
+  resetDirectTransport();
+  answers.clear();
   localStorage.removeItem('baton-preview-ports');
   localStorage.removeItem('baton-notification-config');
-  localStorage.removeItem('baton-nav'); // legacy location
+  localStorage.removeItem('baton-settings-account');
   sessionStorage.removeItem('baton-nav');
   clearListCaches();
   clearProjectDataCache();
@@ -53,6 +60,7 @@ function setCredentials(key, server) {
   state.SERVER = nextServer;
   localStorage.setItem('_ak', btoa(key));
   if (server) localStorage.setItem('_as', state.SERVER);
+  localStorage.setItem('_ls', state.SERVER); // kept after logout: where a recovery phrase is sent
 }
 
 function clearCredentials() {
@@ -64,13 +72,21 @@ function clearCredentials() {
 
 async function logout() {
   try { await window.unregisterMobileNotifications?.(); } catch {}
+  // A paired device's token stops working everywhere (a self-hosted API key is shared, so it stays).
+  if (state.KEY.startsWith('bt_')) {
+    try {
+      await fetch(state.SERVER + '/api/tokens/revoke', { method: 'POST', body: '{}',
+        headers: { 'Content-Type': 'application/json', 'x-api-key': state.KEY } });
+    } catch {}
+  }
+  await forgetAccountKey(state.SERVER);
   clearCredentials();
   location.replace('landing.html');
 }
 
 function _build(path, params, opts) {
   var qs = new URLSearchParams(params || {}).toString();
-  return ((opts && opts.server) || state.SERVER) + path + (qs ? '?' + qs : '');
+  return entryUrl(((opts && opts.server) || state.SERVER) + path + (qs ? '?' + qs : ''));
 }
 
 function _hdr(opts) {
@@ -87,8 +103,43 @@ async function _do(path, params, opts, init) {
   return res;
 }
 
+// The last answer to each list request: asked again, the Bridge says "not modified" when it is
+// still current, and this copy is used.
+const answers = new Map();
+export async function requestFresh(device, method, params) {
+  const key = JSON.stringify([state.SERVER, device, method, params]);
+  const known = answers.get(key);
+  const reply = await requestBridge(device, method, { ...params, known: known?.fingerprint || '' });
+  if (reply.notModified && known) return structuredClone(known.value);
+  const { fingerprint, ...value } = reply;
+  answers.delete(key);
+  answers.set(key, { fingerprint, value: structuredClone(value) });
+  if (answers.size > 100) answers.delete(answers.keys().next().value);
+  return value;
+}
+
 async function api(path, params, opts) {
   return (await _do(path, params, opts, opts && opts.signal ? { signal: opts.signal } : null)).json();
+}
+
+// Session data is answered by each Bridge over the direct channel.
+async function bridgeHome() {
+  return (await loadHomeV2()).active;
+}
+
+async function bridgeDevices() {
+  return (await loadHomeV2()).devices;
+}
+
+function bridgeList(method, { device, ...params }) {
+  return requestFresh(device, method, params);
+}
+
+function bridgeHistory({ device, session, before }, options) {
+  const target = { device, sessionId: session };
+  return before ? loadOlderHistory({ ...target, before })
+    : loadLatestHistory({ ...target, subscribe: document.visibilityState === 'visible', root: state.wsRootSessionId || session,
+      onSlow: options?.onSlow });
 }
 
 async function apiText(path, params, opts) {
@@ -170,8 +221,7 @@ async function getImageUrl(key, attachment = false) {
     var blob = await cachedAttachmentBlob(storeKey);
     var file = null;
     if (!blob) {
-      file = await api('/api/bridge/image-url/' + encodeURIComponent(key),
-        attachment ? { attachment: 'true' } : undefined);
+      file = { url: await transfer.url(key) };
       blob = await fetch(file.url).then(function (response) { return response.ok ? response.blob() : null; })
         .catch(function () { return null; });
       if (!blob) {
@@ -236,6 +286,15 @@ async function getLocalImageUrl(path, context) {
   return promise;
 }
 
+// A sent image's transfer copy expires after a day and was sealed under the account key of its time;
+// the Bridge's own copy (data-local) is then read and sent again like any image on that computer.
+function placeholderImageUrl(el, context) {
+  return getImageUrl(el.dataset.key).catch(function (error) {
+    if (!el.dataset.local) throw error;
+    return getLocalImageUrl(el.dataset.local, context);
+  });
+}
+
 function showLoadedImage(el, url) {
   var image = document.createElement('img');
   image.src = url;
@@ -277,11 +336,10 @@ async function loadOneImage(el, manual = false, notify = false) {
     return;
   }
   try {
-    var url = path ? await getLocalImageUrl(requestPath, context)
-      : await getImageUrl(el.dataset.key);
+    var url = path ? await getLocalImageUrl(requestPath, context) : await placeholderImageUrl(el, context);
     showLoadedImage(el, url);
   } catch(e) {
-    if (path && /^(?:ENOENT|ENOTDIR)\b/.test(e.message)) {
+    if ((path || el.dataset.local) && /^(?:ENOENT|ENOTDIR)\b/.test(e.message)) {
       el.dataset.failed = 'missing';
       el.classList.remove('loaded');
       var label = document.createElement('span');
@@ -324,21 +382,31 @@ function viewImage(src, element) {
   var group = element?.closest('.msg-attachments');
   // An image still loading in the message joins too and loads when it is shown.
   var images = group ? Array.from(group.querySelectorAll('.img-placeholder'), node => node.classList.contains('loaded')
-    ? node.querySelector('img') : node.dataset.key && { lazyKey: node.dataset.key }).filter(Boolean) : [];
+    ? node.querySelector('img') : node.dataset.key && { lazyKey: node.dataset.key, node }).filter(Boolean) : [];
   if (!images.includes(element)) images = [element || { src }];
   var entries = Array.from(imageCache.values());
   showImageViewer(images.map(image => {
-    if (image.lazyKey) return { key: image.lazyKey, load: () => getImageUrl(image.lazyKey) };
+    if (image.lazyKey) {
+      var item = { key: image.lazyKey };
+      item.load = () => placeholderImageUrl(image.node, imageContexts.get(image.node) || currentImageContext()).then(url => {
+        Object.assign(item, Array.from(imageCache.values()).find(entry => entry.url === url)?.source);
+        return url;
+      });
+      return item;
+    }
     var key = image.dataset?.key || image.closest?.('.img-placeholder[data-key]')?.dataset.key;
-    return { src: image.src, ...(key ? { key } : entries.find(entry => entry.url === image.src)?.source) };
+    // The key it was loaded with comes first: one read from the Bridge's copy has a new key.
+    return { src: image.src, ...(entries.find(entry => entry.url === image.src)?.source || (key ? { key } : undefined)) };
   }),
   Math.max(0, images.indexOf(element)));
 }
 
 // Function bridges for inline HTML handlers + legacy IIFE consumers.
-// State (KEY/SERVER/WS_URL) lives in state.js, not on window.
+// State (KEY/SERVER) lives in state.js, not on window.
 Object.assign(window, {
   setCredentials, clearCredentials, logout,
   api, apiText, apiPost, loadingSpinner,
+  bridgeHome, bridgeDevices, bridgeList, bridgeHistory,
   loadOneImage, loadImages, viewImage, getImageUrl,
 });
+window.__resolveApiReady?.();

@@ -7,6 +7,6 @@
         <item name="android:forceDarkAllowed">false</item>
         <item name="android:windowBackground">@color/baton_background</item>
         <item name="android:windowSplashScreenBackground">@color/baton_background</item>
-        <item name="android:windowSplashScreenAnimatedIcon">@drawable/splash_glyph</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/splash_blank</item>
     </style>
 </resources>

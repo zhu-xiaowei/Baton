@@ -457,16 +457,6 @@ test('preview references are validated before using the authenticated file reade
   assert.match(host.textContent, /this session/);
 });
 
-test('existing uploaded-file responses are supported without a new backend operation', async t => {
-  const window = setup(t, async () => ({ content: '', key: 'preview.html', size: 350000 }));
-  let requestedUrl;
-  window.apiText = async url => { requestedUrl = url; return '<button>Loaded file</button>'; };
-  window.document.getElementById('content').innerHTML = window.renderMd(marker);
-  await settle();
-  assert.equal(requestedUrl, '/api/bridge/file/preview.html');
-  assert.match(window.document.querySelector('iframe').srcdoc, /Loaded file/);
-});
-
 test('project-local replacement designs use a project-relative read instead of being rejected', async t => {
   const requests = [];
   const window = setup(t, async (operation, fields) => {

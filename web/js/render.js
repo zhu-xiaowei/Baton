@@ -135,7 +135,7 @@ import { systemEventId } from './timeline.js';
         if (block.text && block.text.trim()) textBuf.push(block.text);
       } else if (block.type === 'thinking') {
         flush();
-        items.push({ type: 'thinking', html: renderThinking(block) });
+        items.push({ type: 'thinking', html: renderThinking(block, msg.uuid ? `thinking:${msg.uuid}:${blockIndex}` : '') });
       } else if (block.type === 'tool_use') {
         const result = resultMap[block.id] || null;
         if (runtime === 'codex' && window.isCodexHiddenTool?.(block, result)) continue;
@@ -275,7 +275,7 @@ import { systemEventId } from './timeline.js';
       if (window.isSubagentNotificationMsg?.(msg)) continue;
 
       if (isInterruptMsg(msg)) {
-        // Missing REST turn IDs do not establish a boundary; a pending local
+        // Missing history turn IDs do not establish a boundary; a pending local
         // prompt does, even before its authoritative echo arrives.
         const pendingPrompt = options.pendingTurnIds?.includes(msg.turnId);
         if (msg.turnId && turnItems.some(item =>

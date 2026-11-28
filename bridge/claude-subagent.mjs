@@ -52,10 +52,11 @@ export function parseClaudeSubagentSessionId(sessionId) {
   const value = String(sessionId || '');
   const index = value.indexOf(MARKER);
   if (index <= 0) return null;
-  return {
-    parentSessionId: value.slice(0, index),
-    agentId: value.slice(index + MARKER.length),
-  };
+  const parentSessionId = value.slice(0, index);
+  const agentId = value.slice(index + MARKER.length);
+  // Both become path segments: only the names Claude writes.
+  if (!/^[\w-]+$/.test(parentSessionId) || !/^agent-[\w-]+$/.test(agentId)) return null;
+  return { parentSessionId, agentId };
 }
 
 export function readClaudeSubagentMeta(filePath) {
@@ -114,6 +115,12 @@ export function claudeSubagentEnded(filePath, meta = {}, mtimeMs, startedAt = cl
   return scan.ended.get(taskId) === true;
 }
 
+// A root whose children may still run. CC stays busy (waiting at a prompt) while its agents run;
+// some -p versions read idle instead, while the pool still lists them (backgroundAgents).
+export function claudeParentLive(parent, record = liveRecordStatus(parent.nativeSessionId)) {
+  return parent.status === 'running' || !!parent.backgroundAgents || record === 'busy' || record === 'waiting';
+}
+
 export function discoverClaudeSubagents(projectDir, parentSession, options = {}) {
   const subagentsDir = path.join(
     projectDir,
@@ -128,9 +135,7 @@ export function discoverClaudeSubagents(projectDir, parentSession, options = {})
     return [];
   }
   const now = options.now ?? Date.now();
-  // CC stays busy (waiting at a prompt) while its agents run; some -p versions read idle instead.
-  const live = parentSession.status === 'running' || parentSession.backgroundAgents
-    || ['busy', 'waiting'].includes(liveRecordStatus(parentSession.nativeSessionId));
+  const live = options.live ?? claudeParentLive(parentSession);
   return files.flatMap((file) => {
     const filePath = path.join(subagentsDir, file);
     let stat;

@@ -1,109 +1,62 @@
-var DEFAULT_TIMEOUT = 20000;
-var pendingRequests = new Map();
+// Requests whose reply arrives as frames made for the former control socket (files, Git, rename,
+// delete): sent to the Bridge as a direct request, which answers `{ frames }`; each operation
+// assembles its frames as before. Progress frames come as request progress.
+import { state } from './state.js';
+import { request as requestBridge } from './v2/direct-transport.js';
 
-function requestUuid() {
-  if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
-  var bytes = new Uint8Array(16);
-  if (globalThis.crypto?.getRandomValues) globalThis.crypto.getRandomValues(bytes);
-  else for (var index = 0; index < bytes.length; index++) bytes[index] = Math.floor(Math.random() * 256);
-  bytes[6] = (bytes[6] & 0x0f) | 0x40;
-  bytes[8] = (bytes[8] & 0x3f) | 0x80;
-  var hex = Array.from(bytes, function (value) {
-    return value.toString(16).padStart(2, '0');
-  }).join('');
-  return hex.slice(0, 8) + '-' + hex.slice(8, 12) + '-'
-    + hex.slice(12, 16) + '-' + hex.slice(16, 20) + '-' + hex.slice(20);
+// Reads asked again get "not modified" from the Bridge while they are current.
+var FRESH = { project_files: new Set(['list', 'browse']), git_status: new Set(['status', 'refs', 'history']) };
+var answers = new Map();
+var send = requestBridge; // (device, method, params, options) → Promise; tests replace it
+
+export function configureWsRpc(next) {
+  send = next || requestBridge;
 }
 
-function armTimeout(requestId, pending) {
-  if (pending.timer) clearTimeout(pending.timer);
-  pending.timer = setTimeout(function () {
-    pendingRequests.delete(requestId);
-    pending.reject(new Error('Request timed out — device may be offline.'));
-  }, pending.timeout);
-}
-
-function finish(requestId, pending, value, error) {
-  pendingRequests.delete(requestId);
-  if (pending.timer) clearTimeout(pending.timer);
-  if (error) pending.reject(error);
-  else pending.resolve(value);
-}
-
-function completeFrames(requestId, pending) {
-  var finalSequence = pending.chunkCount != null
-    ? pending.chunkCount - 1
-    : pending.finalSequence;
-  if (finalSequence == null) return false;
-  var frames = [];
-  for (var sequence = 0; sequence <= finalSequence; sequence++) {
-    if (!pending.frames.has(sequence)) return false;
-    frames.push(pending.frames.get(sequence));
-  }
-  var value = pending.assemble(frames);
-  if (pending.frameError) {
-    var error = new Error(pending.frameError.error || 'Request failed.');
-    error.response = value;
-    finish(requestId, pending, null, error);
-  } else {
-    finish(requestId, pending, value);
-  }
-  return true;
-}
-
-export function requestWsRpc(payload, options) {
+export async function requestWsRpc(payload, options) {
   options = options || {};
-  var requestId = requestUuid();
-  return new Promise(function (resolve, reject) {
-    var pending = {
-      resolve: resolve,
-      reject: reject,
-      timer: null,
-      timeout: options.timeout || DEFAULT_TIMEOUT,
-      onProgress: options.onProgress,
-      assemble: options.assemble || assembleLastFrame,
-      frames: new Map(),
-      chunkCount: null,
-      finalSequence: null,
-      frameError: null,
-    };
-    pendingRequests.set(requestId, pending);
-    armTimeout(requestId, pending);
-    window.wsSendReliable({ ...payload, requestId: requestId });
-  });
+  var { action, device, ...params } = payload;
+  var fresh = FRESH[action]?.has(params.operation);
+  var key = fresh ? JSON.stringify([state.SERVER, device, action, params]) : '';
+  var known = key && answers.get(key);
+  var reply;
+  try {
+    reply = await send(device ?? state.appState.device ?? '', action,
+      fresh ? { ...params, known: known?.fingerprint || '' } : params, {
+        onProgress: function (frame) { if (typeof options.onProgress === 'function') options.onProgress(frame); },
+      });
+  } catch (error) {
+    throw new Error(error.message === 'timeout' ? 'Request timed out — device may be offline.'
+      : error.message === 'offline' ? 'Bridge offline' : error.message);
+  }
+  if (reply.notModified && known) reply = known.reply;
+  else if (key) {
+    answers.delete(key);
+    answers.set(key, { fingerprint: reply.fingerprint, reply: reply });
+    if (answers.size > 100) answers.delete(answers.keys().next().value);
+  }
+  return assembleReply(reply.frames || [], options.assemble || assembleLastFrame);
 }
 
-export function handleWsRpcMessage(message) {
-  var pending = message?.requestId && pendingRequests.get(message.requestId);
-  if (!pending) return false;
-  if (message.ok === false
-    && Number.isInteger(message.sequence)
-    && Number.isInteger(message.chunkCount)
-    && message.groups) {
-    pending.frameError = message;
-  } else if (message.ok === false) {
-    var error = new Error(message.error || 'Request failed.');
-    error.response = message;
-    finish(message.requestId, pending, null, error);
-    return true;
+function assembleReply(frames, assemble) {
+  var failed = frames.find(function (frame) { return frame.ok === false; });
+  // A Git snapshot that failed still carries its groups across frames.
+  if (failed && !(Number.isInteger(failed.sequence) && Number.isInteger(failed.chunkCount) && failed.groups)) {
+    var error = new Error(failed.error || 'Request failed.');
+    error.response = failed;
+    throw error;
   }
-  if (message.progress) {
-    if (typeof pending.onProgress === 'function') pending.onProgress(message);
-    armTimeout(message.requestId, pending);
-    return true;
+  var ordered = frames.some(function (frame) { return Number.isInteger(frame.sequence); })
+    ? frames.slice().sort(function (left, right) { return left.sequence - right.sequence; })
+    : frames;
+  if (!ordered.length) throw new Error('Request failed.');
+  var value = assemble(ordered);
+  if (failed) {
+    var snapshotError = new Error(failed.error || 'Request failed.');
+    snapshotError.response = value;
+    throw snapshotError;
   }
-  if (Number.isInteger(message.sequence) && message.sequence >= 0) {
-    pending.frames.set(message.sequence, message);
-    if (Number.isInteger(message.chunkCount) && message.chunkCount > 0) {
-      pending.chunkCount = message.chunkCount;
-    }
-    if (message.complete) pending.finalSequence = message.sequence;
-    armTimeout(message.requestId, pending);
-    completeFrames(message.requestId, pending);
-    return true;
-  }
-  finish(message.requestId, pending, pending.assemble([message]));
-  return true;
+  return value;
 }
 
 export function assembleLastFrame(frames) {

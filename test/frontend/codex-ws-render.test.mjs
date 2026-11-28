@@ -42,6 +42,7 @@ expose('isInterruptMsg', () => false);
 expose('isLocalCommandStdout', () => false);
 let apiResponse = { messages: [], hasMore: false };
 expose('api', async () => apiResponse);
+expose('bridgeHistory', async () => apiResponse);
 for (const name of [
   'clampOverflow',
   'loadImages',
@@ -1230,11 +1231,7 @@ test('Codex startup recovery restores a wait missed during Bridge restart', asyn
     messages: state.wsAllMessages.concat(waitingResult),
     hasMore: false,
   };
-  window.__wsTest.handleWsMessage({
-    action: 'bridge_recovery_complete',
-    deviceName: 'D',
-    count: 1,
-  });
+  window.__wsTest.resyncSession('D');
   await new Promise((resolve) => setTimeout(resolve, 20));
 
   const waits = document.querySelectorAll('.codex-terminal-wait');
@@ -1288,11 +1285,7 @@ test('Codex REST recovery keeps only the last wait in each uninterrupted run', a
     hasMore: false,
   };
 
-  window.__wsTest.handleWsMessage({
-    action: 'bridge_recovery_complete',
-    deviceName: 'D',
-    count: apiResponse.messages.length,
-  });
+  window.__wsTest.resyncSession('D');
   await new Promise((resolve) => setTimeout(resolve, 20));
 
   const waits = Array.from(document.querySelectorAll('.codex-terminal-wait'));

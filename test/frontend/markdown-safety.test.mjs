@@ -79,6 +79,9 @@ test('Chinese labels ending in punctuation stay bold during streaming', () => {
   assert.equal(host.querySelector('strong')?.textContent, '最值得记住的区别：');
   host.innerHTML = window.renderMd('**温度：**30 度');
   assert.equal(host.querySelector('strong')?.textContent, '温度：');
+  host.innerHTML = window.renderMd('**结论：做 `pair` 和 `pair --leave`。**确认的话');
+  assert.equal(host.querySelector('strong')?.textContent, '结论：做 pair 和 pair --leave。');
+  assert.equal(host.querySelectorAll('strong code').length, 2);
   window.close();
 });
 

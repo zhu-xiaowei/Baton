@@ -9,9 +9,9 @@ import { fileIconHtml } from '../components/file-icon.js';
 import { FOLDER_ICON_SVG } from '../components/icons.js';
 import { requestProjectFiles } from './rpc.js';
 import {
-  joinProjectPath,
-  normalizeProjectPath,
-  projectBreadcrumbItems,
+  canonicalFilesPath,
+  filesBreadcrumbItems,
+  joinFilesPath,
 } from './paths.js';
 import {
   closeProjectFilesPage,
@@ -31,8 +31,11 @@ var directoryCache = new Map();
 var pendingDirectories = new Map();
 var preloads = { queue: new Map(), active: 0 };
 var visibilityObserver = null;
-// Set while browsing the device's home folder from the project list.
-var homeContext = null;
+// The project (or the device's home folder, `home: true`) the browser opened in;
+// it stays when the page moves to another project.
+var filesContext = null;
+// Absolute project folders, from the Bridge's file listings.
+var filesRoots = new Map();
 // A directory fetched this recently (usually by a visible-row preload) opens without another request.
 var FRESH_DIRECTORY_MS = 30000;
 var edgeBack = registerEdgeBackLayer({
@@ -55,7 +58,21 @@ function escapeHtml(value) {
 }
 
 function filesProject() {
-  return homeContext || state.appState.project;
+  return filesContext || state.appState.project;
+}
+
+function rootKey(projectHash) {
+  return JSON.stringify([state.SERVER, state.appState.device || '', projectHash]);
+}
+
+function filesRoot() {
+  var hash = filesProject()?.hash || '';
+  var saved = readProjectFilesView(true);
+  return filesRoots.get(rootKey(hash)) || (saved?.projectHash === hash && saved.root) || '';
+}
+
+function pageKey() {
+  return JSON.stringify([state.appState.project?.hash || null, state.appState.session || null]);
 }
 
 function projectName() {
@@ -116,8 +133,10 @@ function saveProjectFilesView(scrollTop = projectFilesContent().scrollTop) {
     server: state.SERVER,
     device: state.appState.device,
     projectHash: filesProject()?.hash || '',
-    home: !!homeContext,
-    session: state.appState.session || null,
+    name: filesProject()?.name || '',
+    root: filesRoot(),
+    home: !!filesContext?.home,
+    page: pageKey(),
     path: currentPath,
     scrollTop: Math.max(0, scrollTop || 0),
     open: state.projectFilesOpen,
@@ -149,16 +168,9 @@ function readProjectFilesView(anyProject) {
 }
 
 function restoreProjectFilesView() {
-  if (!state.appState.project) {
-    var home = readProjectFilesView(true);
-    homeContext = home?.home ? { hash: home.projectHash, name: '~' } : null;
-  }
-  var saved = readProjectFilesView();
-  if (!saved?.open || !!saved.home !== !!homeContext || saved.session !== (state.appState.session || null)
-    || state.appState.session === '__new__') {
-    homeContext = null;
-    return false;
-  }
+  var saved = readProjectFilesView(true);
+  if (!saved?.open || saved.page !== pageKey() || state.appState.session === '__new__') return false;
+  filesContext = { hash: saved.projectHash, name: saved.home ? '~' : saved.name || saved.projectHash, home: !!saved.home };
   returnToGit = !!saved.returnToGit;
   openProjectFilesPath(saved.path || '');
   return true;
@@ -191,12 +203,12 @@ function renderEntries(entries) {
     + entries.map(rowHtml).join('') + '</div>';
   content.querySelectorAll('.project-file-row').forEach(function (row) {
     row.addEventListener('click', function () {
-      var nextPath = joinProjectPath(currentPath, row.dataset.name || '');
+      var nextPath = joinFilesPath(filesRoot(), currentPath, row.dataset.name || '');
       if (row.dataset.type === 'directory') {
         openProjectFilesPath(nextPath);
       } else if (window.openFile) {
         window.openFile(nextPath, row.dataset.name || nextPath, '', null,
-          homeContext ? { projectHash: homeContext.hash } : undefined);
+          { projectHash: filesProject().hash });
       }
     });
   });
@@ -218,6 +230,7 @@ function fetchDirectory(projectHash, path, onPage) {
         path: path,
         cursor: cursor,
       });
+      if (response.root) filesRoots.set(rootKey(projectHash), response.root);
       entries = entries.concat(response.entries || []);
       cursor = response.nextCursor || '';
       onPage?.(entries);
@@ -263,7 +276,7 @@ function observeVisibleDirectories(content) {
   var observer = new window.IntersectionObserver(function (entries) {
     if (visibilityObserver !== observer) return;
     for (var entry of entries) {
-      var path = joinProjectPath(directory, entry.target.dataset.name || '');
+      var path = joinFilesPath(filesRoot(), directory, entry.target.dataset.name || '');
       var key = directoryCacheKey(projectHash, path);
       if (!entry.isIntersecting) preloads.queue.delete(key);
       else if (!directoryCache.has(key) && !pendingDirectories.has(key)) preloads.queue.set(key, path);
@@ -295,10 +308,27 @@ async function loadDirectory(version, options) {
   return entries;
 }
 
+// Git belongs to the page's project, so it is offered only while the browser shows that project.
+function renderHeader() {
+  var onPageProject = !filesContext?.home && filesProject().hash === state.appState.project?.hash;
+  if (!onPageProject) returnToGit = false;
+  openProjectFilesPage({
+    onBack: closeProjectFiles,
+    onNavigate: openProjectFilesPath,
+    onGit: onPageProject ? function () {
+      var returning = returnToGit;
+      returnToGit = false;
+      deactivateProjectFiles(true);
+      window.openGitStatusPage?.(returning ? {} : { returnToFiles: true });
+    } : null,
+  });
+  renderProjectFilesBreadcrumb(filesBreadcrumbItems(projectName(), filesRoot(), currentPath));
+}
+
 export async function openProjectFilesPath(path) {
   if (!filesProject()) return;
   rememberDirectoryScroll();
-  currentPath = normalizeProjectPath(path);
+  currentPath = canonicalFilesPath(filesRoot(), path);
   stopVisiblePreloads();
   var projectHash = filesProject().hash;
   var cached = cachedDirectory(projectHash, currentPath);
@@ -308,19 +338,10 @@ export async function openProjectFilesPath(path) {
   state.projectFilesOpen = true;
   saveProjectFilesView(scrollTop);
   edgeBack.activate();
-  openProjectFilesPage({
-    onBack: closeProjectFiles,
-    onNavigate: openProjectFilesPath,
-    onGit: homeContext ? null : function () {
-      var returning = returnToGit;
-      returnToGit = false;
-      deactivateProjectFiles(true);
-      window.openGitStatusPage?.(returning ? {} : { returnToFiles: true });
-    },
-  });
   navigationVersion++;
   var version = navigationVersion;
-  renderProjectFilesBreadcrumb(projectBreadcrumbItems(projectName(), currentPath));
+  var knownRoot = filesRoot();
+  renderHeader();
   var content = projectFilesContent();
   if (cached && Date.now() - cached.fetchedAt < FRESH_DIRECTORY_MS) {
     setProjectFilesLoading(false);
@@ -362,13 +383,13 @@ export async function openProjectFilesPath(path) {
   }
   await viewerPromise;
   if (!state.projectFilesOpen || version !== navigationVersion) return;
-  window.connectWs();
   try {
     var entries = await loadDirectory(version, {
       path: currentPath,
       deferRender: !!cached,
     });
     if (entries && state.projectFilesOpen && version === navigationVersion) {
+      if (filesRoot() !== knownRoot) renderHeader();
       // A saved offset is needed only when no cached listing was available.
       // Preserve any scrolling the user has already done during pagination.
       if (!cached && scrollTop > 0 && content.scrollTop === 0) {
@@ -403,7 +424,6 @@ export async function refreshProjectFiles() {
   try {
     await window.loadViewerLibs();
     if (!state.projectFilesOpen || version !== navigationVersion) return false;
-    window.connectWs();
     var entries = await loadDirectory(version, {
       path: path,
       deferRender: true,
@@ -421,14 +441,18 @@ export async function refreshProjectFiles() {
   }
 }
 
+function usePageProject() {
+  filesContext = state.appState.project;
+}
+
 export function openProjectFiles() {
-  homeContext = null;
+  usePageProject();
   returnToGit = false;
   return openProjectFilesPath(readProjectFilesView()?.path || '');
 }
 
 export function openHomeFiles(project) {
-  homeContext = project;
+  filesContext = { ...project, home: true };
   returnToGit = false;
   return openProjectFilesPath(readProjectFilesView()?.path || '');
 }
@@ -443,11 +467,13 @@ export function closeProjectFiles() {
 }
 
 export function openProjectFilesFromGit() {
+  usePageProject();
   returnToGit = true;
   return openProjectFilesPath(readProjectFilesView()?.path || '');
 }
 
 export function resumeProjectFilesFromGit() {
+  usePageProject();
   returnToGit = false;
   return openProjectFilesPath(readProjectFilesView()?.path || '');
 }
@@ -457,13 +483,24 @@ export function deactivateProjectFiles(keepWs) {
   rememberDirectoryScroll();
   state.projectFilesOpen = false;
   saveProjectFilesView();
-  homeContext = null;
+  filesContext = null;
   stopVisiblePreloads();
   navigationVersion++;
   edgeBack.deactivate();
   closeProjectFilesPage();
   if (!keepWs) returnToGit = false;
   if (!keepWs && !state.wsSessionId) window.disconnectWs?.();
+  return true;
+}
+
+// A document's folder link opens in the browser of that project, switching a kept browser back to the page's project.
+export function openProjectFolder(projectHash, path) {
+  if (projectHash !== filesContext?.hash) {
+    if (projectHash !== state.appState.project?.hash) return false;
+    usePageProject();
+    returnToGit = false;
+  }
+  openProjectFilesPath(path);
   return true;
 }
 
@@ -474,24 +511,28 @@ export function projectFilesBack() {
 Object.assign(window, {
   openProjectFiles: openProjectFiles,
   openHomeFiles: openHomeFiles,
-  projectFilesProject: filesProject,
   openProjectFilesPath: openProjectFilesPath,
+  openProjectFolder: openProjectFolder,
   openProjectFilesFromGit: openProjectFilesFromGit,
   resumeProjectFilesFromGit: resumeProjectFilesFromGit,
   refreshProjectFiles: refreshProjectFiles,
   closeProjectFiles: closeProjectFiles,
   deactivateProjectFiles: deactivateProjectFiles,
   projectFilesBack: projectFilesBack,
+  keepProjectFiles: keepProjectFiles,
 });
 
 queueMicrotask(function () {
-  if (state.appState.project) {
-    window.updateBreadcrumb?.();
-    restoreProjectFilesView();
-  } else if (state.appState.device) {
-    restoreProjectFilesView();
-  }
+  if (state.appState.project) window.updateBreadcrumb?.();
+  if (state.appState.device) restoreProjectFilesView();
 });
+
+// A kept browser follows the page: its saved view and its Git button.
+function keepProjectFiles() {
+  if (!state.projectFilesOpen) return;
+  renderHeader();
+  rememberOpenProjectFiles();
+}
 
 function rememberOpenProjectFiles() {
   if (!state.projectFilesOpen) return;

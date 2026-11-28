@@ -70,12 +70,14 @@ async function fetchPdfRange(url, begin, end, signal, cacheKey) {
     rangeCache.set(id, cached);
     return { bytes: cached.bytes.slice(), partial: cached.partial };
   }
-  const response = await fetch(url, {
+  // `url` may be a function reading a sealed file by range (transfer.range).
+  const response = typeof url === 'function' ? null : await fetch(url, {
     headers: { Range: `bytes=${begin}-${end - 1}` },
     signal,
   });
-  if (response.status !== 200 && response.status !== 206) throw new Error(`PDF download failed (${response.status})`);
-  const result = { bytes: new Uint8Array(await response.arrayBuffer()), partial: response.status === 206 };
+  if (response && response.status !== 200 && response.status !== 206) throw new Error(`PDF download failed (${response.status})`);
+  const result = response ? { bytes: new Uint8Array(await response.arrayBuffer()), partial: response.status === 206 }
+    : { bytes: await url(begin, end), partial: true };
   if (id && result.bytes.length <= RANGE_CACHE_LIMIT) {
     const previous = rangeCache.get(id);
     if (previous) {

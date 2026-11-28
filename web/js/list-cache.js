@@ -1,6 +1,4 @@
 const LIST_CACHE_PREFIX = 'apeek_list_cache_v2:';
-const STALE_LIST_CACHE_PREFIX = 'apeek_list_cache_v1:';
-const LEGACY_LIST_CACHE_KEY = 'apeek_list_cache_v1';
 
 function isQuotaError(error) {
   return error && (
@@ -13,13 +11,9 @@ function isQuotaError(error) {
 
 export function clearListCaches() {
   try {
-    localStorage.removeItem(LEGACY_LIST_CACHE_KEY);
     for (var i = localStorage.length - 1; i >= 0; i--) {
       var key = localStorage.key(i);
-      if (key && (
-        key.indexOf(LIST_CACHE_PREFIX) === 0
-        || key.indexOf(STALE_LIST_CACHE_PREFIX) === 0
-      )) localStorage.removeItem(key);
+      if (key && key.indexOf(LIST_CACHE_PREFIX) === 0) localStorage.removeItem(key);
     }
   } catch (e) {}
 }
@@ -56,18 +50,4 @@ export function invalidateListCache(key) {
   try {
     localStorage.removeItem(LIST_CACHE_PREFIX + key);
   } catch (e) {}
-}
-
-export function migrateLegacyListCache() {
-  try {
-    localStorage.removeItem(LEGACY_LIST_CACHE_KEY);
-    for (var i = localStorage.length - 1; i >= 0; i--) {
-      var key = localStorage.key(i);
-      if (key && key.indexOf(STALE_LIST_CACHE_PREFIX) === 0) localStorage.removeItem(key);
-    }
-  } catch (e) {
-    try {
-      localStorage.removeItem(LEGACY_LIST_CACHE_KEY);
-    } catch (_e) {}
-  }
 }

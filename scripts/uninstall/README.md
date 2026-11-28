@@ -1,7 +1,8 @@
 # Uninstall Baton
 
-Order: uninstall every Bridge, then delete the CloudFormation stack. Cloud
-data is permanently deleted.
+Hosted relay: remove the computer in the App first (long-press it on the home
+page → **Remove**), then step 1. Self-hosted relay: step 1 on every computer,
+then step 2; cloud data is permanently deleted.
 
 ## 1. Uninstall Bridge
 
@@ -10,11 +11,23 @@ Bridge removal does not delete `~/.claude`, `~/.codex`, or project files.
 macOS/Linux:
 
 ```bash
+curl -fsSL https://raw.githubusercontent.com/agentbaton/baton/main/scripts/uninstall/uninstall-bridge.sh | bash
+```
+
+From a checkout, `--dry-run` lists the steps first:
+
+```bash
 ./scripts/uninstall/uninstall-bridge.sh --dry-run
 ./scripts/uninstall/uninstall-bridge.sh
 ```
 
 Windows PowerShell (Administrator):
+
+```powershell
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/agentbaton/baton/main/scripts/uninstall/uninstall-bridge.ps1)))
+```
+
+From a checkout:
 
 ```powershell
 .\scripts\uninstall\uninstall-bridge.ps1 -DryRun

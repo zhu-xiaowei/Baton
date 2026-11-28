@@ -35,9 +35,17 @@ containing the structured preview (including Edit paths), replacing the partial
 JSON prefix. Authority preserves block-level flags. Assistant text and permission
 events are unaffected.
 
-These content flags are separate from the existing event/message-level
-transport `truncated` flag. Existing frame-size protection, `stream_end`,
-`recoveryRequired` and REST recovery behavior are unchanged.
+Images a tool returned (Read of a picture, an MCP screenshot) are Claude-style
+`{type:'image'}` blocks in `tool_result.content` for every runtime. Readers keep their
+source (inline base64, a local file, or a data URI); the main thread converts them with the
+same `processImage` as message images (1280px JPEG, `keyFor`, sealed upload, at most 4 at a
+time) at its four exits: history pages, tool details, live authority and `publishMessages`.
+Workers have no storage access and leave the bytes for it; a main-thread preview that still
+holds them sends a placeholder. The App gets only `{type:'image', key}` and shows a card's
+images like message images, one gallery per card. Codex view_image reads the file Codex
+opened (its `ImageView` item), so live and history share a key; if that file is gone, the
+rollout's resized data URI is used. Hermes images come from `MEDIA:` lines under
+`HERMES_HOME/cache/images/` only.
 
 ## Details RPC
 
@@ -49,37 +57,34 @@ and not cached, that same control shows a loading spinner and requests full deta
 before expanding. Clicking the IN/OUT content area uses the same behavior; selecting
 text for copying does not expand or request data:
 
+`tool_details` is a v2 direct RPC (`request(device, 'tool_details', params)`, no Lambda):
+
 ```json
-{
-  "action": "tool_details",
-  "requestId": "uuid",
-  "sessionId": "session uuid or codex:uuid",
-  "device": "device name",
-  "toolUseIds": ["tool id"]
-}
+{ "sessionId": "session uuid, codex:uuid or uuid:subagent:agent-…", "toolUseIds": ["tool id"], "preview": false }
 ```
 
 Opening a group only exposes its local previews. Show more requests its own tool,
-not the whole group. The server routes to that device and returns replies only to
-the requesting app.
+not the whole group. History pages served by the Bridge leave truncated result bodies
+out: opening such a tool or group first asks once for all of their previews
+(`preview: true`, each field cut like a history row), with a spinner on the clicked
+row only, then opens them; Show more still loads one tool in full. Edit loads its diff.
 The Bridge locates the native session file and matches the normalized tool IDs.
 Reading and parsing happen in a worker so they do not block streaming or heartbeats.
 The worker retains one file's tool index, keyed by path, runtime, session and file
 stat version; an unchanged file is indexed once across detail requests. File changes
 invalidate the index. This is not an incremental parser.
-It returns full `toolUse` / `toolResult` pairs using the existing text-frame RPC:
-`sequence`, `content`, and a final `complete: true`.
-Frame limits are checked after JSON encoding, including multibyte text.
+It returns `{ details: [{ toolUse, toolResult }] }`; the direct RPC chunks, compresses and
+resends the reply.
 
-The browser keeps the preview visible while loading and assembles all frames before
-rendering the full details. It caches details for the
+The browser keeps the preview visible while loading and renders the full details when
+the reply arrives. It caches details for the
 current device/session and reuses them while their preview data is unchanged.
 If an expected tool result is not persisted yet, the response is not cached as
 complete and can be retried. Input-only tools can load before a result exists;
 the later result invalidates that cache.
 Failed requests expand the available local preview and can be retried. A late response cannot
 update a different session. Details are never sent through the normal history
-write path or persisted back to DynamoDB.
+path or persisted server-side.
 
 Clicking an Edit header requests its full details and shows only a spinner
 at the right of that same row. The body stays collapsed until the existing diff
@@ -93,8 +98,8 @@ with nearby context and highlights their line ranges. File reads include a conte
 hash, so an unchanged version reuses cached ranges and a changed version is
 matched again. Missing or ambiguous blocks are not highlighted. Opening the file
 before loading the Edit does not request its details. These locations and versions
-stay in memory and are never written to DynamoDB.
+stay in memory.
 
-Historical DynamoDB records are not rewritten by this feature. An unavailable
+An unavailable
 Bridge or missing source file leaves the preview readable but prevents loading
 the full details.

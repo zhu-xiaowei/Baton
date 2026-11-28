@@ -111,8 +111,14 @@ test('foreground visibility reuses current navigation loaders or resumes the ope
     }
     throw new Error('Unexpected request: ' + pathname);
   }
+  const bridge = {
+    bridgeHome: (params) => api('/api/bridge/active-sessions', params),
+    bridgeDevices: () => api('/api/bridge/devices'),
+    bridgeList: (method, params) => api('/api/bridge/' + method, params),
+  };
   Object.assign(globalThis, {
     api,
+    ...bridge,
     disconnectWs: function () {},
     updateSpinner: function () {},
     skeletonItems: function () { return ''; },
@@ -120,6 +126,7 @@ test('foreground visibility reuses current navigation loaders or resumes the ope
   });
   Object.assign(window, {
     api,
+    ...bridge,
     disconnectWs: globalThis.disconnectWs,
     updateSpinner: globalThis.updateSpinner,
     skeletonItems: globalThis.skeletonItems,

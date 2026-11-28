@@ -167,8 +167,10 @@ test('session and project lists paginate, cache page one, and restore loaded pag
     throw new Error(`Unexpected request: ${pathname}`);
   }
 
+  const bridgeList = (method, params) => api('/api/bridge/' + method, params);
   Object.assign(globalThis, {
     api,
+    bridgeList,
     disconnectWs: function () {},
     updateSpinner: function () {},
     skeletonItems: function (count) {
@@ -178,6 +180,7 @@ test('session and project lists paginate, cache page one, and restore loaded pag
   });
   Object.assign(window, {
     api,
+    bridgeList,
     disconnectWs: globalThis.disconnectWs,
     updateSpinner: globalThis.updateSpinner,
     skeletonItems: globalThis.skeletonItems,

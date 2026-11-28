@@ -1,6 +1,6 @@
 [package]
 name = "baton"
-version = "1.1.0"
+version = "2.0.0"
 description = "Baton - Monitor and control local agent sessions from anywhere"
 authors = ["xiaoweii"]
 edition = "2021"
@@ -43,9 +43,15 @@ tauri-plugin-push = { path = "plugins/tauri-plugin-push" }
 [target."cfg(target_os = \"ios\")".dependencies]
 objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSBundle", "NSString"] }
 
-[target."cfg(target_os = \"macos\")".dependencies]
-# Multiple webviews per window (tab strip + one webview per tab) are macOS-only.
+[target."cfg(any(target_os = \"macos\", target_os = \"windows\"))".dependencies]
+# Multiple webviews per window (tab strip + one webview per tab) are macOS and Windows only.
 tauri = { version = "2.11.1", features = ["unstable"] }
+
+[target."cfg(target_os = \"windows\")".dependencies]
+# Caption buttons of the frameless window (windows_caption.rs); the version Tauri already uses.
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Graphics_Dwm", "Win32_Graphics_Gdi", "Win32_UI_HiDpi", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
+
+[target."cfg(target_os = \"macos\")".dependencies]
 objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSView", "NSResponder", "NSWindow", "NSColor"] }
 objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSProcessInfo", "NSGeometry"] }
 objc2 = "0.6"

@@ -1,0 +1,17 @@
+{
+  "app": {
+    "windows": [
+      {
+        "title": "Baton",
+        "width": 1024,
+        "height": 768,
+        "minWidth": 480,
+        "minHeight": 400,
+        "resizable": true,
+        "dragDropEnabled": false,
+        "backgroundColor": "#161b22",
+        "decorations": false
+      }
+    ]
+  }
+}

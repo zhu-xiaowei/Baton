@@ -5,6 +5,7 @@ import path from 'path';
 import readline from 'readline';
 import WebSocket from 'ws';
 import { spawnExecutable } from './platform.mjs';
+import { forgetRuntimeBin, runtimeNotFoundMessage } from './runtime-bin.mjs';
 import {
   resolveCodexBin,
   resolveCodexHomes,
@@ -13,7 +14,7 @@ import {
 export const CODEX_APP_SERVER_REQUEST_TIMEOUT_MS = 120_000;
 const MAX_WEBSOCKET_MESSAGE_BYTES = 64 * 1024 * 1024;
 
-function managedSocketPath(options = {}) {
+export function managedSocketPath(options = {}) {
   if (typeof options.socketPath === 'string') return options.socketPath;
   if (options.socketPath === false
     || options.spawnFn
@@ -183,7 +184,10 @@ export class CodexAppServerClient extends EventEmitter {
 
   async #spawnAndInitialize() {
     const bin = this.bin || resolveCodexBin();
-    if (!bin) throw new Error('Codex executable not found');
+    if (!bin) {
+      forgetRuntimeBin('codex');
+      throw new Error(runtimeNotFoundMessage('codex'));
+    }
 
     const proc = spawnExecutable(bin, ['app-server', '--stdio'], {
       cwd: this.cwd,
@@ -199,7 +203,7 @@ export class CodexAppServerClient extends EventEmitter {
       this.stderr += chunk.toString();
       if (this.stderr.length > 16_000) this.stderr = this.stderr.slice(-16_000);
     });
-    proc.on('error', (error) => this.#handleExit(proc, error));
+    proc.on('error', (error) => { forgetRuntimeBin('codex'); this.#handleExit(proc, error); });
     proc.on('close', (code, signal) => {
       this.#handleExit(proc, new Error(
         `Codex app-server exited (${code ?? signal ?? 'unknown'})`

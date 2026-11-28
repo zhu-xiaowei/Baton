@@ -1,14 +1,15 @@
-// Multi-window and tabs are macOS-only. Windows/Linux are intentionally left single-window
-// (title_bar_style/hidden_title below are macOS-only builder methods anyway).
+// Multiple windows and tabs are macOS and Windows only; Linux is intentionally left single-window.
 mod preview_proxy;
 mod macos_zoom;
 mod macos_tabs;
 mod appearance;
+#[cfg(target_os = "windows")]
+mod windows_caption;
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 static WINDOW_SEQ: AtomicUsize = AtomicUsize::new(0);
 
 #[tauri::command]
@@ -34,7 +35,7 @@ fn ios_build_number() -> Option<String> {
 // Open a fresh viewer window. Each window has its own tab strip; every tab is its own
 // WebView (isolated DOM/JS, WS connection + sessionStorage nav). Cascade-offset so it
 // doesn't land exactly on top of the window that spawned it.
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 pub(crate) fn spawn_peek_window(app: &tauri::AppHandle) {
   use tauri::{WebviewUrl, WebviewWindowBuilder};
 
@@ -42,7 +43,7 @@ pub(crate) fn spawn_peek_window(app: &tauri::AppHandle) {
   let label = format!("peek-{}", n);
   let offset = (n % 8) as f64 * 28.0;
 
-  let res = WebviewWindowBuilder::new(app, &label, WebviewUrl::App("index.html".into()))
+  let builder = WebviewWindowBuilder::new(app, &label, WebviewUrl::App("index.html".into()))
     .title("Baton")
     .inner_size(1024.0, 768.0)
     .min_inner_size(480.0, 400.0)
@@ -50,15 +51,29 @@ pub(crate) fn spawn_peek_window(app: &tauri::AppHandle) {
     .disable_drag_drop_handler()
     .background_color(appearance::current(app).color(false))
     .initialization_script(format!("window.__BATON_NATIVE_THEME__ = {:?};", appearance::current(app).preference))
-    .title_bar_style(tauri::TitleBarStyle::Overlay)
-    .hidden_title(true)
-    .position(120.0 + offset, 120.0 + offset)
-    .build()
-    .and_then(|window| macos_tabs::attach(&window.as_ref().window(), window.as_ref()));
+    .position(120.0 + offset, 120.0 + offset);
+  #[cfg(target_os = "macos")]
+  let builder = builder.title_bar_style(tauri::TitleBarStyle::Overlay).hidden_title(true);
+  #[cfg(target_os = "windows")]
+  let builder = builder.decorations(false);
+  let res = builder.build().and_then(|window| {
+    #[cfg(target_os = "windows")]
+    windows_caption::attach(&window.as_ref().window());
+    macos_tabs::attach(&window.as_ref().window(), window.as_ref())
+  });
 
   if let Err(e) = res {
     log::error!("failed to create window {}: {}", label, e);
   }
+}
+
+// Ctrl+N on Windows; macOS uses the File menu's ⌘N.
+#[tauri::command]
+async fn macos_tabs_new_window(app: tauri::AppHandle) {
+  #[cfg(any(target_os = "macos", target_os = "windows"))]
+  spawn_peek_window(&app);
+  #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+  drop(app);
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -79,19 +94,24 @@ pub fn run() {
       macos_zoom::mobile_set_zoom,
       macos_tabs::macos_tabs_state,
       macos_tabs::macos_tabs_new,
+      macos_tabs_new_window,
       macos_tabs::macos_tabs_select,
       macos_tabs::macos_tabs_select_index,
       macos_tabs::macos_tabs_step,
       macos_tabs::macos_tabs_move,
       macos_tabs::macos_tabs_close,
       macos_tabs::macos_tabs_set_title,
+      macos_tabs::macos_tabs_set_session,
+      macos_tabs::macos_tabs_open_session,
       preview_proxy::preview_start,
       preview_proxy::preview_credit,
       preview_proxy::preview_write,
       preview_proxy::preview_shutdown_write,
       preview_proxy::preview_close_socket,
       preview_proxy::preview_stop,
-      preview_proxy::preview_reset
+      preview_proxy::preview_reset,
+      preview_proxy::media_write,
+      preview_proxy::media_sink
     ])
     .setup(|app| {
       appearance::setup(app.handle());
@@ -118,7 +138,6 @@ pub fn run() {
       #[cfg(target_os = "macos")]
       {
         use tauri::menu::{Menu, MenuItemBuilder};
-        use tauri::Manager;
 
         let menu = Menu::default(app.handle())?;
 
@@ -145,10 +164,12 @@ pub fn run() {
           }
           macos_tabs::handle_menu(app, event.id().as_ref());
         });
-
-        if let Some(main) = app.get_webview_window("main") {
-          macos_tabs::attach(&main.as_ref().window(), main.as_ref())?;
-        }
+      }
+      #[cfg(any(target_os = "macos", target_os = "windows"))]
+      if let Some(main) = tauri::Manager::get_webview_window(app, "main") {
+        #[cfg(target_os = "windows")]
+        windows_caption::attach(&main.as_ref().window());
+        macos_tabs::attach(&main.as_ref().window(), main.as_ref())?;
       }
 
       Ok(())

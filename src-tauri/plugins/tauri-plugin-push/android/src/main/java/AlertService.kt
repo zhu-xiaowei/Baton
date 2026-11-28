@@ -10,6 +10,7 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
+import android.util.Base64
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
@@ -17,9 +18,13 @@ import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
+import javax.crypto.Cipher
+import javax.crypto.spec.GCMParameterSpec
+import javax.crypto.spec.SecretKeySpec
 
 // Polls the account's notification feed from a foreground service, so alerts keep
 // arriving while Baton is in the background. WebView timers are throttled there.
+// Hosted servers (`relay`) keep no feed: the service holds a `role=notify` socket instead.
 class AlertService : Service() {
   companion object {
     const val EXTRA_EVENT = "com.batonai.push.EVENT"
@@ -32,8 +37,8 @@ class AlertService : Service() {
     @Volatile var foreground = false
     @Volatile var openSession = ""
 
-    fun start(context: Context, server: String, apiKey: String) {
-      prefs(context).edit().putString("server", server).putString("apiKey", apiKey).apply()
+    fun start(context: Context, server: String, apiKey: String, notifyKey: String, relay: String) {
+      prefs(context).edit().putString("server", server).putString("apiKey", apiKey).putString("notifyKey", notifyKey).putString("relay", relay).apply()
       ContextCompat.startForegroundService(context, Intent(context, AlertService::class.java))
     }
 
@@ -58,6 +63,9 @@ class AlertService : Service() {
 
   @Volatile private var running = false
   private var worker: Thread? = null
+  @Volatile private var socket: RelaySocket? = null
+  @Volatile private var listening = ""
+  private val recent = LinkedHashSet<String>()
 
   override fun onBind(intent: Intent?): IBinder? = null
 
@@ -78,6 +86,8 @@ class AlertService : Service() {
       stopSelf()
       return START_NOT_STICKY
     }
+    // New credentials or relay: reconnect now rather than at the next read timeout.
+    if (listening.isNotEmpty() && listening != target()) socket?.close()
     if (worker?.isAlive != true) {
       running = true
       worker = Thread(::poll).apply { isDaemon = true; start() }
@@ -88,16 +98,37 @@ class AlertService : Service() {
   override fun onDestroy() {
     running = false
     worker?.interrupt()
+    socket?.close()
     super.onDestroy()
   }
+
+  private fun target() = prefs(this).getString("relay", "") + "|" + prefs(this).getString("apiKey", "")
 
   private fun poll() {
     var cursor = ""
     var account = ""
+    var retry = 0
     while (running) {
       val server = prefs(this).getString("server", null)
       val key = prefs(this).getString("apiKey", null)
       if (server == null || key == null) break
+      val relay = prefs(this).getString("relay", null)
+      if (!relay.isNullOrEmpty()) {
+        try {
+          if (listen(relay, key)) retry = 0
+        } catch (stop: StopPolling) {
+          break
+        } catch (_: Exception) {
+        }
+        // Reconnect: at once after a working socket, then 2, 4 … 60 s, with jitter.
+        val wait = if (retry == 0) 0L else minOf(60_000L, 1000L shl minOf(retry, 6))
+        retry++
+        try {
+          Thread.sleep(wait + (Math.random() * 1000).toLong())
+        } catch (_: InterruptedException) {
+        }
+        continue
+      }
       if (key != account) {
         account = key
         cursor = ""  // A new sign-in starts a fresh baseline.
@@ -117,6 +148,44 @@ class AlertService : Service() {
     if (running) stopSelf()
   }
 
+  // Alerts no open app acknowledged, while connected (the server keeps none to replay).
+  // Idle 60 s → a text ping; nothing within 10 s → reconnect. True once the socket answered at all.
+  private fun listen(relay: String, key: String): Boolean {
+    val query = "apiKey=" + URLEncoder.encode(key, "UTF-8") + "&role=notify"
+    val ws = RelaySocket("$relay?$query")
+    socket = ws
+    listening = "$relay|$key"
+    var alive = false
+    try {
+      var pinged = false
+      while (running && target() == listening) {
+        val text = ws.read(if (pinged) 10_000 else 60_000)
+        if (text == null) {
+          if (pinged) return alive
+          ws.send("{\"action\":\"realtime_ping\"}")
+          pinged = true
+          continue
+        }
+        pinged = false
+        alive = true
+        val event = try { JSONObject(text) } catch (_: Exception) { continue }
+        val id = event.optString("eventId")
+        if (event.optString("action") != "alert" || id.isEmpty() || !recent.add(id)) continue
+        if (recent.size > 50) recent.remove(recent.first())
+        show(open(event))
+      }
+    } catch (closed: RelaySocket.Closed) {
+      // Signed out, rotated key, monthly limit, or replaced by another socket with this token.
+      if (closed.code == 4401 || closed.code == 4403 || closed.code == 4429 || closed.code == 4409) throw StopPolling()
+    } catch (_: java.io.IOException) {
+      // Dropped (network change, closed by onStartCommand): reconnect, at once if it had worked.
+    } finally {
+      listening = ""
+      ws.close()
+    }
+    return alive
+  }
+
   // The first request (no cursor) only returns a baseline, so nothing is replayed.
   private fun fetch(server: String, key: String, cursor: String): String {
     val query = if (cursor.isEmpty()) "" else "?cursor=" + URLEncoder.encode(cursor, "UTF-8")
@@ -133,12 +202,33 @@ class AlertService : Service() {
       val body = JSONObject(connection.inputStream.bufferedReader().use { it.readText() })
       if (cursor.isNotEmpty()) {
         val events = body.optJSONArray("events")
-        for (index in 0 until (events?.length() ?: 0)) show(events!!.getJSONObject(index))
+        for (index in 0 until (events?.length() ?: 0)) show(open(events!!.getJSONObject(index)))
       }
       return body.optString("cursor", cursor)
     } finally {
       connection.disconnect()
     }
+  }
+
+  // A sealed alert (`e`, bridge/notify.mjs): AES-GCM, bound to its eventId; plaintext after a 5-byte header.
+  private fun open(event: JSONObject): JSONObject {
+    val sealed = event.optString("e")
+    if (sealed.isEmpty()) return event
+    // Not openable here (no key yet): a placeholder; tapping opens it in the app.
+    event.put("body", "Open Baton to see this update.")
+    val key = prefs(this).getString("notifyKey", null)
+    if (key.isNullOrEmpty()) return event
+    try {
+      val bytes = Base64.decode(sealed, Base64.DEFAULT)
+      val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+      cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(Base64.decode(key, Base64.DEFAULT), "AES"), GCMParameterSpec(128, bytes, 0, 12))
+      cipher.updateAAD(event.optString("eventId").toByteArray())
+      val plain = cipher.doFinal(bytes, 12, bytes.size - 12)
+      val fields = JSONObject(String(plain, 5, plain.size - 5, Charsets.UTF_8))
+      for (name in fields.keys()) event.put(name, fields.get(name))
+    } catch (_: Exception) {
+    }
+    return event
   }
 
   private fun show(event: JSONObject) {

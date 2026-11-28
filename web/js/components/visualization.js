@@ -2,11 +2,12 @@ import { state } from '../state.js';
 import { layoutPixels } from '../page-zoom.js';
 import { requestProjectFiles } from '../project/rpc.js';
 import { loadVisualizationIcons } from './visualization-icons.js';
+import { transfer } from '../../../bridge/transfer-store.mjs';
 
 const previews = new WeakMap();
 const documents = new Map();
 const pending = new Map();
-const selector = '.codex-visualization[data-visualization-path]';
+const selector = '.codex-visualization';
 const maxDocuments = 12;
 const maxBytes = 1024 * 1024;
 const themeProperties = {
@@ -255,7 +256,7 @@ async function fetchDocument(filePath, current, reload) {
     }
     let content = response.content;
     if (!content && response.key && response.size > 0) {
-      content = await window.apiText('/api/bridge/file/' + encodeURIComponent(response.key));
+      content = await transfer.text(response.key);
     }
     if (typeof content !== 'string') throw new Error('Preview content is unavailable.');
     if (new TextEncoder().encode(content).length > maxBytes || content.includes('\0')) {
@@ -286,11 +287,12 @@ export async function loadVisualization(block, reload = false) {
   status.hidden = false;
   status.removeAttribute('role');
   status.innerHTML = window.loadingSpinner?.({ label: 'Loading preview' }) || '';
+  const inline = block.dataset.visualizationHtml;
   try {
-    if (!current.device || !current.projectHash || !current.sessionId) {
+    if (inline == null && (!current.device || !current.projectHash || !current.sessionId)) {
       throw new Error('Open the original session to load this preview.');
     }
-    const content = await fetchDocument(block.dataset.visualizationPath, current, reload);
+    const content = inline ?? await fetchDocument(block.dataset.visualizationPath, current, reload);
     const iconRuntime = /\b(?:data-lucide|lucide)\b/.test(content) ? await loadVisualizationIcons() : '';
     if (!block.isConnected || previews.get(block) !== preview || contextKey(context()) !== preview.context) return;
     preview.content = content;
@@ -298,7 +300,7 @@ export async function loadVisualization(block, reload = false) {
     const surface = document.createElement('dialog');
     surface.className = 'visualization-surface';
     surface.open = true;
-    const title = block.dataset.visualizationPath.split(/[\\/]/).pop();
+    const title = inline != null ? 'HTML preview' : block.dataset.visualizationPath.split(/[\\/]/).pop();
     surface.setAttribute('aria-label', title);
     const expand = document.createElement('button');
     expand.type = 'button';

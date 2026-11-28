@@ -3,11 +3,18 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { downloadAttachment, resolveBridgeAttachments } from '../../bridge/attachments.mjs';
+import * as attachments from '../../bridge/attachments.mjs';
 import { attachmentRef, extractAttachments } from '../../web/js/components/attachment.js';
 
 const key = 'a'.repeat(32) + '.pptx';
 const config = { server: 'https://api.test', apiKey: 'private-key' };
+
+// Unsealed objects: the GET's own Content-Length is the size.
+const storeFrom = () => ({ url: async () => 'https://bucket.test/signed-file' });
+const downloadAttachment = (fileKey, _config, options = {}) =>
+  attachments.downloadAttachment(fileKey, { ...options, store: options.fetchFn && storeFrom(options.fetchFn) });
+const resolveBridgeAttachments = (text, _config, options = {}) =>
+  attachments.resolveBridgeAttachments(text, { ...options, store: options.fetchFn && storeFrom(options.fetchFn) });
 
 async function fixture(context, body, options = {}) {
   const home = await fs.mkdtemp(path.join(os.tmpdir(), 'baton-attachment-'));
@@ -15,10 +22,7 @@ async function fixture(context, body, options = {}) {
   const requests = [];
   const fetchFn = async (url, init) => {
     requests.push({ url, init });
-    if (url.includes('/file-url/')) return Response.json({
-      key, size: options.size ?? body.length, url: 'https://bucket.test/signed-file',
-    });
-    return new Response(body, { status: options.status || 200 });
+    return new Response(body, { status: options.status || 200, headers: { 'content-length': String(options.size ?? body.length) } });
   };
   return { home, fetchFn, requests };
 }
@@ -29,10 +33,9 @@ test('files over 6 MB stream directly to disk with an unchanged extension', asyn
   const local = await downloadAttachment(key, config, options);
   assert.equal(path.extname(local), '.pptx');
   assert.deepEqual(await fs.readFile(local), body);
-  assert.equal(options.requests[0].init.headers['x-api-key'], 'private-key');
-  assert.equal(options.requests[1].init.headers, undefined);
+  assert.equal(options.requests[0].init.headers, undefined);
   await downloadAttachment(key, config, options);
-  assert.equal(options.requests.length, 3);
+  assert.equal(options.requests.length, 2);
 });
 
 test('local and remote references retain the original filename in history', async context => {
@@ -43,7 +46,7 @@ test('local and remote references retain the original filename in history', asyn
   assert.ok(!resolved.includes('baton-file:'));
   assert.deepEqual(extractAttachments(resolved).files.map(entry => entry.name), [file.name, file.name]);
   assert.deepEqual(extractAttachments(text).files.map(entry => entry.key), [key, key]);
-  assert.equal(options.requests.length, 2);
+  assert.equal(options.requests.length, 1);
   assert.equal(await resolveBridgeAttachments('plain message', config, options), 'plain message');
 });
 
@@ -57,7 +60,7 @@ test('failed, truncated and oversized downloads leave no partial files', async c
   for (const settings of [{ size: 10 }, { size: 1 }, { status: 500 }]) {
     const options = await fixture(context, Buffer.from('hello'), settings);
     await assert.rejects(downloadAttachment(key, config, options));
-    assert.deepEqual(await fs.readdir(path.join(options.home, '.baton-bridge', 'attachments')), []);
+    assert.deepEqual(await fs.readdir(path.join(options.home, '.baton-bridge', 'attachments')).catch(() => []), []);
   }
 });
 
@@ -66,6 +69,6 @@ test('missing or oversized remote files fail instead of sending unusable paths',
     fetchFn: async () => new Response('', { status: 404 }),
   }), /unavailable/);
   await assert.rejects(downloadAttachment(key, config, {
-    fetchFn: async () => Response.json({ size: 513 * 1024 * 1024 }),
+    fetchFn: async () => new Response('', { headers: { 'content-length': String(513 * 1024 * 1024) } }),
   }), /Invalid attachment size/);
 });

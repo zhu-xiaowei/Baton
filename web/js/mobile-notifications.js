@@ -1,7 +1,10 @@
 import { state } from './state.js';
 import { showToast } from './components/toast.js';
+import { dismissInAppNotifications, showInAppNotification } from './components/inapp-notification.js';
+import { devices, notifyKey, onPush, openAlert, request } from './v2/direct-transport.js';
+import { openSessionInTab, setNativeTabSession } from './macos-tabs.js';
 
-// iOS: APNs. Android: a foreground service polling the event feed. Both work while
+// iOS: APNs. Android: a foreground service polling the event feed (hosted: holding a socket). Both work while
 // Baton is in the background; the local push plugin owns notification taps.
 const ENABLED = 'baton-notifications-enabled';
 const PUSH_DEVICE = 'baton-push-device';
@@ -9,6 +12,8 @@ const ASKED = 'baton-notifications-asked';
 const TARGET = 'baton-notification-target';
 const CONFIG = 'baton-notification-config';
 let platform, config, initialization, pendingTarget, permission;
+let refreshed = false; // devices() answered this load
+let relay = ''; // hosted: Android holds a `role=notify` socket to this URL instead of polling
 let status = '';
 
 function mobilePlatform() {
@@ -38,34 +43,43 @@ function validTarget(event) {
 }
 
 async function openNotification(event) {
-  if (!validTarget(event) && !event?.id) return;
-  if (!config) {
+  if (!validTarget(event) && !event?.id && !event?.e) return;
+  // A sealed tap waits for devices(): it may be sealed under a rotated K.
+  if (!config || (!validTarget(event) && !refreshed)) {
     pendingTarget = event;
     return;
   }
   pendingTarget = null;
+  // The phone could not open it before display: open it here.
+  if (!validTarget(event)) event = await openAlert(event);
   // The extension could not fetch it before display: the push carried only its ID.
-  if (!validTarget(event)) {
+  if (!validTarget(event) && event.id) {
     event = await window.api('/api/notifications/event', { id: event.id }).catch(error => {
       if (String(error.message).startsWith('404')) return null;  // Events live 7 days.
       throw error;
     });
+    event = event && await openAlert(event);
   }
-  if (!event) return;
-  if (event.accountId !== config.accountId) {
+  if (!validTarget(event)) return;
+  // In-app alerts carry no accountId: they came over this account's own socket.
+  if (event.accountId && event.accountId !== config.accountId) {
     showToast('This notification belongs to another account.');
   } else if (typeof window.openNotificationSession === 'function') {
     await window.openNotificationSession(event);
   } else {
-    sessionStorage.setItem(TARGET, JSON.stringify(event));
-    location.href = 'index.html';
+    goToIndex(event);
   }
+}
+
+function goToIndex(event) {
+  sessionStorage.setItem(TARGET, JSON.stringify(event));
+  location.href = 'index.html';
 }
 
 async function enableIos(prompt) {
   if (!config.ios) return setStatus('iOS push is not configured on this server.');
   // The notification extension reads these to fetch each alert's text.
-  const result = await invoke('plugin:push|register', { server: state.SERVER, apiKey: state.KEY, prompt });
+  const result = await invoke('plugin:push|register', { server: state.SERVER, apiKey: state.KEY, notifyKey: await notifyKey(), prompt });
   if (!result.granted || !enabled() || !state.KEY) return result;
   const device = { token: result.token, environment: result.environment };
   await window.apiPost('/api/notifications/devices', device);
@@ -84,7 +98,7 @@ function showSwitch() {
 async function apply(prompt = true) {
   if (enabled()) {
     permission = await (platform === 'ios' ? enableIos(prompt)
-      : invoke('plugin:push|start', { server: state.SERVER, apiKey: state.KEY, prompt })) || permission;
+      : invoke('plugin:push|start', { server: state.SERVER, apiKey: state.KEY, notifyKey: await notifyKey(), relay, prompt })) || permission;
   } else {
     setStatus('');
   }
@@ -114,7 +128,19 @@ export async function unregisterMobileNotifications() {
 
 async function initialize() {
   platform = mobilePlatform();
-  if (!platform || !state.KEY) return;
+  if (!state.KEY) return;
+  if (!platform) { // a banner tapped on the Settings page
+    let target = null;
+    try { target = JSON.parse(sessionStorage.getItem(TARGET) || 'null'); } catch {}
+    sessionStorage.removeItem(TARGET);
+    // A tab the macOS app opened for a tapped notification (macos_tabs open_session): once, not again on reload.
+    if (!target && window.__BATON_NOTIFY__ && !sessionStorage.getItem('baton-notify-tab')) {
+      target = window.__BATON_NOTIFY__;
+      sessionStorage.setItem('baton-notify-tab', '1');
+    }
+    if (target && window.openNotificationSession) await window.openNotificationSession(target);
+    return;
+  }
   const { Channel } = await import('@tauri-apps/api/core');
   const drain = async () => {
     const { events } = await invoke('plugin:push|take_pending');
@@ -128,11 +154,10 @@ async function initialize() {
   void drain().catch(error => setStatus(error.message));
   try { pendingTarget ||= JSON.parse(sessionStorage.getItem(TARGET) || 'null'); } catch {}
   sessionStorage.removeItem(TARGET);
-  // Servers deployed before notifications existed answer 404.
-  config = await window.api('/api/notifications/config').catch(error => {
-    if (String(error.message).startsWith('404')) return null;
-    throw error;
-  });
+  const body = await devices();
+  config = body.notifications;
+  refreshed = true;
+  relay = body.rpc?.transport === 'relay' ? body.rpc.url : '';
   if (config) localStorage.setItem(CONFIG, JSON.stringify(config));
   else localStorage.removeItem(CONFIG);
   if (!config) return setStatus('Update the Baton server to enable notifications.');
@@ -142,6 +167,8 @@ async function initialize() {
   const prompt = !localStorage.getItem(ASKED);
   localStorage.setItem(ASKED, '1');
   await apply(prompt);
+  // The phone opens sealed alerts with K's alert key: hand it over again once K arrives.
+  window.addEventListener('baton-account-key', () => { void apply(false).catch(() => {}); });
 }
 
 export function initMobileNotifications() {
@@ -184,8 +211,23 @@ export function mountNotificationSettings() {
   setStatus(status);
 }
 
+// Every App gets each alert first (bridge/notify.mjs). A visible, focused page showing that Session, or showing
+// the alert in-app (the Settings switch turns it off), answers: then no device is pushed.
+const checked = new Set(); // eventIds: a resent check shows nothing again
+onPush(event => {
+  if (event.action !== 'notify_check' || checked.has(event.eventId)
+    || document.visibilityState !== 'visible' || !document.hasFocus()) return;
+  checked.add(event.eventId);
+  if (checked.size > 100) checked.delete(checked.values().next().value);
+  if (event.rootSessionId !== state.wsRootSessionId
+    && !(enabled() && showInAppNotification(event, (alert) => openSessionInTab(alert) || (window.openNotificationSession || goToIndex)(alert)))) return;
+  request(event.device, 'notify_seen', { eventId: event.eventId }, { oneWay: true }).catch(() => {});
+});
+
 // The device itself never shows an alert for the session it has open in the foreground.
 window.setOpenNotificationSession = sessionId => {
+  if (sessionId) dismissInAppNotifications(sessionId);
+  setNativeTabSession(sessionId);
   if (mobilePlatform()) void invoke('plugin:push|set_open', { sessionId: sessionId || '' }).catch(() => {});
 };
 window.unregisterMobileNotifications = unregisterMobileNotifications;

@@ -2,7 +2,7 @@
 # Baton Server — one-command deploy
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/zhu-xiaowei/baton/main/server/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/agentbaton/baton/main/server/install.sh | bash
 #   curl ... | bash -s -- --region us-west-2
 #   ./install.sh                                 # from cloned repo
 #   ./install.sh --region us-west-2
@@ -10,6 +10,7 @@
 #   ./install.sh --region us-west-2 --profile myprofile
 #   ./install.sh --rotate-key                    # replace the API key; every device signs in again
 #   PUSH_RELAY_URL=https://… ./install.sh         # another iOS push relay, every deploy (docs/mobile-notifications.md)
+#   OPEN_REGISTRATION=true ./install.sh           # anyone may create an account by scanning (kept on later deploys)
 
 main() {
 set -euo pipefail
@@ -26,7 +27,9 @@ LINE="=================================================================="
 trap 'rc=$?; echo ""; echo "${C_RED}ERROR: install.sh failed at line $LINENO (exit $rc): $BASH_COMMAND${C_RESET}" >&2; exit $rc' ERR
 
 # ===== Self-bootstrap: if not inside the repo, clone it first =====
-REPO_URL="https://github.com/zhu-xiaowei/baton.git"
+REPO_URL="https://github.com/agentbaton/baton.git"
+# Release asset copies pin this to their tag (scripts/package-cloud.mjs); empty = default branch
+DEFAULT_REF=""
 SELF_MARKER="server/template/Baton.template"
 
 if [ ! -f "$(dirname "${BASH_SOURCE[0]:-$0}")/../$SELF_MARKER" ] 2>/dev/null; then
@@ -48,7 +51,7 @@ if [ ! -f "$(dirname "${BASH_SOURCE[0]:-$0}")/../$SELF_MARKER" ] 2>/dev/null; th
   CLONE_DIR=$(mktemp -d)
   trap 'rm -rf "$CLONE_DIR"' EXIT
   echo "Cloning baton..."
-  if ! git clone --depth 1 --quiet "$REPO_URL" "$CLONE_DIR/baton"; then
+  if ! git -c advice.detachedHead=false clone --depth 1 --quiet ${DEFAULT_REF:+--branch "$DEFAULT_REF"} "$REPO_URL" "$CLONE_DIR/baton"; then
     echo "${C_RED}ERROR: Failed to clone repository${C_RESET}"
     exit 1
   fi
@@ -132,7 +135,6 @@ wait_stack() {
 REGION=""
 STACK_NAME="Baton"
 PROFILE=""
-REPO_NAME="baton-api"
 TAG="latest"
 ROTATE_KEY=false
 
@@ -175,10 +177,11 @@ ACCOUNT_ID="$STS_OUT"
 echo "Deploying Baton — region=$REGION, stack=$STACK_NAME, account=$ACCOUNT_ID"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-SRC_DIR="$SCRIPT_DIR/src"
 TEMPLATE="$SCRIPT_DIR/template/Baton.template"
 WEB_DIR="$SCRIPT_DIR/../web"
 ROOT_DIR="$SCRIPT_DIR/.."
+# One image repository per stack (the default stack keeps baton-api), so stacks never move each other's :latest.
+REPO_NAME="$(echo "$STACK_NAME" | tr '[:upper:]' '[:lower:]')-api"
 REPO_URI="${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com/${REPO_NAME}"
 S3_BUCKET="$(echo "$STACK_NAME" | tr '[:upper:]' '[:lower:]')-${REGION}-images-${ACCOUNT_ID}"
 CODEBUILD_PROJECT="${STACK_NAME}-build"
@@ -188,7 +191,14 @@ CODEBUILD_ROLE="${STACK_NAME}-codebuild-role"
 aws s3 mb "s3://${S3_BUCKET}" --region "$REGION" >/dev/null 2>&1 || true
 
 aws s3api put-bucket-cors --bucket "$S3_BUCKET" --region "$REGION" --cors-configuration \
-  '{"CORSRules":[{"AllowedOrigins":["*"],"AllowedMethods":["GET","PUT","HEAD"],"AllowedHeaders":["*"],"ExposeHeaders":["ETag","Content-Length","Content-Type"],"MaxAgeSeconds":3600}]}'
+  '{"CORSRules":[{"AllowedOrigins":["*"],"AllowedMethods":["GET","PUT","HEAD","POST","DELETE"],"AllowedHeaders":["*"],"ExposeHeaders":["ETag","Content-Length","Content-Type","x-amz-checksum-sha256","x-amz-meta-filename","x-amz-meta-content-type","x-amz-meta-sealed"],"MaxAgeSeconds":3600}]}'
+# t/<account>/ is a transfer channel, emptied after 7 days; the pre-v2 file prefixes empty out once.
+aws s3api put-bucket-lifecycle-configuration --bucket "$S3_BUCKET" --region "$REGION" >/dev/null --lifecycle-configuration \
+  '{"Rules":[{"ID":"transfer","Status":"Enabled","Filter":{"Prefix":"t/"},"Expiration":{"Days":7},"AbortIncompleteMultipartUpload":{"DaysAfterInitiation":1}},
+    {"ID":"images","Status":"Enabled","Filter":{"Prefix":"images/"},"Expiration":{"Days":1}},
+    {"ID":"files","Status":"Enabled","Filter":{"Prefix":"files/"},"Expiration":{"Days":1}},
+    {"ID":"videos","Status":"Enabled","Filter":{"Prefix":"videos/"},"Expiration":{"Days":1}},
+    {"ID":"attachments","Status":"Enabled","Filter":{"Prefix":"attachments/"},"Expiration":{"Days":1}}]}'
 UPLOAD_ACCELERATION=false
 if [ "${S3_UPLOAD_ACCELERATE:-true}" = "true" ]; then
   echo "Enabling S3 upload acceleration (AWS transfer acceleration charges may apply)..."
@@ -220,18 +230,16 @@ echo "[1/4] Building server Docker image (version=$APP_VERSION)..."
 
 aws ecr create-repository --repository-name "$REPO_NAME" --region "$REGION" >/dev/null 2>&1 || true
 
-# Stage build context: server/src + web + root frontend files. Vite build runs inside Dockerfile.
+# Stage build context: server/core + server/aws + web + root frontend files. Vite build runs inside Dockerfile.
 BUILD_CTX=$(mktemp -d)
 trap 'rm -rf "$BUILD_CTX"' EXIT
-cp -r "$SRC_DIR"/. "$BUILD_CTX/"
-rm -f "$BUILD_CTX/test_api.py" 2>/dev/null || true
+cp "$SCRIPT_DIR/aws/Dockerfile" "$BUILD_CTX/"
+mkdir -p "$BUILD_CTX/server"
+cp -r "$SCRIPT_DIR/core" "$SCRIPT_DIR/aws" "$BUILD_CTX/server/"
 cp -r "$WEB_DIR" "$BUILD_CTX/web"
 mkdir -p "$BUILD_CTX/bridge"
-cp "$ROOT_DIR/bridge/terminal-direct-protocol.mjs" \
-  "$ROOT_DIR/bridge/preview-protocol.mjs" \
-  "$ROOT_DIR/bridge/realtime-direct-protocol.mjs" \
-  "$ROOT_DIR/bridge/tool-preview.mjs" \
-  "$ROOT_DIR/bridge/live-turn-stream.mjs" "$BUILD_CTX/bridge/"
+cp "$ROOT_DIR/bridge/preview-protocol.mjs" \
+  "$ROOT_DIR/bridge/direct-rpc-protocol.mjs" "$ROOT_DIR/bridge/transfer-store.mjs" "$ROOT_DIR/bridge/e2ee.mjs" "$ROOT_DIR/bridge/entry.mjs" "$BUILD_CTX/bridge/"
 rm -f "$BUILD_CTX/web/test_api.py" 2>/dev/null || true
 cp "$ROOT_DIR/package.json" "$ROOT_DIR/package-lock.json" "$ROOT_DIR/vite.config.js" "$BUILD_CTX/"
 
@@ -410,7 +418,7 @@ WS_ZIP=$(mktemp -t baton-ws-lambda.XXXX)
 rm -f "$WS_ZIP"
 WS_ZIP="$WS_ZIP.zip"
 WS_CODE_KEY="deploy/ws/${APP_VERSION}-$(date +%s)-$$.zip"
-(cd "$SRC_DIR" && zip -qr "$WS_ZIP" api_key.py bridge_ws.py notification_worker.py message_history.py terminal_ws.py terminal_direct_ws.py preview_tunnel_ws.py realtime_direct_ws.py project -x '*/__pycache__/*' '*.pyc')
+(cd "$ROOT_DIR" && zip -qr "$WS_ZIP" server/core/*.mjs server/aws/*.mjs bridge/transfer-store.mjs)
 aws s3 cp "$WS_ZIP" "s3://${S3_BUCKET}/${WS_CODE_KEY}" --region "$REGION" --only-show-errors
 rm -f "$WS_ZIP"
 fi
@@ -509,6 +517,11 @@ fi
 if [ "$ROTATE_KEY" != true ] && [ -n "${PUSH_RELAY_URL+x}" ]; then
   STACK_PARAMS+=("ParameterKey=PushRelayUrl,ParameterValue=$PUSH_RELAY_URL")
 fi
+if [ "$ROTATE_KEY" != true ] && [ -n "${OPEN_REGISTRATION:-}" ]; then
+  STACK_PARAMS+=("ParameterKey=OpenRegistration,ParameterValue=$OPEN_REGISTRATION")
+elif [ -n "$(stack_param OpenRegistration)" ] && [ "$(stack_param OpenRegistration)" != "None" ]; then
+  STACK_PARAMS+=("ParameterKey=OpenRegistration,UsePreviousValue=true")
+fi
 STACK_PARAMS+=(
   "ParameterKey=AccountId,ParameterValue=$DATA_ACCOUNT_ID"
   "ParameterKey=ApiKeyName,ParameterValue=$KEY_NAME"
@@ -532,6 +545,12 @@ else
   fi
 fi
 echo "  ${C_GREEN}✓${C_RESET} Stack ready"
+# Lambda creates its log groups itself, so their 7-day retention is set here rather than in the template.
+for FN in $(aws cloudformation describe-stack-resources --stack-name "$STACK_NAME" --region "$REGION" \
+    --query "StackResources[?ResourceType=='AWS::Lambda::Function'].PhysicalResourceId" --output text); do
+  aws logs create-log-group --log-group-name "/aws/lambda/$FN" --region "$REGION" 2>/dev/null || true
+  aws logs put-retention-policy --log-group-name "/aws/lambda/$FN" --retention-in-days 7 --region "$REGION" || true
+done
 
 # ===== Step 4: Fetch outputs =====
 echo "[4/4] Fetching outputs..."

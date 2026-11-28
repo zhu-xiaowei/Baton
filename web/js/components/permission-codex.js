@@ -11,13 +11,13 @@ export function createCodexPermissionController(options) {
   var request = null;
   var mcpFields = null;
   var mcpIndex = 0;
-  var mcpAnswers = [];
+  var mcpAnswers = {}; // field id → value, kept for Back
 
   function reset() {
     request = null;
     mcpFields = null;
     mcpIndex = 0;
-    mcpAnswers = [];
+    mcpAnswers = {};
   }
 
   function show(msg) {
@@ -70,7 +70,7 @@ export function createCodexPermissionController(options) {
     }
   }
 
-  function choose(act, label, isTyped) {
+  function choose(act, label, isTyped, picked) {
     if (!request) return false;
 
     if (request.approvalType === 'codex-goal-resume') {
@@ -92,7 +92,7 @@ export function createCodexPermissionController(options) {
 
     if (request.approvalType === 'codex-mcp-elicitation') {
       if (mcpFields) {
-        chooseMcpField(act, label, isTyped);
+        chooseMcpField(act, label, isTyped, picked);
       } else {
         var mcpAction = act.indexOf('mcp:') === 0 ? act.slice(4) : 'cancel';
         finish({
@@ -234,30 +234,54 @@ export function createCodexPermissionController(options) {
     });
   }
 
-  function renderMcpFormStep() {
+  function rangeText(input, from, to) {
+    var min = input.minimum, max = input.maximum;
+    return min != null && max != null ? from + min + to + max : min != null ? 'at least ' + min : max != null ? 'at most ' + max : '';
+  }
+
+  // `typed` / `error`: a refused entry, shown again with why.
+  function renderMcpFormStep(typed, error) {
     var field = mcpFields[mcpIndex] || {};
     var elicitation = request.input.codexMcpElicitation || {};
     var prefix = mcpFields.length > 1 ? '[' + (mcpIndex + 1) + '/' + mcpFields.length + '] ' : '';
     var promptOptions = [];
-    if (field.input && field.input.type === 'select') {
+    var multi = field.input && field.input.type === 'multiselect';
+    var had = Object.hasOwn(mcpAnswers, field.id);
+    var prev = mcpAnswers[field.id];
+    if (multi) {
+      promptOptions = field.input.options.map(function (option, index) {
+        return { label: option.label, act: 'mcp-pick:' + index, check: (had ? prev : field.input.defaultValues).includes(option.value) };
+      });
+    } else if (field.input && field.input.type === 'select') {
       promptOptions = (field.input.options || []).map(function (option, index) {
         return {
           label: option.label,
+          previous: had && prev === option.value,
           description: field.input.defaultIndex === index ? 'Default' : '',
           act: 'mcp-field:' + index,
         };
       });
     } else {
+      var input = field.input || {};
+      var hint = input.type !== 'number' ? input.format || '' : '';
+      if (input.default != null) {
+        promptOptions.push({ label: String(input.default), description: 'Default', act: 'mcp-default' });
+      }
       promptOptions.push({
         label: 'Enter value…',
         act: 'mcp-text',
         hasInput: true,
-        placeholder: field.prompt || field.label || '',
+        placeholder: (field.prompt || field.label || '') + (hint ? ' (' + hint + ')' : ''),
+        value: typed ?? (had ? String(prev) : ''),
+        error: error,
+        note: input.type === 'number'
+          ? [input.integer ? 'Whole number' : 'Number', rangeText(input, 'from ', ' to ')].filter(Boolean).join(' ') : '',
       });
     }
     if (!field.required) {
       promptOptions.push({ label: 'Skip', act: 'mcp-skip', tone: 'deny' });
     }
+    if (mcpIndex > 0) promptOptions.push({ label: '← Back', act: 'back', back: true });
     renderPrompt({
       title: prefix + (field.label || field.id || 'MCP input'),
       description: [
@@ -265,14 +289,26 @@ export function createCodexPermissionController(options) {
         field.prompt && field.prompt !== field.label ? field.prompt : '',
       ].filter(Boolean).join('\n\n'),
       options: promptOptions,
+      submit: multi ? { act: 'mcp-submit', min: field.input.minItems, max: field.input.maxItems } : null,
     });
   }
 
-  function chooseMcpField(act, label, isTyped) {
+  function chooseMcpField(act, label, isTyped, picked) {
     var field = mcpFields[mcpIndex] || {};
-    if (act !== 'mcp-skip') {
+    if (act === 'back') { mcpIndex--; renderMcpFormStep(); return; }
+    if (act === 'mcp-skip') delete mcpAnswers[field.id];
+    else {
       var value;
-      if (act === 'mcp-text' || isTyped) {
+      if (act === 'mcp-submit') {
+        value = picked.map(function (index) { return field.input.options[index].value; });
+      } else if (act === 'mcp-default') {
+        value = field.input.default;
+      } else if (field.input && field.input.type === 'number') {
+        value = /^-?(\d+(\.\d*)?|\.\d+)$/.test(label) ? Number(label) : NaN;
+        var why = !isFinite(value) ? 'Enter a number' : field.input.integer && value % 1 ? 'Must be a whole number'
+          : value < (field.input.minimum ?? -Infinity) || value > (field.input.maximum ?? Infinity) ? 'Must be ' + rangeText(field.input, 'between ', ' and ') : '';
+        if (why) return renderMcpFormStep(label, why);
+      } else if (act === 'mcp-text' || isTyped) {
         value = label;
       } else {
         var index = parseInt(act.slice('mcp-field:'.length), 10);
@@ -280,7 +316,7 @@ export function createCodexPermissionController(options) {
         if (!option) return;
         value = option.value;
       }
-      mcpAnswers.push([field.id, value]);
+      mcpAnswers[field.id] = value;
     }
     if (mcpIndex < mcpFields.length - 1) {
       mcpIndex++;
@@ -290,7 +326,7 @@ export function createCodexPermissionController(options) {
     finish({
       approvalResponse: {
         action: 'acceptForm',
-        content: Object.fromEntries(mcpAnswers),
+        content: Object.assign({}, mcpAnswers),
       },
     });
   }

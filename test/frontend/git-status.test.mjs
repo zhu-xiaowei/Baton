@@ -18,17 +18,16 @@ import {
   saveGitStatusView,
   shouldRestoreGitStatus,
 } from '../../web/js/git/view-state.js';
-import { handleWsRpcMessage } from '../../web/js/ws-rpc.js';
+import { mockBridgeFrames } from './bridge-frames-mock.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 
 test('Git RPC assembles out-of-order grouped snapshot frames', async () => {
-  var payload;
-  globalThis.window = {
-    wsSendReliable(value) { payload = value; },
-  };
+  var bridge = mockBridgeFrames();
   state.appState.device = 'Mac';
   var pending = requestGit('status', { projectHash: 'project' });
+  var payload = bridge.requests[0];
+  var handleWsRpcMessage = bridge.answer;
   handleWsRpcMessage({
     action: 'git_status',
     operation: 'status',
@@ -54,7 +53,6 @@ test('Git RPC assembles out-of-order grouped snapshot frames', async () => {
   var result = await pending;
   assert.equal(result.groups.staged[0].path, 'a.js');
   assert.equal(result.groups.changes[0].path, 'b.js');
-  delete globalThis.window;
 });
 
 test('Git renderer hides empty optional sections and always shows Changes', () => {
@@ -257,7 +255,7 @@ test('Git Diff and Code mode survive refresh for the same session', () => {
   assert.match(diff, /export function restoreGitDiffView\(\)/);
   assert.match(diff, /clearGitDiffView\(\);\s*if \(!current\) return false;\s*return closeFileViewer\(\)/);
   assert.match(diff, /if \(closeOptions\.refresh !== false && state\.gitStatusOpen\) window\.refreshGitStatus\?\.\(\)/);
-  assert.match(status, /window\.connectWs\(\);\s*restoreGitDiffView\(\);\s*refreshGitStatus\(\)/);
+  assert.match(status, /if \(!state\.gitStatusOpen\) return;\s*restoreGitDiffView\(\);\s*refreshGitStatus\(\)/);
   assert.match(status, /state\.gitStatusOpen = false;\s*closeGitDiff\(\);\s*clearGitStatusView\(\)/);
 });
 
@@ -276,11 +274,11 @@ test('Workspace Header actions match top-bar height without growing desktop head
   assert.match(workspaceCss, /html\.native-mobile \.project-files-page-breadcrumb > \.back-button svg,[\s\S]*?html\.native-mobile \.git-status-header > \.back-button svg,[\s\S]*?html\.native-mobile \.project-terminal-header > \.back-button svg \{[\s\S]*?transform: translateX\(2px\);/);
   assert.match(css, /\.project-files-entry\.git-status-entry svg\.git-branch-icon\{width:20px;height:20px/);
   assert.match(css, /html\.native-mobile #top-right \.project-files-entry\.git-status-entry svg\.git-branch-icon,html\.native-mobile \.edge-back-top-right \.project-files-entry\.git-status-entry svg\.git-branch-icon\{width:22px;height:22px;transform:translate\(calc\(-50% \+ 2px\),-50%\)/);
-  assert.match(style, /\.runtime-mark-codex::before \{[\s\S]*?width: 16px; height: 16px;/);
-  assert.match(style, /\.runtime-mark-codex::before \{[\s\S]*?background: #6e7681;/);
-  assert.match(style, /html\.native-mobile #top-right \.runtime-mark-codex::before,[\s\S]*?width: 24px; height: 24px;/);
+  assert.match(style, /\.runtime-mark-mono::before \{[\s\S]*?width: 16px; height: 16px;/);
+  assert.match(style, /\.runtime-mark-mono::before \{[\s\S]*?background: #6e7681;/);
+  assert.match(style, /html\.native-mobile #top-right \.runtime-mark-mono::before,[\s\S]*?width: 24px; height: 24px;/);
   assert.doesNotMatch(style, /html\.native-mobile #top-right \.runtime-icon\s*\{[^}]*translateX\(3px\)/);
-  assert.doesNotMatch(style, /\.runtime-mark-codex\s*\{[^}]*color:/);
+  assert.doesNotMatch(style, /\.runtime-mark-mono\s*\{[^}]*color:/);
   assert.match(css, /\.git-status-heading\{[^}]*padding-left:0/);
   assert.doesNotMatch(css, /git-status-header>\.back-button\{/);
   assert.doesNotMatch(css, /git-status-header \.back-button::/);

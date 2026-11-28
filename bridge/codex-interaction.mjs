@@ -276,8 +276,22 @@ function mcpFormFields(schema) {
         label,
         prompt,
         required: required.has(id),
-        input: { type: 'text' },
+        input: { type: 'text', format: property.format ?? null, default: typeof property.default === 'string' ? property.default : null },
       });
+      continue;
+    }
+    if (property.type === 'number' || property.type === 'integer') {
+      fields.push({ id, label, prompt, required: required.has(id), input: { type: 'number', integer: property.type === 'integer',
+        minimum: property.minimum ?? null, maximum: property.maximum ?? null, default: typeof property.default === 'number' ? property.default : null } });
+      continue;
+    }
+    const items = property.type === 'array' ? property.items || {} : {};
+    const choices = (Array.isArray(items.enum) && items.enum.map((value) => ({ label: value, value })))
+      || (Array.isArray(items.anyOf) && items.anyOf.map((entry) => ({ label: entry?.title, value: entry?.const }))) || [];
+    if (choices.length && choices.every((option) => typeof option.label === 'string' && typeof option.value === 'string')) {
+      fields.push({ id, label, prompt, required: required.has(id), input: { type: 'multiselect', options: choices,
+        defaultValues: Array.isArray(property.default) ? property.default : [],
+        minItems: property.minItems ?? 0, maxItems: property.maxItems ?? Infinity } });
       continue;
     }
     return null;
@@ -322,6 +336,13 @@ function validMcpFormContent(schema, value) {
     const answer = value[field.id];
     if (field.input.type === 'text') {
       if (typeof answer !== 'string' || (field.required && !answer)) return null;
+    } else if (field.input.type === 'number') {
+      const { integer, minimum, maximum } = field.input;
+      if (!Number.isFinite(answer) || (integer && !Number.isInteger(answer))
+        || (minimum != null && answer < minimum) || (maximum != null && answer > maximum)) return null;
+    } else if (field.input.type === 'multiselect') {
+      if (!Array.isArray(answer) || answer.length < field.input.minItems || answer.length > field.input.maxItems
+        || answer.some((item) => !field.input.options.some((option) => option.value === item))) return null;
     } else if (!field.input.options.some((option) => (
       approvalDecisionKey(option.value) === approvalDecisionKey(answer)
     ))) {
@@ -368,6 +389,14 @@ function mcpElicitationResponse(pending, response) {
     if (action === 'decline') return { action: 'decline', content: null, _meta: null };
   }
   return { action: 'cancel', content: null, _meta: null };
+}
+
+// The same MCP form for Claude and Kiro elicitations ({serverName, mode, message, requestedSchema}).
+export const mcpFormRequest = (params) => ({ tool_name: params.serverName || 'MCP server', approval_type: 'codex-mcp-elicitation',
+  input: { codexMcpElicitation: mcpElicitationDetails(params) } });
+export function mcpFormReply(params, response) {
+  const { action, content } = mcpElicitationResponse({ params }, response);
+  return content ? { action, content } : { action };
 }
 
 export class CodexInteraction {
@@ -2180,7 +2209,11 @@ export class CodexInteraction {
       const answers = Object.fromEntries(
         (pending.params.questions || []).map((question) => [
           question.id,
-          { answers: answer ? [answer] : [] },
+          {
+            answers: reply.answers
+              ? [].concat(reply.answers[question.id] || []).map(String)
+              : (answer ? [answer] : []),
+          },
         ]),
       );
       pending.client.respond(pending.id, { answers });

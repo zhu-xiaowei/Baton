@@ -26,7 +26,7 @@ test('a mid-turn send keeps its bubble node while the runtime consumes it', asyn
   const A = appSent.at(-1).turnId;
   exec.executionId = A;
   exec.options.turnId = A;
-  h.hooks.handleWsMessage({ action: 'send_message_received', turnId: A });
+  h.bridge.accept(A);
   exec.registerInput(A);
   exec.sendAuthoritative(userRow(A, 'first'));
   exec.sendBlockStart({ kind: 'text', blockId: 1 });
@@ -37,7 +37,7 @@ test('a mid-turn send keeps its bubble node while the runtime consumes it', asyn
   // Mid-turn send B.
   h.window.doSend('second', 'second', []);
   const B = appSent.filter(m => m.action === 'send_message').at(-1).turnId;
-  h.hooks.handleWsMessage({ action: 'send_message_received', turnId: B });
+  h.bridge.accept(B);
   h.hooks.handleWsMessage({ action: 'send_message_result', turnId: B, sessionId, ok: true });
   await h.tick(10);
   const bubbleB = h.document.getElementById(B);

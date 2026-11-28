@@ -4,7 +4,8 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { removeServiceKeyArgs, uninstallBridge } from '../../bridge/config.mjs';
+import { execFileSync } from 'node:child_process';
+import { removeServiceKeyArgs, uninstallBridge, writeCliLauncher } from '../../bridge/config.mjs';
 
 test('old service definitions stop passing the key; config.json is the only source', () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'baton-service-'));
@@ -59,4 +60,15 @@ test('a removed device turns off autostart and drops its key', () => {
     assert.deepEqual(ran, commands);
     fs.rmSync(home, { recursive: true, force: true });
   }
+});
+
+test('the baton command runs bridge.mjs with the service\'s Node.js, else the user\'s', { skip: process.platform === 'win32' }, () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "baton cli's-"));
+  fs.writeFileSync(path.join(home, 'bridge.mjs'), 'console.log(JSON.stringify(process.argv.slice(2)))');
+  const launcher = writeCliLauncher(home, 'linux');
+  assert.equal(execFileSync(launcher, ['pair', 'a b'], { encoding: 'utf-8' }), '["pair","a b"]\n');
+  fs.writeFileSync(launcher, fs.readFileSync(launcher, 'utf-8').replace(/node='[^\n]*'/, "node='/gone/node'"));
+  const env = { ...process.env, PATH: `${path.dirname(process.execPath)}:${process.env.PATH}` };
+  assert.equal(execFileSync(launcher, ['pair'], { encoding: 'utf-8', env }), '["pair"]\n');
+  fs.rmSync(home, { recursive: true, force: true });
 });

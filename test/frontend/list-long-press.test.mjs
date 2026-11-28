@@ -10,7 +10,7 @@ const appSource = readFileSync(
 
 function gestureHarness() {
   const start = appSource.indexOf('var LONG_PRESS_MS');
-  const end = appSource.indexOf('// Unified 3-state', start);
+  const end = appSource.indexOf('// Three states (running', start);
   const handlers = {};
   const scheduled = [];
   const cleared = [];

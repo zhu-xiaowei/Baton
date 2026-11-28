@@ -83,3 +83,9 @@ Missing files/offline devices show an error. Failed previews retry when network
 connectivity returns or the page becomes visible again. The original device
 must be online for the first load; a small memory cache is scoped to
 device/project/thread/path.
+
+Every agent's closed ```` ```html ```` fence holding a whole document (starting,
+after whitespace/comments, with `<!doctype html` or `<html`; at most 1 MiB) renders
+as the same preview, fed from the message text instead of a file. Fragments stay
+code; while streaming, the fence stays code until it closes. The macOS/iOS native
+Remote preview allows `about:srcdoc` subframes so such previews are not blank there.

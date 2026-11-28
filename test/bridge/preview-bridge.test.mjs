@@ -4,6 +4,12 @@ import net from 'node:net';
 import { randomUUID } from 'node:crypto';
 import { createPreviewBridge } from '../../bridge/preview-bridge.mjs';
 
+// The stream channel ws.mjs gives a preview session; App frames arrive through `handle`.
+function fakeChannel(onSend) {
+  return { readyState: 1, bufferedAmount: 0, follow() {}, close() { this.readyState = 3; },
+    send(message) { onSend(message); return true; } };
+}
+
 async function waitFor(predicate) {
   for (let attempt = 0; attempt < 200; attempt++) {
     if (predicate()) return;
@@ -37,39 +43,23 @@ test('Bridge streams a large HTTP response in bounded frames through a loopback 
   const streamId = randomUUID();
   const received = [];
   let closed = false;
-  let channel;
-
-  class FakeChannel extends EventTarget {
-    readyState = 1;
-    send(message) {
-      if (message.type === 'bytes') {
-        received.push(Buffer.from(message.data, 'base64'));
-        queueMicrotask(() => this.dispatchEvent(Object.assign(new Event('message'), {
-          data: { type: 'ack', streamId, seq: message.seq },
-        })));
-      }
-      if (message.type === 'fin') closed = true;
-      return true;
+  let manager;
+  const deliver = (m) => manager.handle({ id: tunnelId, m });
+  const channel = fakeChannel((message) => {
+    if (message.type === 'bytes') {
+      received.push(Buffer.from(message.data, 'base64'));
+      queueMicrotask(() => deliver({ type: 'ack', streamId, seq: message.seq }));
     }
-    authorize() {}
-    close() { this.readyState = 3; }
-    deliver(message) {
-      this.dispatchEvent(Object.assign(new Event('message'), { data: message }));
-    }
-  }
-  const manager = createPreviewBridge({
-    key: 'test', device: 'test-ec2', sendControl: () => true,
-    channelFactory: () => (channel = new FakeChannel()),
+    if (message.type === 'fin') closed = true;
   });
+  manager = createPreviewBridge({ channel: () => channel });
   try {
-    manager.handle({ action: 'preview_tunnel', v: 1, type: 'offer',
-      tunnelId, device: 'test-ec2', side: 'bridge', port });
-    channel.deliver({ type: 'open', streamId });
-    await waitFor(() => manager && channel.readyState === 1);
-    const midpoint = Math.floor(request.length / 2);
-    channel.deliver({ type: 'bytes', streamId, seq: 2,
+    deliver({ type: 'start', port });
+    deliver({ type: 'open', streamId });
+        const midpoint = Math.floor(request.length / 2);
+    deliver({ type: 'bytes', streamId, seq: 2,
       data: request.subarray(midpoint).toString('base64') });
-    channel.deliver({ type: 'bytes', streamId, seq: 1,
+    deliver({ type: 'bytes', streamId, seq: 1,
       data: request.subarray(0, midpoint).toString('base64') });
     await waitFor(() => closed);
     assert.equal(Buffer.compare(Buffer.concat(received), response), 0);
@@ -98,35 +88,23 @@ test('Bridge preserves duplex bytes after an HTTP WebSocket upgrade', async () =
   const received = [];
   const streamId = randomUUID();
   const tunnelId = randomUUID();
-  let channel;
-  class FakeChannel extends EventTarget {
-    readyState = 1;
-    send(message) {
-      if (message.type === 'bytes') {
-        received.push(Buffer.from(message.data, 'base64'));
-        queueMicrotask(() => this.deliver({ type: 'ack', streamId, seq: message.seq }));
-      }
-      return true;
+  let manager;
+  const deliver = (m) => manager.handle({ id: tunnelId, m });
+  const channel = fakeChannel((message) => {
+    if (message.type === 'bytes') {
+      received.push(Buffer.from(message.data, 'base64'));
+      queueMicrotask(() => deliver({ type: 'ack', streamId, seq: message.seq }));
     }
-    authorize() {}
-    close() { this.readyState = 3; }
-    deliver(data) {
-      this.dispatchEvent(Object.assign(new Event('message'), { data }));
-    }
-  }
-  const manager = createPreviewBridge({
-    key: 'test', device: 'test-ec2', sendControl: () => true,
-    channelFactory: () => (channel = new FakeChannel()),
   });
+  manager = createPreviewBridge({ channel: () => channel });
   try {
-    manager.handle({ action: 'preview_tunnel', v: 1, type: 'offer',
-      tunnelId, device: 'test-ec2', side: 'bridge', port: server.address().port });
-    channel.deliver({ type: 'open', streamId });
-    channel.deliver({ type: 'bytes', streamId, seq: 1,
+    deliver({ type: 'start', port: server.address().port });
+    deliver({ type: 'open', streamId });
+    deliver({ type: 'bytes', streamId, seq: 1,
       data: Buffer.from('GET /ws HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n').toString('base64') });
     await waitFor(() => Buffer.concat(received).includes('101 Switching Protocols'));
     const frame = Buffer.from([0x81, 0x02, 0x68, 0x69]);
-    channel.deliver({ type: 'bytes', streamId, seq: 2, data: frame.toString('base64') });
+    deliver({ type: 'bytes', streamId, seq: 2, data: frame.toString('base64') });
     await waitFor(() => Buffer.concat(received).subarray(-frame.length).equals(frame));
   } finally {
     manager.dispose();

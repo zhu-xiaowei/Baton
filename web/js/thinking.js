@@ -33,7 +33,7 @@ export function refreshThinkingGroups(container, now = Date.now()) {
       flush();
       return;
     }
-    const empty = !row.querySelector('.thinking-body')?.textContent.trim();
+    const empty = !row.querySelector('.thinking-body')?.textContent.trim() && !row.querySelector('[data-thinking-ref]');
     row.classList.toggle('thinking-empty', empty);
     if (!empty) flush();
     group.push(row);

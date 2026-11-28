@@ -14,12 +14,3 @@ The 10,000-Session native watcher stress test is explicit:
 npm run test:codex:stress
 ```
 
-The live AWS/Codex validation is explicit because it starts real model turns:
-
-```bash
-npm run test:codex:e2e
-```
-
-It uses an isolated temporary `CODEX_HOME`, starts two concurrent Codex Sessions, subscribes through
-the deployed App WS endpoint, compares rollout and WS arrival, checks DDB UUID uniqueness/final
-metadata, and removes the temporary Session/Project metadata.

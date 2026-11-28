@@ -1,3 +1,4 @@
+import { hasPendingImages, withImageKeys } from './extract.mjs';
 import { textPreview, toolPreview, toolPreviews, TOOL_PREVIEW_CHARACTERS } from './tool-preview.mjs';
 
 export const STREAM_EVENT_ACTIONS = new Set([
@@ -36,7 +37,7 @@ export function assertTurnEventEnvelope(event) {
 
 export async function prepareAuthoritativeMessage(raw, options = {}) {
   const message = options.normalized
-    ? raw
+    ? (raw && hasPendingImages([raw]) ? { ...raw, content: await withImageKeys(raw.content) } : raw)
     : await options.normalize(raw);
   return message?.uuid ? message : null;
 }
@@ -112,7 +113,6 @@ export class LiveTurnStream {
   constructor(options) {
     this.sessionId = options.sessionId;
     this.turnId = options.turnId;
-    this.replyConnectionId = options.replyConnectionId || '';
     this.goalContinuation = options.goalContinuation === true;
     this.send = options.send;
     this.started = false;
@@ -218,10 +218,7 @@ export class LiveTurnStream {
         this.authoritativeMessages.set(key, structuredClone(message));
       }
     }
-    return this.#createEvent('messages', {
-      messages,
-      ...(options.noCache ? { noCache: true } : {}),
-    });
+    return this.#createEvent('messages', { messages });
   }
 
   sendAuthoritative(message, options = {}) {
@@ -238,16 +235,13 @@ export class LiveTurnStream {
     if (typeof text !== 'string' || !text.trim()) return false;
     return this.sendAuthoritative(
       createTransientUserMessage(this.turnId, text, timestamp),
-      { noCache: true, includeInEnd: false },
+      { includeInEnd: false },
     );
   }
 
   #sendInterrupt(timestamp) {
     if (this.ended || this.interruptSent) return false;
-    return this.sendAuthoritative(
-      createInterruptMessage(this.turnId, timestamp),
-      { noCache: true },
-    );
+    return this.sendAuthoritative(createInterruptMessage(this.turnId, timestamp));
   }
 
   sendInterrupt(timestamp) {
@@ -282,9 +276,6 @@ export class LiveTurnStream {
       sessionId: this.sessionId,
       turnId: this.turnId,
       ...(this.goalContinuation ? { goalContinuation: true } : {}),
-      ...(this.replyConnectionId
-        ? { replyConnectionId: this.replyConnectionId }
-        : {}),
     };
   }
 

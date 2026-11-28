@@ -4,9 +4,9 @@ const METADATA_TYPES = new Set(['ai-title', 'custom-title', 'last-prompt']);
 
 const LIVE_PROMPT_PREFIXES = ['live:user:', 'codex:user:'];
 
-// Live prompts (noCache) reach DDB only after the JSONL/rollout watcher persists
-// them under the same identity; keep them until the snapshot has them. Other
-// live rows may persist under a different identity, so only prompts.
+// Live prompts reach the history only once the JSONL/rollout has them under the
+// same identity; keep them until the snapshot has them. Other live rows may be
+// written under a different identity, so only prompts.
 function unpersistedLiveTail(localMessages, snapshot) {
   let last = '';
   const ids = new Set();

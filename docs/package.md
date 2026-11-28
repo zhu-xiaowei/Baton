@@ -1,6 +1,6 @@
 # Release packages
 
-Use Claude Code `/package`, Codex `$package`, or `npm run package` from the repository root. Cloud packaging collects `release/<package.json version>/Baton.apk`, `Baton.dmg`, `Baton.exe`, `Baton.deb`, and `Baton.deb.sha256`. iOS releases use the separate TestFlight workflow.
+Use Claude Code `/package`, Codex `$package`, or `npm run package` from the repository root. Cloud packaging collects `release/<package.json version>/Baton.apk`, `Baton.dmg`, `Baton.exe`, `Baton.deb`, `Baton.deb.sha256`, and the server `install.sh` pinned to `v<version>`. iOS releases use the separate TestFlight workflow.
 
 On macOS the command uses the local Android, macOS, and Windows build scripts, then builds Linux through GitHub Actions. On Linux it dispatches `.github/workflows/package.yml`, which builds on Android/Linux, macOS, and Windows runners, then downloads each successful artifact. The current Linux host has no Rust or Android SDK, and the Windows release script uses macOS tool paths; those local builds cannot run as written on this host.
 
@@ -8,7 +8,9 @@ The existing Xcode Cloud workflow archives the iOS Xcode project for TestFlight.
 
 ## Prepare a versioned release
 
-Use a branch such as `release/1.1.0` to prepare the version bump and release
+Claude Code `/release <version>` (Codex `$release <version>`) runs this whole
+section end to end: version bump PR, packaging, the Latest GitHub Release and
+dl.agentbaton.app. Use a branch such as `release/1.1.0` to prepare the version bump and release
 notes. Keep these application versions in sync:
 
 | Location | Field |
@@ -33,7 +35,7 @@ Update the download links and feature descriptions in all three root READMEs,
 and prepare English GitHub Release notes with changes and upgrade instructions.
 Upload `Baton.deb` and `Baton.deb.sha256` alongside the other installers so the
 Linux download links in all three READMEs resolve to published release assets.
-Draft notes can be kept locally in `docs/releases/<version>.md`.
+Keep draft notes in the ignored `release/<version>/notes.md`; an untracked file elsewhere blocks packaging.
 Update version-specific download QR codes such as `docs/assets/baton_android.avif`,
 and decode the generated image to verify that it points to the new release.
 Keep previous release notes, protocol examples, test fixtures, and dependency
@@ -43,14 +45,15 @@ Before packaging, merge the release preparation into `main` and wait for
 production CI to pass for the exact commit being packaged. The versioned
 `release/<version>` branch has no production-CI exemption. Package the resulting
 `main` commit with `npm run package`, then publish the `v<version>` GitHub release
-with `Baton.apk`, `Baton.dmg`, `Baton.exe`, `Baton.deb`, and `Baton.deb.sha256`
-from `release/<version>/`. The README
+with `Baton.apk`, `Baton.dmg`, `Baton.exe`, `Baton.deb`, `Baton.deb.sha256`, and `install.sh`
+from `release/<version>/`. The README server command downloads `install.sh` from the Latest
+release, so self-hosted installs only ever clone a published tag. The README
 download links become available once those assets are published. iOS uses the
 separate TestFlight workflow; HarmonyOS requires its own DevEco build.
 
 ## GitHub Actions setup
 
-The packaging workflow must be present on the GitHub repository's default branch before the first manual dispatch. The command requires a clean checkout on a branch pushed to `zhu-xiaowei/Baton` at the same commit. Set `PACKAGE_GITHUB_REPO=owner/repository` if the connected repository changes. `gh` must be authenticated with permission to run workflows and download artifacts.
+The packaging workflow must be present on the GitHub repository's default branch before the first manual dispatch. The command requires a clean checkout on a branch pushed to `agentbaton/baton` at the same commit. Set `PACKAGE_GITHUB_REPO=owner/repository` if the connected repository changes. `gh` must be authenticated with permission to run workflows and download artifacts.
 
 Release packages normally require successful production CI on `main` for the
 exact source commit. The `release/testflight` branch is exempt so candidates can
@@ -72,7 +75,7 @@ The Android keystore remains ignored by Git. Configure binary keys and passwords
 | `APPSTORE_KEY_ID` | Variable | ID of the App Store Connect key already used by the Linux TestFlight script. |
 | `APPSTORE_ISSUER_ID` | Variable | Issuer ID for the same key. |
 
-To set a base64 secret without creating another local copy, run `base64 < existing-file | tr -d '\n' | gh secret set SECRET_NAME --repo zhu-xiaowei/Baton` on the machine holding the file. Set password Secrets with `gh secret set SECRET_NAME --repo zhu-xiaowei/Baton` and identifiers with `gh variable set VARIABLE_NAME --repo zhu-xiaowei/Baton`. GitHub Actions passes the binary Secrets only to the steps that restore temporary signing files. The `.p8` permits notarization authentication but cannot sign a desktop app; export the Developer ID certificate and its private key as a `.p12` on the Mac where it was created. Never commit a keystore, `.p8`, `.p12`, or signing password.
+To set a base64 secret without creating another local copy, run `base64 < existing-file | tr -d '\n' | gh secret set SECRET_NAME --repo agentbaton/baton` on the machine holding the file. Set password Secrets with `gh secret set SECRET_NAME --repo agentbaton/baton` and identifiers with `gh variable set VARIABLE_NAME --repo agentbaton/baton`. GitHub Actions passes the binary Secrets only to the steps that restore temporary signing files. The `.p8` permits notarization authentication but cannot sign a desktop app; export the Developer ID certificate and its private key as a `.p12` on the Mac where it was created. Never commit a keystore, `.p8`, `.p12`, or signing password.
 
 Run `node scripts/package-cloud.mjs --dry-run` on Linux to check the source SHA, version, and secret names without starting a build. A real run reports every platform separately. GitHub stores workflow artifacts for seven days; the command copies them into the ignored local `release/` directory. A failed platform makes the command exit nonzero while retaining other downloaded installers.
 

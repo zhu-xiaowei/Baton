@@ -24,25 +24,18 @@ test('send reliability keeps receipt, retry, and failure states distinct', async
     send(payload) { receivedSent.push(JSON.parse(payload)); },
   };
 
-  // Mocked so exactly one 20ms transport retry fires, however slow the machine is.
-  t.mock.timers.enable({ apis: ['setTimeout'] });
   h.window.doSend('received', 'received', []);
   const receivedPending = h.state.pendingSentMessages[0];
-  h.hooks.handleWsMessage({
-    action: 'send_message_received',
-    turnId: receivedPending.id,
-  });
-  t.mock.timers.tick(20);
+  h.bridge.accept(receivedPending.id);
+  h.bridge.resync();
 
-  // A Server receipt is not a Bridge result: the same turn is resent.
-  assert.equal(receivedSent.length, 2);
-  assert.deepEqual(receivedSent[1], receivedSent[0]);
+  // The Bridge's receipt is not its result: the turn stays in flight and is not sent again.
+  assert.equal(receivedSent.filter((frame) => frame.action === 'send_message').length, 1);
   assert.equal(receivedPending.delivered, undefined);
   assert.equal(
     h.document.querySelector('.sending-status').textContent,
     'sending...',
   );
-  t.mock.timers.reset();
   await failPendingTurns();
 
   resetSession(h, { sessionId: 'codex:retry' });
@@ -52,16 +45,15 @@ test('send reliability keeps receipt, retry, and failure states distinct', async
     send(payload) { retriedSent.push(JSON.parse(payload)); },
   };
 
-  t.mock.timers.enable({ apis: ['setTimeout'] });
   h.window.doSend('retry', 'retry', []);
-  t.mock.timers.tick(20);
+  h.bridge.requests.at(-1).reject(new Error('offline'));
+  await h.tick(0);
+  h.bridge.resync();
 
-  // A missing receipt also probes the socket.
-  assert.ok(retriedSent.some((frame) => frame.action === 'heartbeat'));
+  // A request that failed before the receipt is sent again when the Bridge is back.
   const retriedSends = retriedSent.filter((frame) => frame.action === 'send_message');
   assert.equal(retriedSends.length, 2);
   assert.deepEqual(retriedSends[1], retriedSends[0]);
-  t.mock.timers.reset();
   await failPendingTurns();
 
   resetSession(h, { sessionId: '__new__', mode: 'new' });
@@ -99,10 +91,7 @@ test('send reliability keeps receipt, retry, and failure states distinct', async
   t.mock.timers.enable({ apis: ['setTimeout'] });
   h.window.doSend('still running', 'still running', []);
   const firstPending = h.state.pendingSentMessages[0];
-  h.hooks.handleWsMessage({
-    action: 'send_message_received',
-    turnId: firstPending.id,
-  });
+  h.bridge.accept(firstPending.id);
   h.window.doSend('retry me', 'retry me', []);
   const retryPending = h.state.pendingSentMessages[1];
   h.hooks.handleWsMessage({

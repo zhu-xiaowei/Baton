@@ -2,17 +2,21 @@
 // All cross-module reads/writes go through this object — never reassign cross-module bare vars.
 // (Module-private vars stay in their owning file as plain `var`.)
 
+// This page's API server: the deployment's <meta name="baton-api"> when the Web App has its own origin, else this origin.
+export const defaultServer = () => (document.querySelector('meta[name="baton-api"]')?.content
+  || location.origin + location.pathname.replace(/\/[^/]*$/, '')).replace(/\/$/, '');
+
 export const state = {
   // ---- Credentials (api.js) ----
   KEY: '',
   SERVER: '',
-  WS_URL: '',
 
   // ---- Navigation / device list (app.js) ----
   appState: { device: null, project: null, session: null, sessionPreview: '' },
   deviceOnlineMap: {},
   deviceDisplayNameMap: {},
   newSessionRuntimes: [],
+  newSessionUnavailable: {}, // runtime -> the Bridge's install hint
   rootSessionId: null,
   rootSessionPreview: '',
   activeThreadId: null,
@@ -33,7 +37,6 @@ export const state = {
   wsRootSessionId: null,
   wsMessageCount: 0,
   wsStatusText: '',
-  wsRealtimeStatusText: '',
   wsAllMessages: [],          // all messages for the active session, sorted ascending
   wsMessageUuids: new Set(),  // UUID index for final persisted messages; streaming bypasses it
   wsProjectHash: null,        // for new session creation
@@ -45,8 +48,9 @@ export const state = {
   wsRenderedCount: 0,
   wsHasMore: false,           // more older messages on server
   wsOldestTimestamp: '',      // cursor for older-load
+  wsTitleRows: [],            // title rows of the last history reply
+  wsHistoryPhase: '',         // '' | 'slow' (past 6 s) | 'stale' (last load failed) | 'offline'
   wsLoadingOlder: false,
-  _syncedOnce: null,          // sessionId already re-fetched once after sync_complete (anti-loop)
   _pendingCreatePath: null,   // projectPath for create_project matching
   pendingSentMessages: [],
 
@@ -54,5 +58,4 @@ export const state = {
   stagedImages: [],
 
   // ---- File viewer (project/file-viewer.js) ----
-  videoUrlCache: new Map(),   // key → { url, exp } — presigned GET URL + expiry (ms epoch)
 };

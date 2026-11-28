@@ -215,20 +215,14 @@ test('a compact stream_end closes a normally started turn across a seq gap', () 
     queue.push(event(1, 'stream_block_start')).map((item) => item.seq),
     [1],
   );
-  assert.deepEqual(queue.push({
-    ...event(3, 'stream_end'),
-    recoveryRequired: true,
-  }), []);
+  assert.deepEqual(queue.push(event(3, 'stream_end')), []);
   assert.equal(queue.isGappedEndCandidate('turn-1'), true);
   assert.equal(queue.completeGappedEnd('turn-1'), true);
   assert.deepEqual(queue.takeLateJoinCompletions(), [{
     sessionId: 'session-1',
     turnId: 'turn-1',
     messages: [],
-    end: {
-      ...event(3, 'stream_end'),
-      recoveryRequired: true,
-    },
+    end: event(3, 'stream_end'),
     gapped: true,
     missingSeq: 2,
   }]);

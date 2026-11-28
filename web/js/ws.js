@@ -10,6 +10,7 @@ import {
   syncComposerDraft,
 } from './drafts/composer-draft.js';
 import { dedupeCodexUserMessages } from './message-dedup.js';
+import { RUNTIMES, runtimeInfo } from './runtimes.js';
 import { FetchBarrierCoordinator } from './fetch-barrier.js';
 import {
   replaceHistoryTail,
@@ -37,8 +38,9 @@ import {
   StreamingDomRenderer,
   TurnEventQueue,
 } from './streaming.js';
-import { handleWsRpcMessage } from './ws-rpc.js';
-import { RealtimeReceiver } from '../../bridge/realtime-direct-protocol.mjs';
+import { showToast } from './components/toast.js';
+import { maybeAskForStar, noteStarSend } from './components/star-prompt.js';
+import * as directTransport from './v2/direct-transport.js';
 import { ExecutionEventQueue } from './execution-events.js';
 
 var _vpBaseHeight = window.visualViewport ? window.visualViewport.height : window.innerHeight;
@@ -48,23 +50,23 @@ var _keyboardOpenFrame = null;
 var _followKeyboardOpen = false;
 var _mobileKeyboardOpen = false;
 var _inputFocusRequestsBottom = false;
-var _isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent);
+var _isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 // Gate keyboard adaptation to touch devices: on desktop visualViewport also fires resize (scrollbar/chrome shifts, mermaid render), and the Android branch below would wrongly rewrite body height → input bar jumps.
 var _isMobile = /Mobi|Android/i.test(navigator.userAgent) || _isIOS;
-var _wsSendQueue = []; // payloads queued while socket not OPEN, flushed in order on connect
+// Session events, sends and subscriptions use the direct App ⇄ Bridge channel.
+var bridge = (window.__APEEK_TEST__ && window.__directTransport) || directTransport;
+var _wsDevice = ''; // where the open Session is subscribed
 var _turnEventQueue = new TurnEventQueue();
 var _streamCoordinator = new StreamCoordinator();
 var _strictStreamRenderer = null;
 var _checkpointResumedTurns = new Set();
+var _replayBatches = new Map(); // turnId → the events of its latest turn_replay
+var _replayCuts = new Map();    // turnId → last replayed seq the shown history already has
 var _queuedTurnIds = new Set();
 var _activeExecutionIds = new Set();
 var _goalContinuationIds = new Set();
 var _executionEvents = new ExecutionEventQueue();
 var _executionRecoveryTimers = new Map();
-var _wsReconnectTimer = null;
-var _wsConfigRequest = null;
-var _realtimeReceiver = null;
-var _wsConnectionGeneration = 0;
 var _controlEventTimers = new Map();
 var _gappedEndTimers = new Map();
 var _suppressTurnEndRecovery = false;
@@ -77,29 +79,15 @@ var _historyFetchBarriers = new FetchBarrierCoordinator();
 var _messagePaginationGeneration = 0;
 var CONTROL_EVENT_FALLBACK_MS = 120;
 var GAPPED_END_GRACE_MS = window.__APEEK_TEST__ ? 30 : 5000;
-var MESSAGE_PAGE_SIZE = 200;
-// iOS can suspend a fetch forever; a hung history request would hold the barrier open.
-var HISTORY_FETCH_TIMEOUT_MS = window.__APEEK_TEST__ ? 1000 : 20000;
-// iOS background sockets can stay OPEN with no traffic; no reply in time → reconnect.
-var WS_PROBE_TIMEOUT_MS = window.__APEEK_TEST__ ? 50 : 5000;
-// A send on a socket silent this long probes it, so a dead socket is rebuilt within the send window.
-var WS_SEND_STALE_MS = 15000;
-var WS_SEND_PROBE_TIMEOUT_MS = window.__APEEK_TEST__ ? 50 : 3000;
-// Periodic ping on both channels: keeps API Gateway's 10-minute idle timer away and finds dead sockets.
-var WS_PING_INTERVAL_MS = 25000;
-var WS_PING_TIMEOUT_MS = 15000;
-// A seq gap that outlives a ping round-trip on every channel and this floor is treated as a lost frame;
-// the floor covers server-side reordering, a misjudgment costs one REST refresh.
+// A load that never settles (e.g. IndexedDB hung after an iOS suspension) would hold the barrier
+// open. Longer than the transport's own deadlines, which do not count waiting for a socket.
+var HISTORY_FETCH_TIMEOUT_MS = window.__APEEK_TEST__ ? 1000 : 75000;
+// A seq gap that outlives a ping round-trip on the direct socket and this floor is treated as a lost
+// frame; the floor covers server-side reordering, a misjudgment costs one history refresh.
 var TURN_GAP_MIN_MS = window.__APEEK_TEST__ ? 30 : 3000;
 var TURN_GAP_GIVE_UP_MS = window.__APEEK_TEST__ ? 300 : 20000;
-// A running turn silent this long is checked against REST in case its tail frames were lost.
+// A running turn silent this long is checked against the history in case its tail frames were lost.
 var SILENT_TURN_MS = window.__APEEK_TEST__ ? 100 : 60000;
-var _wsProbeTimer = null;
-var _wsPingTimer = null;
-var _wsLastInboundAt = 0;
-var _controlPongAt = 0;
-// Stacks with the realtime_ping route answer it in API Gateway; older ones only answer heartbeat via Lambda.
-var _controlPingRoute = false;
 var _turnGapWatch = null;
 var _lastTurnEventAt = 0;
 var _silentTurnCheckAt = 0;
@@ -142,6 +130,7 @@ function followBottomAfterLayout() {
 }
 
 if (window.visualViewport && _isMobile) {
+  var _webKitPans = false;
   var syncMobileViewport = function () {
     var vv = window.visualViewport;
     // A native page zoom or rotation changes viewport units, unlike a keyboard.
@@ -159,7 +148,7 @@ if (window.visualViewport && _isMobile) {
       && content.scrollHeight - content.scrollTop - content.clientHeight < 100;
 
     _vpBaseHeight = Math.max(_vpBaseHeight, vv.height, window.innerHeight);
-    var kbUp = vv.height < _vpBaseHeight * 0.75;
+    var kbUp = _vpBaseHeight - vv.height > 150; // docked keyboards are 265+ pt; a hardware keyboard's bar or a floating one less
     var keyboardClosing = _mobileKeyboardOpen && !kbUp;
     var focusOpenedKeyboard = viewportShrinking && kbUp && _inputFocusRequestsBottom;
     if (viewportShrinking && (wasAtBottom || focusOpenedKeyboard)) {
@@ -181,10 +170,14 @@ if (window.visualViewport && _isMobile) {
         });
       });
     }
+    // WebKit scrolls the page itself, in step with the keyboard, to reveal the composer;
+    // also moving the body to the visual viewport fights that animation. Kept after blur until the
+    // keyboard is gone, since blur comes before the closing resize, unless another input took focus.
+    var focused = document.activeElement;
+    _webKitPans = _isIOS && kbUp && (focused?.id === 'msg-input'
+      || (_webKitPans && (!focused || focused === document.body)));
     var chromeHeight = 0;
-    // The centered new-session layout already follows the viewport height.
-    // Hiding chrome at the keyboard threshold would make its hero jump.
-    if (_isIOS && kbUp && !document.body.classList.contains('new-session')
+    if (_isIOS && kbUp && !_webKitPans
       && !document.querySelector('#projectTerminalPage, #gitStatusPage:not([hidden]), #internalBrowserPage:not([hidden])')) {
       var topBar = document.querySelector('.top-bar');
       var breadcrumb = document.getElementById('breadcrumb');
@@ -193,14 +186,17 @@ if (window.visualViewport && _isMobile) {
         chromeHeight += breadcrumb.offsetHeight;
       }
     }
-    document.body.style.bottom = 'auto';
-    document.body.style.top = layoutPixels(_isIOS ? vv.offsetTop : 0) + 'px';
-    document.body.style.height = (layoutPixels(vv.height) + chromeHeight) + 'px';
-    document.body.style.transform = chromeHeight ? 'translateY(-' + chromeHeight + 'px)' : '';
-    if (_isIOS) {
-      var bar = document.getElementById('input-bar');
-      if (bar) bar.classList.toggle('kb-up', kbUp);
+    var bar = _isIOS && document.getElementById('input-bar');
+    if (bar) {
+      bar.classList.toggle('kb-up', kbUp);
+      bar.classList.toggle('kb-pan', _webKitPans);
     }
+    document.body.style.bottom = 'auto';
+    document.body.style.top = layoutPixels(_isIOS && !_webKitPans ? vv.offsetTop : 0) + 'px';
+    // Ends where the screen does once WebKit has scrolled, so a keyboard that grows later still lifts the composer.
+    document.body.style.height = (layoutPixels(!_webKitPans ? vv.height
+      : document.body.classList.contains('new-session') || vv.offsetTop <= 0 ? _vpBaseHeight : vv.offsetTop + vv.height) + chromeHeight) + 'px';
+    document.body.style.transform = chromeHeight ? 'translateY(-' + chromeHeight + 'px)' : '';
     if (window.positionScrollBtn) window.positionScrollBtn();
     if (_followKeyboardOpen && _keyboardOpenFrame === null) {
       _keyboardOpenFrame = requestAnimationFrame(function () {
@@ -209,7 +205,10 @@ if (window.visualViewport && _isMobile) {
         _followKeyboardOpen = false;
         state.stickBottom = true;
         var currentContent = document.getElementById('content');
-        if (currentContent) currentContent.scrollTop = currentContent.scrollHeight;
+        if (!currentContent) return;
+        currentContent.style.overflowY = 'hidden'; // stops a momentum scroll, which would win over scrollTop
+        currentContent.scrollTop = currentContent.scrollHeight;
+        requestAnimationFrame(function () { currentContent.style.overflowY = ''; });
       });
     }
   };
@@ -218,12 +217,40 @@ if (window.visualViewport && _isMobile) {
   if (_isIOS) window.visualViewport.addEventListener('scroll', syncMobileViewport);
   var messageInput = document.getElementById('msg-input');
   if (messageInput) {
+    var dockTimer = 0;
+    // The keyboard docks against the page bottom, below the composer's safe-area padding: move the chat and the
+    // composer down by it from focus on, composited, so they land on the keyboard whenever viewport events arrive.
+    var dockComposer = function (focused) {
+      var bar = _isIOS && document.getElementById('input-bar');
+      var content = document.getElementById('content');
+      if (!bar || !content) return;
+      var shift = focused ? Math.max(0, (parseFloat(window.getComputedStyle(bar).paddingBottom) || 0) - 8) : 0;
+      // `translate`, not `transform`: the swipe back moves these two with `transform`.
+      [content, bar].forEach(function (el) {
+        el.style.transition = 'translate 250ms ease-in-out';
+        el.style.translate = shift ? '0 ' + shift + 'px' : '';
+      });
+      document.documentElement.classList.add('kb-sliding');
+      clearTimeout(dockTimer);
+      dockTimer = setTimeout(function () {
+        document.documentElement.classList.remove('kb-sliding');
+        content.style.transition = bar.style.transition = '';
+        if (!_mobileKeyboardOpen && shift) content.style.translate = bar.style.translate = ''; // a hardware keyboard: no keyboard came up
+      }, 700);
+    };
+    var composerFocus = function (focused) {
+      var dock = focused && !document.body.classList.contains('new-session'); // New Session: WebKit centres it
+      window.webkit?.messageHandlers?.batonComposer?.postMessage(dock); // main.mm: rises with the keyboard
+      dockComposer(dock);
+    };
     messageInput.addEventListener('focus', function () {
       _inputFocusRequestsBottom = !!state.appState.session
         && state.appState.session !== '__new__';
+      composerFocus(true);
     });
     messageInput.addEventListener('blur', function () {
       _inputFocusRequestsBottom = false;
+      composerFocus(false);
     });
   }
   syncMobileViewport();
@@ -320,8 +347,10 @@ function isInheritedAgentContext(message, messages) {
 
 function updateTitleFromMessages() {
   var customTitle = '', aiTitle = '', lastPrompt = '', firstUser = '';
-  for (var i = 0; i < state.wsAllMessages.length; i++) {
-    var m = state.wsAllMessages[i];
+  // History replies carry the title rows apart from the page (state.wsTitleRows).
+  var titled = (state.wsTitleRows || []).concat(state.wsAllMessages);
+  for (var i = 0; i < titled.length; i++) {
+    var m = titled[i];
     if (m.type === 'custom-title' && m.content) customTitle = m.content;
     if (m.type === 'ai-title' && m.content) aiTitle = m.content;
     if (m.type === 'last-prompt' && m.content) lastPrompt = m.content;
@@ -348,7 +377,7 @@ function updateTitleFromMessages() {
   saveNav();
 }
 
-// Skeleton → empty state + stop spinner, when a synced session has no real messages. Never wipe mid-send/stream: a fresh session has 0 DDB rows but a live bubble on screen.
+// Skeleton → empty state + stop spinner, when a session has no real messages. Never wipe mid-send/stream: a fresh session has no history rows but a live bubble on screen.
 function showEmptyMessages() {
   var content = document.getElementById('content');
   if (state.pendingSentMessages.length || state.wsRunning) {
@@ -374,166 +403,23 @@ function showEmptyMessages() {
   updateSendBtn();
 }
 
-function connectWs(_, projectHash) {
-  clearWsProbe();
-  if (_wsReconnectTimer) {
-    clearTimeout(_wsReconnectTimer);
-    _wsReconnectTimer = null;
-  }
-  if (projectHash) {
-    state.wsProjectHash = projectHash;
-    state.wsRequestId = crypto.randomUUID ? crypto.randomUUID() : 'req-' + Date.now() + '-' + Math.random().toString(36).slice(2);
-  }
-  if (!state.WS_URL) {
-    // First launch + no cached _wsurl: one config request owns the eventual
-    // connection. Concurrent callers (page setup + a fast first send) share it.
-    var generation = _wsConnectionGeneration;
-    if (_wsConfigRequest?.generation === generation) return;
-    var request = { generation: generation, promise: null };
-    _wsConfigRequest = request;
-    request.promise = api('/api/bridge/config').then(function (cfg) {
-      if (generation !== _wsConnectionGeneration) return;
-      if (cfg.wsUrl) {
-        state.WS_URL = cfg.wsUrl;
-        localStorage.setItem('_wsurl', cfg.wsUrl);
-        connectWs();
-      }
-    }).catch(function () {}).finally(function () {
-      if (_wsConfigRequest === request) _wsConfigRequest = null;
-    });
-    return;
-  }
-  if (state.ws
-    && (state.ws.readyState === WebSocket.OPEN
-      || state.ws.readyState === WebSocket.CONNECTING)) {
-    return;
-  }
-  if (state.ws) {
-    state.ws.onclose = null;
-    state.ws.onmessage = null;
-    state.ws.close();
-    state.ws = null;
-  }
-  _realtimeReceiver?.dispose();
-  _realtimeReceiver = null;
-  state.wsRealtimeStatusText = '';
-  _controlPingRoute = false;
-  state.ws = new WebSocket(state.WS_URL + '?apiKey=' + state.KEY + '&role=app&realtime=1');
-
-  state.ws.onopen = function () {
-    var receiver = new RealtimeReceiver({
-      control: state.ws, key: state.KEY, receive: handleWsMessage,
-      onStatusChange: function (status) {
-        if (_realtimeReceiver === receiver) setRealtimeStatus(status);
-      },
-    });
-    _realtimeReceiver = receiver;
-    setWsStatus('connected');
-    _wsLastInboundAt = Date.now();
-    recoverSubscribedSession();
-    var queued = _wsSendQueue;
-    _wsSendQueue = [];
-    for (var qi = 0; qi < queued.length; qi++) wsSend(queued[qi]);
-    resendUnreceiptedSends(queued);
-    if (window.prefetchCommands) window.prefetchCommands();
-    window.refreshGitStatusOnReconnect?.();
-    _realtimeReceiver.start();
-    wsSend({ action: 'realtime_ping' });
-    if (!_wsPingTimer) {
-      _wsPingTimer = setInterval(pingWsChannels, WS_PING_INTERVAL_MS);
-      _wsPingTimer?.unref?.();
-    }
-  };
-
-  state.ws.onmessage = function (e) {
-    clearWsProbe();
-    _wsLastInboundAt = Date.now();
-    var message = JSON.parse(e.data);
-    if (_realtimeReceiver?.handle(message)) return;
-    handleWsMessage(message);
-  };
-
-  state.ws.onclose = function () {
-    _realtimeReceiver?.dispose();
-    _realtimeReceiver = null;
-    state.wsRealtimeStatusText = '';
-    if (window.resetCommandRequest) window.resetCommandRequest();
-    setWsStatus('disconnected');
-    if (state.appState.session || state.projectFilesOpen || state.gitStatusOpen) {
-      setWsStatus('reconnecting');
-      _wsReconnectTimer = setTimeout(function () {
-        _wsReconnectTimer = null;
-        if (state.appState.session || state.projectFilesOpen || state.gitStatusOpen) connectWs();
-      }, 3000);
-    }
-  };
-
-  state.ws.onerror = function () {};
+// A New Session page: the request id its first send carries, so its reply is adopted here.
+function newSessionRequest(projectHash) {
+  state.wsProjectHash = projectHash;
+  state.wsRequestId = crypto.randomUUID ? crypto.randomUUID() : 'req-' + Date.now() + '-' + Math.random().toString(36).slice(2);
 }
 
-function recoverSubscribedSession() {
-  if (!state.wsSessionId) return false;
-  if (_historyFetchBarriers.current(state.wsSessionId)) {
-    subscribeSession(state.wsSessionId);
-  } else {
-    refreshSessionMessages();
-  }
-  return true;
-}
-
+// The direct transport probes its socket when the page is shown; this reloads what was missed.
 function resumeSessionForeground() {
-  if (!state.appState.session || !state.WS_URL) return false;
-  if (state.ws?.readyState === WebSocket.OPEN) {
-    refreshSessionMessages({ fresh: true });
-    probeWsLiveness();
-  } else if (state.ws?.readyState !== WebSocket.CONNECTING) {
-    connectWs();
-  }
+  if (!state.appState.session) return false;
+  refreshSessionMessages({ fresh: true });
   return true;
 }
 
-function clearWsProbe() {
-  if (!_wsProbeTimer) return;
-  clearTimeout(_wsProbeTimer);
-  _wsProbeTimer = null;
-}
-
-// Any inbound frame proves the socket is alive; the server answers app heartbeats.
-function probeWsLiveness(timeoutMs) {
-  clearWsProbe();
-  var socket = state.ws;
-  _wsProbeTimer = setTimeout(function () {
-    _wsProbeTimer = null;
-    if (state.ws !== socket || socket.readyState !== WebSocket.OPEN) return;
-    socket.onclose = null;
-    socket.onmessage = null;
-    try { socket.close(); } catch (error) {}
-    state.ws = null;
-    connectWs();
-  }, timeoutMs || WS_PROBE_TIMEOUT_MS);
-  sendControlPing();
-}
-
-function sendControlPing() {
-  wsSend({ action: _controlPingRoute ? 'realtime_ping' : 'heartbeat' });
-}
-
-// A missing Server receipt means the socket may be dead; probe once, never restart a running probe.
-function probeSocketForSend(timeoutMs) {
-  if (_wsProbeTimer || state.ws?.readyState !== WebSocket.OPEN) return;
-  probeWsLiveness(timeoutMs || WS_SEND_PROBE_TIMEOUT_MS);
-}
-
-function probeSocketIfStale() {
-  if (_wsLastInboundAt && Date.now() - _wsLastInboundAt > WS_SEND_STALE_MS) probeSocketForSend();
-}
-
-function pingWsChannels() {
-  if (document.hidden || !state.wsSessionId || state.ws?.readyState !== WebSocket.OPEN) return;
-  probeSocketForSend(WS_PING_TIMEOUT_MS);
-  _realtimeReceiver?.ping(WS_PING_TIMEOUT_MS);
-  checkSilentTurn();
-}
+// A running turn whose tail (stream_end included) was lost is settled from the history status.
+setInterval(function () {
+  if (!document.hidden && state.wsSessionId) checkSilentTurn();
+}, 25000)?.unref?.();
 
 function clearTurnGapWatch() {
   clearTimeout(_turnGapWatch?.timer);
@@ -544,11 +430,10 @@ function watchTurnGap(turnId) {
   var missing = _turnEventQueue.missingSeq(turnId);
   if (_turnGapWatch?.turnId === turnId && _turnGapWatch.seq !== missing) clearTurnGapWatch();
   if (missing == null || _turnGapWatch) return;
-  _turnGapWatch = { turnId: turnId, seq: missing, since: Date.now(), timer: null };
-  // A pong proves its socket is alive and has delivered what was already posted to it, over the
-  // same client link; it does not bound when the server posts the missing frame.
-  sendControlPing();
-  _realtimeReceiver?.ping(WS_PING_TIMEOUT_MS);
+  var watch = _turnGapWatch = { turnId: turnId, seq: missing, since: Date.now(), timer: null, fenced: false };
+  // A pong proves the socket is alive and has delivered what was already posted to it, over the
+  // same client link; it does not bound when the missing frame is posted.
+  bridge.ping().then(function () { watch.fenced = true; });
   _turnGapWatch.timer = setTimeout(checkTurnGap, TURN_GAP_MIN_MS);
 }
 
@@ -556,11 +441,12 @@ function checkTurnGap() {
   var watch = _turnGapWatch;
   if (!watch) return;
   if (_turnEventQueue.missingSeq(watch.turnId) !== watch.seq) return clearTurnGapWatch();
-  var fenced = _controlPongAt > watch.since
-    && (!_realtimeReceiver?.lastPongAt || _realtimeReceiver.lastPongAt > watch.since);
-  if (fenced) {
+  if (watch.fenced) {
     clearTurnGapWatch();
-    refreshSessionMessages();
+    // The subscribe replays the turn after this snapshot (the load holds it), so the turn is rebuilt
+    // whole; without a replay it resumes at the next block.
+    bridge.subscribe(_wsDevice, state.wsSessionId);
+    refreshSessionMessages({ keepLive: false });
   } else if (Date.now() - watch.since < TURN_GAP_GIVE_UP_MS) {
     // No pong yet: either still in flight (slow network) or a dead socket the ping timeout rebuilds.
     watch.timer = setTimeout(checkTurnGap, Math.min(1000, TURN_GAP_MIN_MS));
@@ -569,7 +455,7 @@ function checkTurnGap() {
   }
 }
 
-// A lost tail (including stream_end) leaves no gap to see; REST status settles the turn instead.
+// A lost tail (including stream_end) leaves no gap to see; the history status settles the turn instead.
 function checkSilentTurn() {
   var turnIds = _streamCoordinator.activeTurnIds();
   var now = Date.now();
@@ -590,20 +476,68 @@ function checkSilentTurn() {
     drainStrictStreamOperations();
     applyResolvedLiveActivity(hasOutstandingTurns() ? 'running' : 'completed');
     updateSendBtn();
+    // The streamed blocks stopped where the frames were lost; the history holds the whole reply.
+    return refreshSessionMessages();
   });
 }
 
-// Sends are idempotent by turnId; a rebuilt socket carries every send the Server has not receipted.
-function resendUnreceiptedSends(alreadySent) {
+// Sends are idempotent by turnId; one whose request failed before the Bridge's receipt is sent
+// again when the socket or the device is back.
+function resendUnreceiptedSends() {
   for (var pending of state.pendingSentMessages) {
-    if (pending.serverReceived || pending.delivered || pending.queued
-      || pending.awaitingTakeover || pending.sessionId !== state.wsSessionId
-      || alreadySent.includes(pending.sendPayload)) continue;
-    wsSend(pending.sendPayload);
+    if (pending.serverReceived || pending.delivered || pending.queued || pending.sending
+      || pending.awaitingTakeover || pending.sessionId !== state.wsSessionId) continue;
+    sendToBridge(pending);
   }
 }
 
+// A send is a request to the Bridge: its receipt shows the bubble, its reply is the result.
+function sendToBridge(pending, extra) {
+  var { action, device, ...params } = pending.sendPayload;
+  pending.sending = true;
+  bridge.request(device, 'send_message', { ...params, ...extra }, {
+    ack: true,
+    onAccepted: function () { acceptPendingReceipt(pending); },
+  }).then(function (result) {
+    pending.sending = false;
+    dispatchWsMessage({ ...result, action: 'send_message_result' });
+  }, function (error) {
+    pending.sending = false; // offline or timed out: resent on resync, else the send timeout decides
+    if (error?.message === 'too_large') resolvePending(pending, false, 'Message is too long.');
+  });
+}
+
+// Pushes may have been missed (reconnect, Bridge restart, device back): send again what has no
+// receipt (a New Session page has no Session id yet) and reload what is shown.
+function resyncSession(device) {
+  if (device && device !== state.appState.device) return;
+  resendUnreceiptedSends();
+  if (!state.wsSessionId) return;
+  if (state.wsHistoryPhase === 'offline' || state.wsHistoryPhase === 'stale') window.retrySessionHistory();
+  else if (_historyFetchBarriers.current(state.wsSessionId)) subscribeSession(state.wsSessionId);
+  else refreshSessionMessages();
+}
+// A replay is a running turn from its start, sent on (re)subscribing; events already applied are ignored.
+bridge.onPush(function (event) {
+  if (event.action !== 'turn_replay') return handleWsMessage(event);
+  for (var e of event.events) if (e.turnId) _replayBatches.set(e.turnId, event.events);
+  event.events.forEach(function (e) { handleWsMessage({ ...e, _replay: true }); });
+});
+bridge.onResync(function (device) {
+  resyncSession(device);
+  window.refreshGitStatusOnReconnect?.();
+});
+
+// Until the history is in sync again, content events would land after a gap; the next load brings them.
+var STALE_DROPPED = new Set(['messages', 'stream_turn_start', 'stream_block_start', 'stream_delta', 'stream_tool_input',
+  'stream_block_stop', 'stream_end']);
+
 function handleWsMessage(msg) {
+    var unsynced = state.wsHistoryPhase === 'stale' || state.wsHistoryPhase === 'offline';
+    if (unsynced && msg?.sessionId === state.wsSessionId && STALE_DROPPED.has(msg.action)) {
+      if (state.wsHistoryPhase === 'stale') window.retrySessionHistory(); // the Bridge is answering again
+      return;
+    }
     routeTurnEvent(msg);
 }
 
@@ -641,7 +575,8 @@ function dispatchControlEvent(message) {
     if (requestState) {
       requestState.requestSeq = Math.max(requestState.requestSeq, seq);
       _controlRequestState.set(requestId, requestState);
-      if (requestState.resolvedSeq >= seq) return true;
+      // `reshow`: the runtime refused the answer and asks again under the same id.
+      if (requestState.resolvedSeq >= seq && !message.reshow) return true;
     }
     if (message.sessionId === state.wsSessionId) {
       state.wsRunning = false;
@@ -719,6 +654,9 @@ function routeTurnEvent(message) {
     barrier.capture(message);
     return;
   }
+  // A replayed event the execution order already passed goes on to the turn queue, which skips it
+  // unless a snapshot reset that queue.
+  if (message._replay && message.executionId && _executionEvents.passed(message)) message = { ...message, _executionOrdered: true };
   if (message.executionId && Number.isInteger(message.executionSeq) && !message._executionOrdered) {
     for (var event of _executionEvents.push(message)) routeTurnEvent(event);
     scheduleExecutionRecovery(message);
@@ -736,6 +674,15 @@ function routeTurnEvent(message) {
   if (!isStrictTurnEvent(message)) {
     dispatchWsMessage(message);
     return;
+  }
+  if (message._replay && replayCut(message.turnId) >= 0) {
+    if (message.seq <= replayCut(message.turnId)) return;
+    // A row after the cut has no block to join before the next one starts: show it as a plain row.
+    if (message.action === 'messages' && !_turnEventQueue.turns.has(message.turnId)) {
+      var { seq, ...row } = message;
+      dispatchWsMessage(row);
+      return;
+    }
   }
   var ordered = _turnEventQueue.push(message);
   var orderedEnd = ordered.some(function (event) {
@@ -766,6 +713,38 @@ function routeTurnEvent(message) {
   }
 }
 
+// A page that meets a running turn first through its replay already shows the rows the transcript
+// has; it joins at the first block after them (late join) instead of rebuilding them below.
+function replayCut(turnId) {
+  if (_replayCuts.has(turnId)) return _replayCuts.get(turnId);
+  var cut = -1;
+  if (!_turnEventQueue.turns.has(turnId)) {
+    var shown = new Set();
+    for (var row of state.wsAllMessages) {
+      if (row.uuid) shown.add(row.uuid);
+      if (row.nativeId) shown.add(row.nativeId);
+    }
+    var events = (_replayBatches.get(turnId) || []).filter(function (e) { return e.turnId === turnId; })
+      .sort(function (a, b) { return a.seq - b.seq; });
+    for (var e of events) {
+      if (e.action === 'messages' && e.messages?.length
+        && e.messages.every(function (m) { return shown.has(m.nativeId) || shown.has(m.uuid); })) cut = e.seq;
+    }
+    var open = -1;
+    var i = 0;
+    for (; i < events.length && events[i].seq <= cut; i++) {
+      if (events[i].action === 'stream_block_start') open = events[i].seq;
+      else if (events[i].action === 'stream_block_stop') open = -1;
+    }
+    // Claude sends a block's row before its stop: what follows up to that stop is the same block.
+    // Otherwise never cut into a block still open there.
+    while (open >= 0 && /^stream_(delta|tool_input)$/.test(events[i]?.action)) i++;
+    if (open >= 0) cut = events[i]?.action === 'stream_block_stop' ? events[i].seq : open - 1;
+  }
+  _replayCuts.set(turnId, cut);
+  return cut;
+}
+
 function scheduleExecutionRecovery(message) {
   var id = message.executionId;
   if (!_executionEvents.hasGap(id)) {
@@ -778,6 +757,7 @@ function scheduleExecutionRecovery(message) {
   var timer = setTimeout(async function () {
     try {
       if (state.wsSessionId !== message.sessionId) return;
+      bridge.subscribe(_wsDevice, message.sessionId); // its replay fills the gap during the load
       var result = await loadLatestMessages(message.sessionId, { preserveLive: true });
       if (!result?.ok || state.wsSessionId !== message.sessionId) return;
       for (var event of _executionEvents.recover(id)) routeTurnEvent(event);
@@ -854,9 +834,6 @@ function handleGappedTurnCompletion(completion) {
   consumeExecutionInputs(completion.end || {});
   applyResolvedLiveActivity(hasOutstandingTurns() ? 'running' : 'completed');
   updateSendBtn();
-  if (turnCompletionNeedsRecovery(completion)) {
-    scheduleTurnEndRecovery(completion.sessionId);
-  }
   return true;
 }
 
@@ -920,18 +897,6 @@ function dispatchWsMessage(msg) {
     } else if (msg.action === 'permission_request'
       || msg.action === 'permission_resolved') {
       dispatchControlEvent(msg);
-    } else if (msg.action === 'heartbeat' || msg.action === 'realtime_pong') {
-      if (msg.action === 'realtime_pong') _controlPingRoute = true;
-      _controlPongAt = Date.now();
-    } else if (msg.action === 'notify_check') {
-      // Someone looking at this session right now: no push to any device.
-      if (document.visibilityState === 'visible' && document.hasFocus()
-        && msg.rootSessionId === state.wsRootSessionId) {
-        wsSend({ action: 'notify_seen', rootSessionId: msg.rootSessionId, eventId: msg.eventId });
-      }
-    } else if (msg.action === 'send_message_received') {
-      var receivedPending = msg.turnId ? findPending(msg.turnId) : null;
-      acceptPendingReceipt(receivedPending);
     } else if (msg.action === 'send_message_result') {
       if (msg.deviceName && state.appState.device && msg.deviceName !== state.appState.device) return;
       if (msg.sessionId && state.wsSessionId && msg.sessionId !== state.wsSessionId
@@ -941,11 +906,6 @@ function dispatchWsMessage(msg) {
       if (state.pendingSentMessages.length) {
         var pending = msg.turnId ? findPending(msg.turnId) : null;
         if (pending && msg.ok) acceptPendingReceipt(pending);
-        if (pending && msg.errorCode === 'bridge_offline') {
-          pending.serverReceived = false;
-          schedulePendingTransportRetry(pending);
-          return;
-        }
         if (pending && msg.ok && msg.queued) {
           pending.queued = true;
           applyResolvedLiveActivity(
@@ -1020,29 +980,9 @@ function dispatchWsMessage(msg) {
         rekeyComposerDraft(msg.sessionId);
         state.wsRequestId = null;
         adoptNewSession(msg.sessionId);
-        var loading = loadLatestMessages(msg.sessionId, { preserveLive: true });
+        loadLatestMessages(msg.sessionId, { preserveLive: true }).catch(function () {});
         drainPreAdoptionTurnEvents(msg.sessionId, msg.turnId);
-        loading.then(function () {
-          if (state.wsSessionId === msg.sessionId) {
-            state._syncedOnce = msg.sessionId;
-          }
-        }).catch(function () {});
       }
-    } else if (msg.action === 'sync_complete') {
-      if (msg.sessionId !== state.wsSessionId) return;
-      // No real messages (not_found / synced 0) → clear skeleton, don't hang.
-      if (msg.status === 'not_found' || msg.count === 0) {
-        var hasLocalMessages = state.pendingSentMessages.length > 0
-          || state.wsAllMessages.length > 0
-          || !!document.querySelector('.messages:not(.skeleton-messages) .msg-user');
-        if (!hasLocalMessages) showEmptyMessages();
-        return;
-      }
-      if (state._syncedOnce === msg.sessionId) return;
-      state._syncedOnce = msg.sessionId;
-      // Re-fetch + render once. Don't call loadMessages — that resets sessionPreview/_titleTier
-      // and re-triggers needSync, causing a render-loop with title flicker.
-      loadLatestMessages(msg.sessionId).catch(function () {});
     } else if (msg.action === 'session_threads_changed') {
       if (msg.deviceName && msg.deviceName !== state.appState.device) return;
       var rootChange = (msg.roots || []).find(function (root) {
@@ -1054,26 +994,8 @@ function dispatchWsMessage(msg) {
         expected: rootChange,
         delays: [150, 900, 2200],
       });
-    } else if (msg.action === 'bridge_recovery_complete') {
-      if (!state.wsSessionId || msg.deviceName !== state.appState.device) return;
-      queueAgentThreadRefresh({ delays: [150, 1000] });
-      refreshSessionMessages();
     } else if (msg.action === 'session_title_changed') {
       window.applySessionTitle?.(msg);
-    } else if (msg.action === 'rename_session') {
-      if (msg.ok) window.applySessionTitle?.(msg);
-      handleWsRpcMessage(msg);
-    } else if (msg.action === 'project_files' || msg.action === 'git_status'
-      || msg.action === 'tool_details') {
-      handleWsRpcMessage(msg);
-    } else if (msg.action === 'file_ready') {
-      if (window.handleFileReady) window.handleFileReady(msg);
-    } else if (msg.action === 'file_progress') {
-      if (window.handleFileProgress) window.handleFileProgress(msg);
-    } else if (msg.action === 'command_catalog_ready') {
-      if (window.handleCommandCatalogReady) window.handleCommandCatalogReady(msg);
-    } else if (msg.action === 'command_options') {
-      if (window.handleCommandOptions) window.handleCommandOptions(msg);
     } else if (msg.action === 'stream_turn_start') {
       if (isStrictTurnEvent(msg)) handleStrictTurnStart(msg);
     } else if (msg.action === 'stream_delta') {
@@ -1086,35 +1008,6 @@ function dispatchWsMessage(msg) {
       if (isStrictTurnEvent(msg)) handleStrictFrame(msg, 'stop');
     } else if (msg.action === 'stream_end') {
       if (isStrictTurnEvent(msg)) handleStrictTurnEnd(msg);
-    } else if (msg.action === 'delete_files_result') {
-      var r = window._deleteFilesResolvers && window._deleteFilesResolvers[msg.requestId];
-      if (r) {
-        if (!msg.pending) delete window._deleteFilesResolvers[msg.requestId];
-        r(msg);
-      }
-    } else if (msg.action === 'create_project_result') {
-      if (state._pendingCreatePath && msg.projectPath === state._pendingCreatePath) {
-        state._pendingCreatePath = null;
-        if (msg.ok) {
-          closeNewProjectModal();
-          // Empty project isn't in the list yet (no session) — go straight to its
-          // new-session input; the first message creates the session + PROJ#/SESS#.
-          // Set project so the breadcrumb shows its name (we arrive from device level, not the list).
-          // Fallback to the hash's trailing segment (…-test3 → test3) if projectName is absent.
-          var pname = msg.projectName || (msg.projectHash || '').split('-').filter(Boolean).pop() || msg.projectHash;
-          state.appState.project = { hash: msg.projectHash, name: pname };
-          startNewSession(msg.projectHash);
-        } else {
-          disconnectWs();
-          // Show error in modal, reset button
-          var err = document.getElementById('newProjectError');
-          var input = document.getElementById('newProjectInput');
-          var btn = document.querySelector('#newProjectModal .modal-btn.confirm');
-          if (err) err.textContent = msg.error || 'Unknown error';
-          if (input) input.disabled = false;
-          setButtonLoading(btn);
-        }
-      }
     }
 }
 
@@ -1477,9 +1370,8 @@ function handleStrictTurnEnd(message) {
     hasOutstandingTurns() ? 'running' : 'completed',
   );
   updateSendBtn();
-  if (message.recoveryRequired) {
-    scheduleTurnEndRecovery(message.sessionId);
-  }
+  if (!message.error && message.continued !== true && !hasOutstandingTurns()
+    && !endMessages.some(function (row) { return row?.uuid === 'live_interrupt_' + message.turnId; })) void maybeAskForStar(message.turnId);
 }
 
 function scheduleTurnEndRecovery(sessionId, attempt) {
@@ -1512,19 +1404,12 @@ function handleLateJoinCompletion(completion) {
     hasOutstandingTurns() ? 'running' : 'completed',
   );
   updateSendBtn();
-  if (turnCompletionNeedsRecovery(completion)) {
-    scheduleTurnEndRecovery(completion.sessionId);
-  }
 }
 
 function updateExecutionEnd(message) {
   if (!message?.executionId) return;
   if (message.continued === true) _activeExecutionIds.add(message.executionId);
   else _activeExecutionIds.delete(message.executionId);
-}
-
-function turnCompletionNeedsRecovery(completion) {
-  return completion.end?.recoveryRequired === true;
 }
 
 function mergeLateJoinAuthority(completion, completed, terminal) {
@@ -1582,8 +1467,9 @@ function handleStrictMessages(envelope) {
     });
   }
   if (completeMessages.length) {
+    // The stream renderer draws neither interrupts nor notices.
     var needsInterruptDom = completeMessages.some(function (message) {
-      return isInterruptMsg(message);
+      return isInterruptMsg(message) || message.type === 'system_event';
     });
     var needsPromptAnchor = completeMessages.some(function (message) {
       return message.type === 'user'
@@ -1655,12 +1541,14 @@ function resetStreamSessionState(keepHistoryRequest = false) {
   }
   _streamCoordinator.resetSession('');
   _turnEventQueue.reset();
+  _replayCuts.clear();
   _checkpointResumedTurns.clear();
   _queuedTurnIds.clear();
   _activeExecutionIds.clear();
   _goalContinuationIds.clear();
   // A snapshot refresh keeps execution order: frames after it continue the same executionSeq.
   if (!keepHistoryRequest) {
+    _replayBatches.clear();
     _executionEvents.reset();
     for (var timer of _executionRecoveryTimers.values()) clearTimeout(timer);
     _executionRecoveryTimers.clear();
@@ -1688,13 +1576,7 @@ function selectWsSession(sessionId) {
   var rootSessionId = state.rootSessionId || sessionId || '';
   if (state.wsSessionId === sessionId
     && state.wsRootSessionId === rootSessionId) return;
-  if (state.wsSessionId) {
-    wsSend({
-      action: 'unsubscribe',
-      sessionId: state.wsSessionId,
-      rootSessionId: state.wsRootSessionId || state.wsSessionId,
-    });
-  }
+  leaveSession();
   window.resetToolDetails?.();
   resetStreamSessionState();
   state.wsSessionId = sessionId;
@@ -1702,61 +1584,31 @@ function selectWsSession(sessionId) {
   window.setOpenNotificationSession?.(rootSessionId);
 }
 
+function leaveSession() {
+  if (!state.wsSessionId) return;
+  bridge.unsubscribe(_wsDevice, state.wsSessionId);
+}
+
+// Session events come from the Bridge; a waiting permission prompt is pushed again on every
+// subscription. The history load that follows carries the subscription (`quiet`).
+function joinSession(sessionId) {
+  _wsDevice = state.appState.device || '';
+  bridge.subscribe(_wsDevice, sessionId, { root: state.wsRootSessionId || sessionId, quiet: true });
+}
+
 function subscribeSession(sessionId) {
   selectWsSession(sessionId);
-  wsSend({
-    action: 'subscribe',
-    sessionId: sessionId,
-    rootSessionId: state.wsRootSessionId || sessionId,
-  });
-  wsSend({
-    action: 'reveal_permission',
-    sessionId: sessionId,
-    device: state.appState.device || '',
-  });
+  joinSession(sessionId);
 }
 
 // The first send creates a native session while its stream is already active.
 // Adopt that server id without resetting the buffer and anchor for the same turn.
 function adoptNewSession(sessionId) {
-  if (state.wsSessionId && state.wsSessionId !== sessionId) {
-    wsSend({
-      action: 'unsubscribe',
-      sessionId: state.wsSessionId,
-      rootSessionId: state.wsRootSessionId || state.wsSessionId,
-    });
-  }
+  if (state.wsSessionId !== sessionId) leaveSession();
   state.wsSessionId = sessionId;
   state.wsRootSessionId = state.rootSessionId || sessionId;
   window.setOpenNotificationSession?.(state.wsRootSessionId);
-  wsSend({
-    action: 'subscribe',
-    sessionId: sessionId,
-    rootSessionId: state.wsRootSessionId,
-  });
-  wsSend({
-    action: 'reveal_permission',
-    sessionId: sessionId,
-    device: state.appState.device || '',
-  });
-}
-
-function wsSend(data) {
-  if (state.ws && state.ws.readyState === WebSocket.OPEN) {
-    state.ws.send(JSON.stringify(data));
-  }
-}
-
-// Non-OPEN → queue + reconnect (onopen flushes); use for user actions that must not drop.
-function wsSendReliable(data) {
-  if (state.ws && state.ws.readyState === WebSocket.OPEN) {
-    state.ws.send(JSON.stringify(data));
-    return;
-  }
-  _wsSendQueue.push(data);
-  if (!state.ws || state.ws.readyState === WebSocket.CLOSING || state.ws.readyState === WebSocket.CLOSED) {
-    connectWs();
-  }
+  joinSession(sessionId);
 }
 
 function setWsStatus(status) {
@@ -1764,33 +1616,10 @@ function setWsStatus(status) {
   updateWsStatusIndicator();
 }
 
-function setRealtimeStatus(status) {
-  var previous = state.wsRealtimeStatusText;
-  state.wsRealtimeStatusText = status;
-  updateWsStatusIndicator();
-  if (status !== previous && (previous === 'connected' || previous === 'reconnecting')) {
-    refreshSessionMessages({ preservePending: true });
-  }
-}
-
+// Leaves the open Session (navigation); the name is historical.
 function disconnectWs() {
-  _realtimeReceiver?.dispose();
-  _realtimeReceiver = null;
-  state.wsRealtimeStatusText = '';
-  _wsConnectionGeneration++;
-  clearWsProbe();
-  clearInterval(_wsPingTimer);
-  _wsPingTimer = null;
+  leaveSession();
   if (window.resetCommandRequest) window.resetCommandRequest();
-  if (_wsReconnectTimer) {
-    clearTimeout(_wsReconnectTimer);
-    _wsReconnectTimer = null;
-  }
-  if (state.ws) {
-    state.ws.onclose = null;
-    state.ws.close();
-    state.ws = null;
-  }
   state.wsSessionId = null;
   state.wsRootSessionId = null;
   window.setOpenNotificationSession?.('');
@@ -1799,10 +1628,6 @@ function disconnectWs() {
   resetStreamSessionState();
   updateSpinner();
   setWsStatus('');
-}
-
-function ensureWsAndSend(data) {
-  wsSendReliable(data);
 }
 
 var _latestTurnId = '';
@@ -1918,14 +1743,8 @@ function markTurnAdjacency(container) {
 window.markTurnAdjacency = markTurnAdjacency;
 
 function startWs(sessionId) {
-  state._syncedOnce = null;
-  if (!state.ws) {
-    selectWsSession(sessionId);
-    connectWs();
-  }
-  else subscribeSession(sessionId);
-  // Prefetch slash commands. When ws already exists this sends now; on a fresh
-  // connect the socket isn't OPEN yet so this no-ops and onopen handles it.
+  subscribeSession(sessionId);
+  // Prefetch slash commands; a failed request is asked again when `/` is typed.
   if (window.prefetchCommands) window.prefetchCommands();
 }
 
@@ -1963,12 +1782,13 @@ function onlyHiddenToolUpdates(messages, includeCollapsedResults = false) {
           return node?.classList.contains('tool-run-group-hidden')
             || (includeCollapsedResults && block.type === 'tool_result'
               && node?.classList.contains('tool-details-collapsed')
-              && !!node.querySelector('.tool-body'));
+              && !!node.querySelector('.tool-body, .tool-images'));
         });
     });
 }
 
 function commitMessages(messages, options = {}) {
+  if (messages.length) document.querySelector('.messages > .sent-prompt')?.remove(); // real rows replace it
   var wasFollowingBottom = state.stickBottom;
   var hiddenOnlyUpdate = onlyHiddenToolUpdates(messages, true);
   var mergeResult = mergeMessages({
@@ -2057,14 +1877,12 @@ function displayHistorySnapshot(data, pendingNodes) {
     }
     container.append(...rows);
   }
-  if (!state.wsAllMessages.length && !pendingNodes.length) {
-    if (data.needSync && state.deviceOnlineMap[state.appState.device] !== false
-      && typeof skeletonMessages === 'function') {
-      content.innerHTML = skeletonMessages();
-      return true;
-    }
-    container.innerHTML = '<div class="empty">'
-      + (data.needSync ? 'Bridge offline — no cached messages' : 'No messages') + '</div>';
+  // A running Session can have no rows yet (a forked Skill writes none until it finishes):
+  // keep the empty list so the running spinner shows.
+  if (!state.wsAllMessages.length && !pendingNodes.length && data.status !== 'running') {
+    container.innerHTML = '<div class="empty">No messages</div>';
+  } else if (!state.wsAllMessages.length && !pendingNodes.length && data.sentPrompt) {
+    container.insertAdjacentHTML('beforeend', '<div class="msg-user sent-prompt"><div class="msg-text">' + esc(data.sentPrompt) + '</div></div>');
   }
   if (permissionPrompt) container.appendChild(permissionPrompt);
   content.replaceChildren(container);
@@ -2087,6 +1905,7 @@ async function loadLatestMessages(sessionId, options = {}) {
   // fresh: a request started before suspension may never settle — replace it.
   if (active && !(options.fresh && active.state === 'open')) {
     if (options.preserveLive) active.preserveLive = true;
+    if (options.keepLive) active.keepLive = true;
     if (options.preservePending) active.preservePending = true;
     return active.promise;
   }
@@ -2099,6 +1918,7 @@ async function loadLatestMessages(sessionId, options = {}) {
     if (active.preserveLive) options = { ...options, preserveLive: true };
   }
   barrier.preserveLive = !!options.preserveLive;
+  barrier.keepLive = !!options.keepLive || !!active?.keepLive;
   barrier.preservePending = !!options.preservePending;
   barrier.promise = (async function () {
     subscribeSession(sessionId);
@@ -2109,13 +1929,21 @@ async function loadLatestMessages(sessionId, options = {}) {
     } catch (error) {
       restError = error;
     }
+    // A read-only Session (e.g. a Hermes messaging or cron Session) says so in its history.
+    if (data.canSend === false && state.wsSessionId === sessionId) { state.activeThreadCanSend = false; window.applyThreadInputState?.(); }
+    if (state.threadsPendingRoot && state.threadsPendingRoot === state.rootSessionId) {
+      state.threadsPendingRoot = '';
+      if (restError || data.agentCount !== 0) window.refreshSessionThreads?.().catch(function () {});
+    }
     if (!_historyFetchBarriers.isCurrent(barrier) || state.wsSessionId !== sessionId) {
       return { ok: false, stale: true };
     }
     barrier.beginCommit();
     var changed = false;
     try {
-      if (!restError && barrier.preserveLive) {
+      // A skeleton has nothing live to keep (a refresh joined the opening load): the snapshot replaces it.
+      if (!restError && !document.querySelector('.skeleton-messages')
+        && (barrier.preserveLive || (barrier.keepLive && data.status !== 'completed'))) {
         commitMessages(data.messages || [], { liveStateChanged: true });
         if (data.status === 'completed' && !hasOutstandingTurns()) state.wsRunning = false;
         if (!state.wsOldestTimestamp) {
@@ -2125,7 +1953,7 @@ async function loadLatestMessages(sessionId, options = {}) {
       } else if (!restError) {
         var snapshot = replaceHistoryTail(state.wsAllMessages,
           dedupeCodexUserMessages(data.messages || []));
-        // The snapshot dropped live rows DDB has not persisted yet (e.g. refresh
+        // The snapshot dropped live rows the transcript does not have yet (e.g. refresh
         // while the final reply is still revealing): re-fetch until it catches up.
         var droppedLive = state.wsAllMessages.some(function (message) {
           return message._strictLifecycle && !snapshot.messages.includes(message)
@@ -2161,9 +1989,7 @@ async function loadLatestMessages(sessionId, options = {}) {
           state.wsHasMore = !!data.hasMore;
           state.wsOldestTimestamp = data.oldestTimestamp || '';
         }
-        if (changed) displayHistorySnapshot({
-          ...data, needSync: data.needSync && !barrier.events.length,
-        }, pendingNodes);
+        if (changed) displayHistorySnapshot(data, pendingNodes);
         state.wsRunning = resolveActivityState({
           restStatus: data.status || '',
           messages: state.wsAllMessages,
@@ -2176,8 +2002,14 @@ async function loadLatestMessages(sessionId, options = {}) {
       _historyFetchBarriers.close(barrier);
     }
     if (droppedLive) scheduleTurnEndRecovery(sessionId);
-    if (restError && barrier.events.length && document.querySelector('.skeleton-messages')) {
-      displayHistorySnapshot({}, []);
+    // A failed load still commits the cached page it returned (data.failed).
+    var failure = restError || (data.failed ? new Error(data.failed) : null);
+    if (failure) {
+      barrier.events.length = 0; // they would follow a gap; the next load brings their rows
+      showHistoryFailure(failure);
+    } else {
+      state.wsTitleRows = data.titles || state.wsTitleRows;
+      setHistoryPhase('');
     }
     _suppressTurnEndRecovery = !barrier.preserveLive && !restError && data.status === 'completed';
     try {
@@ -2186,12 +2018,21 @@ async function loadLatestMessages(sessionId, options = {}) {
     } finally {
       _suppressTurnEndRecovery = false;
     }
+    // The list's title (only non-Claude Sessions have one here), also for a page opened without it (a direct link).
+    if (data.preview && state.activeThreadId === state.rootSessionId
+      && data.preview !== state.appState.sessionPreview) {
+      state.appState.sessionPreview = state.rootSessionPreview = data.preview;
+      state._titleTier = 3;
+      updateBreadcrumb();
+      saveNav();
+    }
     updateTitleFromMessages();
     updateSendBtn();
     if (typeof updateSpinner === 'function') updateSpinner();
     return {
-      ok: !restError,
-      error: restError,
+      ok: !failure,
+      error: failure,
+      handled: !!failure,
       status: data.status || '',
     };
   })().catch(function (error) {
@@ -2202,22 +2043,78 @@ async function loadLatestMessages(sessionId, options = {}) {
 }
 
 function fetchLatestMessages(sessionId) {
-  var params = { session: sessionId, limit: MESSAGE_PAGE_SIZE };
-  if (state.appState.device) params.device = state.appState.device;
-  if (state.appState.project?.hash) params.project = state.appState.project.hash;
-  var controller = new AbortController();
-  var timer;
+  var params = { session: sessionId, device: state.appState.device };
+  var timer, waited = 0, last = performance.now();
   var timeout = new Promise(function (_, reject) {
-    timer = setTimeout(function () {
-      controller.abort();
-      reject(new Error('history fetch timeout'));
-    }, HISTORY_FETCH_TIMEOUT_MS);
+    // Time the App spends suspended does not count: a late tick adds no more than one tick.
+    timer = setInterval(function () {
+      waited += Math.min(performance.now() - last, 250);
+      last = performance.now();
+      if (waited >= HISTORY_FETCH_TIMEOUT_MS) reject(new Error('history fetch timeout'));
+    }, 250);
   });
   return Promise.race([
-    api('/api/bridge/messages', params, { signal: controller.signal }),
+    bridgeHistory(params, {
+      onSlow: function (page) { showCachedHistory(sessionId, page); },
+    }),
     timeout,
-  ]).finally(function () { clearTimeout(timer); });
+  ]).finally(function () { clearInterval(timer); });
 }
+
+// '' (in sync or loading normally), 'slow' (past 6 s), 'stale' (the last load failed), 'offline'.
+function setHistoryPhase(phase) {
+  if (state.wsHistoryPhase === phase) return;
+  state.wsHistoryPhase = phase;
+  updateWsStatusIndicator();
+  if (typeof window.updateBreadcrumb === 'function') window.updateBreadcrumb();
+}
+
+// At 6 s the cache is shown read-only; real-time events keep waiting in the fetch barrier.
+function showCachedHistory(sessionId, page) {
+  if (state.wsSessionId !== sessionId) return;
+  setHistoryPhase('slow');
+  if (!page) return;
+  var content = document.getElementById('content');
+  if (!content || !content.querySelector('.skeleton-messages')) return;
+  var container = document.createElement('div');
+  container.className = 'messages runtime-' + state.appState.runtime;
+  container.innerHTML = renderMessages(page.messages, state.appState.runtime);
+  content.replaceChildren(container);
+  markTurnAdjacency(container);
+  loadImages(container);
+  clampOverflow(container);
+  followBottomAfterLayout();
+}
+
+function showHistoryFailure(error) {
+  var offline = error?.message === 'offline';
+  var timeout = /timeout/.test(error?.message || '');
+  setHistoryPhase(offline ? 'offline' : 'stale');
+  if (!offline && !document.hidden) showToast(timeout ? 'Request timeout' : error?.message || 'Unable to load this session');
+  var content = document.getElementById('content');
+  // The skeleton's placeholders are not history.
+  if (!content || content.querySelector('.messages:not(.skeleton-messages) :is(.assistant-turn, .msg-user)')) return;
+  var name = esc(window.displayDeviceName ? window.displayDeviceName(state.appState.device) : state.appState.device);
+  content.innerHTML = '<div class="offline-empty"><div class="offline-empty-title">'
+    + (offline ? '<i class="crumb-offline-dot"></i>' + name + ' is offline'
+      : timeout ? name + ' is not responding' : 'Unable to load this session') + '</div>'
+    + (offline ? '<div>This session hasn&#39;t been loaded on this device yet.<br>It will load when ' + name + ' is back online.</div>' : '')
+    + '</div>';
+}
+
+window.retrySessionHistory = function () {
+  if (!state.wsSessionId) return;
+  setHistoryPhase('slow');
+  loadLatestMessages(state.wsSessionId, { fresh: true, preservePending: true }).catch(function () {});
+};
+
+// The open Session reloads by itself when its offline device comes back.
+bridge.onDeviceOnline(function (device) {
+  if (state.deviceOnlineMap[device] === false) state.deviceOnlineMap[device] = true;
+  if (device !== state.appState.device) return;
+  if (state.wsSessionId && typeof window.updateBreadcrumb === 'function') window.updateBreadcrumb();
+  resyncSession(device);
+});
 
 /**
  * Load older messages (triggered by scroll-to-top).
@@ -2229,10 +2126,10 @@ async function loadOlderMessages(sessionId) {
   var generation = _messagePaginationGeneration;
   state.wsLoadingOlder = true;
   try {
-    var data = await api('/api/bridge/messages', {
+    var data = await bridgeHistory({
       session: sessionId,
       before: state.wsOldestTimestamp,
-      limit: MESSAGE_PAGE_SIZE,
+      device: state.appState.device,
     });
     if (data.historyReset) {
       await loadLatestMessages(sessionId, { preservePending: true });
@@ -2265,10 +2162,13 @@ async function loadOlderMessages(sessionId) {
   }
 }
 
+// While a turn streams, a refresh keeps what is on screen: the history does not hold the block
+// being written yet (once the Session is completed it does, and the snapshot replaces it).
 async function refreshSessionMessages(options) {
   if (!state.wsSessionId) return null;
   try {
-    return await loadLatestMessages(state.wsSessionId, { preservePending: true, ...options });
+    return await loadLatestMessages(state.wsSessionId, { preservePending: true,
+      keepLive: _streamCoordinator.activeTurnIds().length > 0, ...options });
   } catch (error) {
     return null;
   }
@@ -2477,18 +2377,17 @@ function interruptSession() {
     return;
   }
   var activeTurnId = activeTurnForInterrupt();
-  wsSendReliable({
-    action: 'interrupt',
+  bridge.request(state.appState.device || '', 'interrupt', {
     sessionId: state.wsSessionId,
-    device: state.appState.device || '',
     ...(activeTurnId ? { turnId: activeTurnId } : {}),
-  });
+  }).catch(function () {});
   applyResolvedLiveActivity(
     hasOutstandingTurns() ? 'running' : 'completed',
   );
   updateSendBtn();
 }
 var restoreScrollFrame = null;
+var prewarmed = { key: '', at: 0 };
 (function () {
   var el = document.getElementById('msg-input');
   // The HarmonyOS shell's tablet UA omits "Mobile", so the UA test below misses it.
@@ -2530,6 +2429,14 @@ var restoreScrollFrame = null;
   });
   el.addEventListener('input', function () {
     resizeInputPreservingMessages();
+    // Typing or a restored draft prewarms the turn's process: at once, then at most every 10 s (wsSessionId may lag a draft).
+    var projectHash = state.appState.project && state.appState.project.hash;
+    var params = state.appState.session === '__new__' ? { projectHash: projectHash, runtime: state.appState.runtime } : { sessionId: state.activeThreadId || state.wsSessionId, projectHash: projectHash };
+    var key = (params.sessionId || '') + ':' + params.projectHash + ':' + params.runtime;
+    if (params.projectHash && el.value.trim() && (key !== prewarmed.key || Date.now() - prewarmed.at >= 10000)) {
+      prewarmed = { key: key, at: Date.now() };
+      bridge.request(state.appState.device || '', 'prewarm', params).catch(function () {});
+    }
     // Typing changes only input controls. Runtime state changes update the
     // spinner through the existing no-argument updateSendBtn() calls.
     updateSendBtn({ skipSpinner: true });
@@ -2540,6 +2447,8 @@ var restoreScrollFrame = null;
     }
   });
   if (document.documentElement.classList.contains('macos-page-zoom') || window.batonPageZoom?.enabled) resizeInputPreservingMessages();
+  // A page load restores the draft before this module loads (app.js awaits loadViewerLibs after it).
+  if (el.value.trim()) el.dispatchEvent(new window.Event('input'));
 })();
 // Global Esc → interrupt the running turn, like CC. Bubble phase so overlays
 // that own Esc (slash popup handles it in capture phase; file/image viewers
@@ -2549,8 +2458,9 @@ document.addEventListener('keydown', function (e) {
   if (e.isComposing || e.keyCode === 229) return;
   // Yield to open overlays/modals that give Esc its own meaning.
   if (document.getElementById('permission-prompt')) return;
+  if (window.sideDockInside?.(e)) return;
   var fileO = document.getElementById('fileOverlay');
-  if (fileO && fileO.style.display === 'flex') return;
+  if (fileO && fileO.style.display === 'flex' && !window.sideDockOutside?.(e)) return;
   var imgO = document.getElementById('imgOverlay');
   if (imgO && imgO.style.display === 'flex') return;
   var newP = document.getElementById('newProjectModal');
@@ -2566,6 +2476,7 @@ var _sendOrder = 0;
 var _turnSendOrder = new Map();
 
 function doSend(fullText, displayText, images) {
+  prewarmed = { key: '', at: 0 }; // typing the next message prewarms at once
   if (restoreScrollFrame !== null) {
     cancelAnimationFrame(restoreScrollFrame);
     restoreScrollFrame = null;
@@ -2582,6 +2493,7 @@ function doSend(fullText, displayText, images) {
     ? crypto.randomUUID()
     : sentAt + '-' + Math.random().toString(36).slice(2));
   rememberLatestSend(msgId, false, seq);
+  noteStarSend(msgId);
   _turnSendOrder.set(msgId, seq);
   _queuedTurnIds.add(msgId);
   var sendPayload;
@@ -2609,7 +2521,7 @@ function doSend(fullText, displayText, images) {
   // sessionId pins the message to its session so a timeout that fires after the
   // user navigated away doesn't self-heal against the wrong conversation.
   // echoScanFrom: only user rows arriving AFTER this send count as its echo (else a historical same-text row false-retires the bubble — kills short/repeated sends).
-  var pendingSend = { id: msgId, seq: seq, text: displayText, fullText: fullText, images: images, isImage: images.length > 0, sessionId: state.wsSessionId, sentAt: sentAt, echoScanFrom: state.wsAllMessages.length, sendPayload: sendPayload, serverReceived: false, transportRetries: 0 };
+  var pendingSend = { id: msgId, seq: seq, text: displayText, fullText: fullText, images: images, isImage: images.length > 0, sessionId: state.wsSessionId, sentAt: sentAt, echoScanFrom: state.wsAllMessages.length, sendPayload: sendPayload, serverReceived: false };
   pendingSend.inputText = document.getElementById('msg-input').value;
   state.pendingSentMessages.push(pendingSend);
   var container = document.querySelector('.messages');
@@ -2627,9 +2539,7 @@ function doSend(fullText, displayText, images) {
       + (displayText ? copyButtonHtml('message') : '') + '</div></div>');
   }
   updateSendBtn();
-  wsSendReliable(sendPayload);
-  probeSocketIfStale();
-  schedulePendingTransportRetry(pendingSend);
+  sendToBridge(pendingSend);
   scheduleSendTimeout(msgId);
 }
 
@@ -2695,23 +2605,6 @@ function acceptPendingReceipt(pending) {
 // pending bubble within this window, reconcile against the server: the message
 // may well have reached CC and only the ack/echo was lost.
 var SEND_TIMEOUT_MS = 12000;
-var SERVER_RECEIPT_TIMEOUT_MS = window.__APEEK_TEST__ ? 20 : 2000;
-var TRANSPORT_RETRY_LIMIT = Math.ceil(SEND_TIMEOUT_MS / 2000);
-
-// The Server receipt covers only the first hop. Resend the same turnId until
-// the Bridge result arrives; the Bridge replays or ignores duplicates by turnId.
-function schedulePendingTransportRetry(pending) {
-  if (!pending || pending.delivered) return;
-  clearTimeout(pending.transportTimer);
-  pending.transportTimer = setTimeout(function () {
-    if (pending.delivered || pending.queued || pending.awaitingTakeover
-      || pending.transportRetries >= TRANSPORT_RETRY_LIMIT) return;
-    pending.transportRetries++;
-    if (!pending.serverReceived) probeSocketForSend();
-    if (!_wsSendQueue.includes(pending.sendPayload)) wsSendReliable(pending.sendPayload);
-    schedulePendingTransportRetry(pending);
-  }, SERVER_RECEIPT_TIMEOUT_MS);
-}
 
 function scheduleSendTimeout(msgId) {
   var timer = setTimeout(function () { reconcilePendingSend(msgId); }, SEND_TIMEOUT_MS);
@@ -2726,7 +2619,6 @@ function findPending(msgId) {
 }
 
 function removePending(pending) {
-  clearTimeout(pending?.transportTimer);
   var idx = state.pendingSentMessages.indexOf(pending);
   if (idx !== -1) state.pendingSentMessages.splice(idx, 1);
 }
@@ -2743,9 +2635,11 @@ function pendingStatus(pending, text, color) {
 
 function handleCodexSendConflict(pending, msg) {
   var writer = msg.writer || {};
-  // Codex takes an idle terminal over by itself; Claude asks for either state.
-  var claude = msg.errorCode === 'claude_active_writer';
-  if (!(claude || (msg.errorCode === 'codex_active_writer' && writer.status === 'running'))
+  var runtime = /^(\w+)_active_writer$/.exec(msg.errorCode || '')?.[1];
+  var label = runtimeInfo(runtime).label;
+  // Codex asks only while the terminal is mid-turn; other runtimes hold the session whenever it is open.
+  if (!RUNTIMES[runtime]
+    || (runtime === 'codex' && writer.status !== 'running')
     || !writer.canTerminate
     || !writer.pid) return false;
   pending.awaitingTakeover = true;
@@ -2754,20 +2648,17 @@ function handleCodexSendConflict(pending, msg) {
   updateSendBtn();
   pendingStatus(pending, 'Waiting for confirmation');
 
-  _codexTakeover = { pending: pending, writer: writer, sending: false, runtime: claude ? 'Claude Code' : 'Codex' };
+  _codexTakeover = { pending: pending, writer: writer, label: label, sending: false };
   var modal = document.getElementById('codexTakeoverModal');
   if (!modal) return true;
-  document.getElementById('codexTakeoverTitle').textContent = _codexTakeover.runtime + ' session is active';
   var desc = document.getElementById('codexTakeoverDesc');
   var error = document.getElementById('codexTakeoverError');
   var confirm = document.getElementById('codexTakeoverConfirm');
   var cancel = document.getElementById('codexTakeoverCancel');
-  desc.textContent = claude
-    ? (writer.label || 'A Claude Code terminal')
-      + (writer.status === 'running' ? ' is running this session.' : ' has this session open.')
-      + ' Taking over will close it and send this message.'
-    : (writer.label || 'A Codex terminal')
-      + ' is running this session. Taking over will close it, send this message, and release the session when the turn finishes.';
+  document.getElementById('codexTakeoverTitle').textContent = label + ' session is active';
+  desc.textContent = (writer.label || 'A ' + label + ' terminal') + (runtime === 'codex'
+    ? ' is running this session. Taking over will close it, send this message, and release the session when the turn finishes.'
+    : (writer.status === 'running' ? ' is running this session.' : ' has this session open.') + ' Taking over will close it and send this message.');
   error.textContent = '';
   confirm.style.display = '';
   setButtonLoading(confirm);
@@ -2801,15 +2692,12 @@ function confirmCodexTakeover() {
   pending.awaitingTakeover = false;
   state.wsRunning = true;
   updateSendBtn();
-  pendingStatus(pending, 'Taking over ' + _codexTakeover.runtime + '...');
+  pendingStatus(pending, 'Taking over ' + _codexTakeover.label + '...');
   var confirm = document.getElementById('codexTakeoverConfirm');
   var cancel = document.getElementById('codexTakeoverCancel');
   setButtonLoading(confirm, 'Taking over');
   if (cancel) cancel.disabled = true;
-  wsSendReliable(Object.assign({}, pending.sendPayload, {
-    takeover: true,
-    expectedWriterPid: writer.pid,
-  }));
+  sendToBridge(pending, { takeover: true, expectedWriterPid: writer.pid });
   scheduleSendTimeout(pending.id);
 }
 
@@ -2817,7 +2705,6 @@ function confirmCodexTakeover() {
 // bubble; its exact turn echo later promotes that same anchor in place.
 // Failure shows "Not delivered · Retry" and stops the spinner.
 function resolvePending(pending, ok, error) {
-  clearTimeout(pending.transportTimer);
   pending.queued = false;
   pending.delivered = true;
   pending.failed = !ok;
@@ -2986,7 +2873,7 @@ function markPendingFailed(pending, error) {
 }
 
 // Timeout reconciliation: only acts if the bubble is still pending (ack/dedup
-// didn't already resolve it). Pulls latest messages from DDB, then either
+// didn't already resolve it). Pulls the latest history, then either
 // self-heals (message arrived, ack/echo was just lost) or flags for retry.
 async function reconcilePendingSend(msgId) {
   var pending = findPending(msgId);
@@ -3014,7 +2901,6 @@ async function reconcilePendingSend(msgId) {
 
 // The hidden bubble and pending record stay so a late receipt/echo can still claim the turn.
 function rollbackUnreceiptedSend(pending) {
-  clearTimeout(pending.transportTimer);
   pending.rolledBack = true;
   pending.delivered = true;
   pending.failed = true;
@@ -3073,22 +2959,18 @@ function resendPending(pending) {
   pending.queued = false;
   pending.serverReceived = false;
   pending.turnEnded = false;
-  pending.transportRetries = 0;
   _queuedTurnIds.add(pending.id);
   rememberLatestSend(pending.id, false, pending.seq);
   pendingStatus(pending, 'sending...');
   applyResolvedLiveActivity('running');
   updateSendBtn();
-  wsSendReliable(pending.sendPayload);
-  probeSocketIfStale();
-  schedulePendingTransportRetry(pending);
+  sendToBridge(pending);
   scheduleSendTimeout(pending.id);
 }
 
 // Promote the optimistic bubble in place (never remove+re-insert): its [data-anchor] must survive so anchorForStream still finds it.
 function promoteEchoedBubble(pending, msg) {
   acceptPendingReceipt(pending);
-  clearTimeout(pending.transportTimer);
   // The authoritative echo can beat the final send ack. Settle the visible
   // optimistic bubble from its original send time before retiring its pending
   // record, so rapid sends never show ack-arrival order as their timestamps.
@@ -3112,12 +2994,15 @@ function promoteEchoedBubble(pending, msg) {
 Object.assign(window, {
   updateTitleFromMessages,
   syncMobileViewport,
-  connectWs, subscribeSession, wsSend, wsSendReliable, setWsStatus, disconnectWs, ensureWsAndSend,
+  newSessionRequest, subscribeSession, setWsStatus, disconnectWs,
   resumeSessionForeground,
   startWs, loadLatestMessages, loadOlderMessages, refreshSessionMessages,
   sendMessage, updateSendBtn, onSendBtnClick, interruptSession, doSend,
   closeCodexTakeoverModal, confirmCodexTakeover,
   retryPendingSend, isInheritedAgentContext,
+  // A direct request to the open device's Bridge (`device` overrides it); requests that may take a
+  // while (rename, Git writes, deletes) are kept alive by the Bridge's progress frames.
+  bridgeRequest: function (method, params, device) { return bridge.request(device || state.appState.device || '', method, params); },
 });
 
 // Test-only hook for replaying the real WS dispatcher.
@@ -3128,5 +3013,6 @@ if (typeof window !== 'undefined' && window.__APEEK_TEST__) {
     flushLateJoinCompletion: completeLateJoinTurn,
     resumeLateJoinAtCheckpoint: resumeLateJoinAtCheckpoint,
     commitMessages: commitMessages,
+    resyncSession: resyncSession,
   };
 }

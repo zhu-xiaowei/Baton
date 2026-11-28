@@ -8,6 +8,13 @@ import { state } from '../../web/js/state.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 
+// Records each Bridge request; `reply(answer)` answers it, as the Bridge would.
+function mockBridge(window, sent) {
+  window.bridgeRequest = (action, params) => new Promise((resolve) => {
+    sent.push({ action, ...params, reply: (answer) => { resolve(answer); return new Promise(setImmediate); } });
+  });
+}
+
 test('slash popup restores cached commands entered before lazy load and coalesces prefetches', async () => {
   const dom = new JSDOM(
     '<!doctype html><body>'
@@ -40,7 +47,7 @@ test('slash popup restores cached commands entered before lazy load and coalesce
     }),
   );
   const sent = [];
-  dom.window.wsSendReliable = (payload) => sent.push(payload);
+  mockBridge(dom.window, sent);
   dom.window.updateSendBtn = () => {};
 
   await import(
@@ -103,7 +110,7 @@ test('expired slash cache validates by revision without replacing unchanged cont
     checkedAt: 1,
   }));
   const sent = [];
-  dom.window.wsSendReliable = (payload) => sent.push(payload);
+  mockBridge(dom.window, sent);
 
   await import(
     pathToFileURL(path.join(ROOT, 'web/js/components/slashcommands.js')).href
@@ -116,8 +123,7 @@ test('expired slash cache validates by revision without replacing unchanged cont
   assert.equal(dom.window.document.querySelector('.slash-command-name').textContent, '/model');
   state.appState.session = 'claude-another-session';
   state.wsSessionId = 'claude-another-session';
-  dom.window.applyCommandCatalog({
-    requestId: sent[0].requestId,
+  await sent[0].reply({
     runtime: 'claude',
     device: 'phone',
     projectHash: '-workspace-expired',
@@ -130,79 +136,6 @@ test('expired slash cache validates by revision without replacing unchanged cont
   assert.ok(stored.checkedAt > 1);
   dom.window.prefetchCommands();
   assert.equal(sent.length, 1);
-});
-
-test('command catalog ready fetches REST content before refreshing the popup', async () => {
-  const dom = new JSDOM(
-    '<!doctype html><body>'
-      + '<div id="slash-popup" style="display:none">'
-      + '<div class="slash-popup-title">Slash Commands</div><div id="slash-list"></div></div>'
-      + '<textarea id="msg-input">/</textarea></body>',
-    { url: 'https://test/' },
-  );
-  globalThis.window = dom.window;
-  globalThis.document = dom.window.document;
-  globalThis.navigator = dom.window.navigator;
-  globalThis.localStorage = dom.window.localStorage;
-  dom.window.Element.prototype.scrollIntoView = function () {};
-  state.appState = {
-    runtime: 'claude',
-    device: 'phone',
-    project: { hash: '-workspace-rest' },
-    session: 'claude-rest',
-  };
-  state.wsProjectHash = '-workspace-rest';
-  state.wsSessionId = 'claude-rest';
-  const sent = [];
-  const fetched = [];
-  dom.window.wsSendReliable = (payload) => sent.push(payload);
-  dom.window.api = async (path) => {
-    fetched.push(path);
-    return {
-      runtime: 'claude',
-      device: 'phone',
-      projectHash: '-workspace-rest',
-      revision: 'revision-rest',
-      commands: [{ name: 'model', description: 'REST model command' }],
-      skills: [],
-    };
-  };
-
-  await import(
-    pathToFileURL(path.join(ROOT, 'web/js/components/slashcommands.js')).href
-      + `?rest-catalog-test=${Date.now()}`
-  );
-  assert.equal(sent.length, 1);
-
-  dom.window.handleCommandCatalogReady({
-    action: 'command_catalog_ready',
-    requestId: sent[0].requestId,
-    runtime: 'claude',
-    device: 'phone',
-    projectHash: '-workspace-rest',
-    revision: 'revision-rest',
-    notModified: false,
-    catalogRef: '0123456789abcdef0123456789abcdef',
-  });
-  await new Promise((resolve) => setTimeout(resolve, 0));
-
-  assert.deepEqual(fetched, [
-    '/api/bridge/command-catalog/0123456789abcdef0123456789abcdef',
-  ]);
-  assert.equal(
-    dom.window.document.querySelector('.slash-command-name').textContent,
-    '/model',
-  );
-  assert.equal(
-    dom.window.document.querySelector('.slash-description').textContent,
-    'REST model command',
-  );
-  assert.equal(
-    JSON.parse(dom.window.localStorage.getItem(
-      'apeek_cmds:v6:phone:claude:-workspace-rest',
-    )).revision,
-    'revision-rest',
-  );
 });
 
 test('stale not-modified response keeps the frontend cache expired for retry', async () => {
@@ -234,13 +167,12 @@ test('stale not-modified response keeps the frontend cache expired for retry', a
     checkedAt: 1,
   }));
   const sent = [];
-  dom.window.wsSendReliable = (payload) => sent.push(payload);
+  mockBridge(dom.window, sent);
   await import(
     pathToFileURL(path.join(ROOT, 'web/js/components/slashcommands.js')).href
       + `?stale-test=${Date.now()}`
   );
-  dom.window.applyCommandCatalog({
-    requestId: sent[0].requestId,
+  await sent[0].reply({
     runtime: 'claude',
     device: 'phone',
     projectHash: '-workspace-stale',
@@ -287,7 +219,7 @@ test('changed slash catalog refreshes the open top-level menu without losing sel
     checkedAt: 1,
   }));
   const sent = [];
-  dom.window.wsSendReliable = (payload) => sent.push(payload);
+  mockBridge(dom.window, sent);
   await import(
     pathToFileURL(path.join(ROOT, 'web/js/components/slashcommands.js')).href
       + `?changed-test=${Date.now()}`
@@ -303,8 +235,7 @@ test('changed slash catalog refreshes the open top-level menu without losing sel
     '/usage',
   );
 
-  dom.window.applyCommandCatalog({
-    requestId: sent[0].requestId,
+  await sent[0].reply({
     runtime: 'claude',
     device: 'phone',
     projectHash: '-workspace-changed',
@@ -354,7 +285,7 @@ test('Codex slash popup preserves bridge order and opens the native-style skill 
 
   const sent = [];
   let sends = 0;
-  dom.window.wsSend = (payload) => sent.push(payload);
+  mockBridge(dom.window, sent);
   dom.window.sendMessage = () => { sends++; };
   dom.window.updateSendBtn = () => {};
   dom.window.localStorage.setItem(
@@ -379,20 +310,9 @@ test('Codex slash popup preserves bridge order and opens the native-style skill 
   input.value = '/';
   input.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
 
-  dom.window.applyCommandCatalog({
-    requestId: sent[0].requestId,
-    commands: [{
-      name: 'agents',
-      description: 'Old Claude-only response',
-      behavior: 'send',
-    }],
-  });
-  assert.equal(dom.window.document.querySelectorAll('.slash-item').length, 0);
-
   const names = CODEX_MOBILE_COMMANDS.map((command) => command.name)
     .concat('prompts:legacy');
-  dom.window.applyCommandCatalog({
-    requestId: sent[0].requestId,
+  await sent[0].reply({
     runtime: 'codex',
     projectHash: '-workspace-project',
     sessionId: 'codex:thread-1',
@@ -498,34 +418,14 @@ test('Codex slash popup preserves bridge order and opens the native-style skill 
   assert.equal(sent.at(-1).commandName, 'agent');
   assert.equal(dom.window.document.querySelector('.slash-command-name').textContent, 'Loading...');
 
-  const optionsRequest = sent.at(-1);
-  dom.window.handleCommandOptions({
-    action: 'command_options',
-    requestId: optionsRequest.requestId,
+  await sent.at(-1).reply({
     commandName: 'agent',
-    runtime: 'codex',
-    device: 'phone',
-    projectHash: '-workspace-project',
-    sessionId: 'codex:thread-1',
     options: [{
       name: 'thread-2',
       label: 'Reviewer',
       description: 'reviewer · completed',
       value: 'thread-2',
     }],
-  });
-  assert.equal(dom.window.document.querySelector('.slash-popup-title').textContent, '/agent');
-  assert.equal(dom.window.document.querySelector('.slash-command-name').textContent, 'Reviewer');
-
-  dom.window.applyCommandCatalog({
-    requestId: sent[0].requestId,
-    runtime: 'codex',
-    device: 'phone',
-    projectHash: '-workspace-project',
-    sessionId: 'codex:thread-1',
-    revision: 'codex-revision-2',
-    commands: [{ name: 'new-command', behavior: 'send' }],
-    skills: [],
   });
   assert.equal(dom.window.document.querySelector('.slash-popup-title').textContent, '/agent');
   assert.equal(dom.window.document.querySelector('.slash-command-name').textContent, 'Reviewer');
@@ -556,7 +456,7 @@ test('Claude slash popup preserves live TUI order and opens realtime model optio
 
   const sent = [];
   let sends = 0;
-  dom.window.wsSend = (payload) => sent.push(payload);
+  mockBridge(dom.window, sent);
   dom.window.sendMessage = () => { sends++; };
   dom.window.updateSendBtn = () => {};
 
@@ -568,8 +468,7 @@ test('Claude slash popup preserves live TUI order and opens realtime model optio
   const input = dom.window.document.getElementById('msg-input');
   input.value = '/';
   input.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
-  dom.window.applyCommandCatalog({
-    requestId: sent[0].requestId,
+  await sent[0].reply({
     runtime: 'claude',
     projectHash: '-workspace-project',
     sessionId: 'claude-session-1',

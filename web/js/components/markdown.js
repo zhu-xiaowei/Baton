@@ -11,6 +11,7 @@
   var _documentSlots = null;
   var _chatCode = false;
   var _streaming = false;
+  var _nested = 0;
   function trusted(html) {
     if (!_documentSlots) return html;
     _documentSlots.push(html);
@@ -144,6 +145,13 @@
     if (codeEl) codeEl.innerHTML = mermaidCodeHtml(code);
   };
 
+  // A delimiter whose inner side is non-CJK punctuation needs whitespace, punctuation or CJK outside it.
+  var CJK = /[\p{sc=Han}\p{sc=Hiragana}\p{sc=Katakana}\p{sc=Hangul}\p{sc=Bopomofo}\u3000-\u303f\uff00-\uffef]/u;
+  var PUNCT = /[\p{P}\p{S}]/u;
+  function cjkEdge(inner, outer) {
+    return !PUNCT.test(inner) || CJK.test(inner) || !outer || /\s/.test(outer) || PUNCT.test(outer) || CJK.test(outer);
+  }
+
   marked.use({
     tokenizer: {
       // GFM autolinks run to the next space. Like VS Code, CJK punctuation also ends the link.
@@ -152,9 +160,14 @@
         var stop = src.search(/[、。｡､，．：；‘〈「『〔（［｛｢｣｝］）〕』」〉’｀～…]/);
         return stop < 0 ? false : Object.getPrototypeOf(this).url.call(this, src.slice(0, stop));
       },
-      emStrong: function (src) {
-        var match = /^\*\*((?=[\p{L}\p{N}])[^*\\`_<>\[\]\r\n]*[，。！？：；、）】》」』])\*\*(?=[\p{L}\p{N}])/u.exec(src);
+      // CommonMark misses **…** beside CJK text: the CJK-friendly amendment (tats-u/markdown-cjk-friendly, as in
+      // VitePress). Inline code spans may sit inside: **结论：做 `pair`。**确认
+      emStrong: function (src, masked, prev) {
+        var match = /^\*\*(?![\s*])((?:[^*\\`_<>\[\]\r\n]|`[^`\r\n]+`)+?)\*\*/u.exec(src);
         if (!match) return false;
+        // A longer * run on either side is marked's own case; characters are code points (emoji, CJK Extension B).
+        var inner = Array.from(match[1]), next = Array.from(src.slice(match[0].length, match[0].length + 2))[0];
+        if (prev === '*' || next === '*' || /\s$/.test(match[1]) || !cjkEdge(inner[0], prev) || !cjkEdge(inner[inner.length - 1], next)) return false;
         return {
           type: 'strong', raw: match[0], text: match[1],
           tokens: this.lexer.inlineTokens(match[1]),
@@ -173,8 +186,10 @@
       },
       // Assistant output is untrusted. Raw HTML must remain visible text instead of
       // being inserted into Baton's document where <style>/<meta> can alter the UI.
+      // A bare <br> (line breaks inside table cells, as GitHub renders) is the only exception.
       html: function (html) {
-        return _documentSlots ? html : escHtml(html);
+        if (_documentSlots) return html;
+        return /^<br\s*\/?>$/i.test(html.trim()) ? '<br>' : escHtml(html);
       },
       // marked v12 dropped the old highlight option, so fenced code is rendered here.
       code: function (code, lang) {
@@ -216,9 +231,9 @@
     } catch (error) {}
   }
 
-  window.visualizationHtml = function (filePath) {
+  window.visualizationHtml = function (filePath, inline) {
     var safePath = escHtml(filePath).replace(/"/g, '&quot;');
-    return '<span class="codex-visualization" data-visualization-path="' + safePath + '">'
+    return '<span class="codex-visualization" data-visualization-' + (inline ? 'html' : 'path') + '="' + safePath + '">'
       + '<span class="visualization-status">' + (window.loadingSpinner?.({ label: 'Loading preview' }) || '') + '</span>'
       + '</span>';
   };
@@ -232,7 +247,7 @@
         return index < 0 ? undefined : index + (level === 'block' ? 1 : 0);
       },
       tokenizer: visualizationToken,
-      renderer: function (token) { return trusted(window.visualizationHtml(token.text)); },
+      renderer: function (token) { return trusted(window.visualizationHtml(token.text, token.inline)); },
     };
   }) });
 
@@ -293,11 +308,20 @@
   // A `$$`/`\[` math line right under a **bold** line must not be swallowed as a setext heading underline.
   marked.use({
     tokenizer: {
+      // Only top-level ```html documents preview; inside quotes and lists they stay code.
+      blockquote: function (src) { _nested++; try { return Object.getPrototypeOf(this).blockquote.call(this, src); } finally { _nested--; } },
+      list: function (src) { _nested++; try { return Object.getPrototypeOf(this).list.call(this, src); } finally { _nested--; } },
       lheading: function (src) { return /^[^\n]+\n[ \t]*(?:\$\$|\\\[)/.test(src) ? undefined : false; },
       // A streaming math fence stays code until its closing fence arrives.
       fences: function (src) {
         var token = Object.getPrototypeOf(this).fences.call(this, src);
         if (token && _streaming && /^math\b/i.test(token.lang) && !fenceClosed(token.raw)) token.lang = '';
+        // A closed ```html document (<= 1 MiB) previews like `visualize` (while streaming, via renderStream's segments).
+        if (token && !_documentSlots && !_nested && /^html(?:\s|$)/i.test(token.lang)
+          && fenceClosed(token.raw) && new Blob([token.text]).size <= 1048576
+          && /^\uFEFF?(?:\s|<!--[\s\S]*?-->)*<(?:!doctype\s+html|html)[\s>]/i.test(token.text)) {
+          return { type: 'codexVisualization', raw: token.raw, text: token.text, inline: true };
+        }
         return token;
       },
     },
@@ -492,13 +516,13 @@
   // Keep decoded images and pending loads alive while streamed text changes around them.
   function renderStream(host, text) {
     var segs = splitMermaid(text || '');
-    if ((text || '').includes('visualize')) {
+    if (/visualize|(?:```|~~~)[ \t]*html/i.test(text || '')) {
       segs = segs.flatMap(function (segment) {
         if (segment.type !== 'text') return [segment];
         var result = [];
         marked.lexer(segment.text).forEach(function (token) {
           if (token.type === 'codexVisualization') {
-            result.push({ type: 'visualization', text: token.text });
+            result.push({ type: 'visualization', text: token.text, inline: token.inline });
           } else if (result.length && result[result.length - 1].type === 'text') {
             result[result.length - 1].text += token.raw;
           } else {
@@ -526,9 +550,9 @@
           updateMarkdownHtml(node, html); node.dataset.h = html;
         }
       } else if (seg.type === 'visualization') {
-        if (!node || node.nodeType !== 1 || node.dataset.visualizationPath !== seg.text) {
+        if (!node || node.nodeType !== 1 || node.dataset[seg.inline ? 'visualizationHtml' : 'visualizationPath'] !== seg.text) {
           var template = document.createElement('template');
-          template.innerHTML = window.visualizationHtml(seg.text);
+          template.innerHTML = window.visualizationHtml(seg.text, seg.inline);
           var preview = template.content.firstChild;
           if (node) host.replaceChild(preview, node); else host.appendChild(preview);
         }

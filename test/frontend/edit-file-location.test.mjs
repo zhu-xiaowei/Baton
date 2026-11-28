@@ -16,8 +16,9 @@ const vite = await createTestServer({
   server: { middlewareMode: true }, appType: 'custom',
 });
 const { state } = await vite.ssrLoadModule('/js/state.js');
-const { observeToolDetails, loadToolDetails, toolDetailsSource } = await vite.ssrLoadModule('/js/tool-details.js');
-const { handleWsRpcMessage } = await vite.ssrLoadModule('/js/ws-rpc.js');
+const { configureToolDetails, observeToolDetails, loadToolDetails, toolDetailsSource } = await vite.ssrLoadModule('/js/tool-details.js');
+const { configureWsRpc } = await vite.ssrLoadModule('/js/ws-rpc.js');
+const { mockBridgeFrames } = await import('./bridge-frames-mock.mjs');
 const { openFile, closeFileViewer } = await vite.ssrLoadModule('/js/project/file-viewer.js');
 
 let sent = [];
@@ -29,14 +30,15 @@ test.beforeEach(() => {
   state.appState = { device: 'Mac', session: state.wsSessionId, project: { hash: 'project' } };
   state.wsAllMessages = [];
   sent = [];
-  window.wsSendReliable = payload => {
+  configureToolDetails((device, method, params) => new Promise((resolve) => sent.push({ action: method, ...params, resolve })));
+  const bridge = mockBridgeFrames(configureWsRpc, [], payload => {
     sent.push(payload);
-    if (payload.action === 'project_files') queueMicrotask(() => handleWsRpcMessage({
+    if (payload.action === 'project_files') queueMicrotask(() => bridge.answer({
       action: 'project_files', requestId: payload.requestId, ok: true,
       sequence: 0, complete: true, path: payload.path, key: 'file',
       content: fileText, contentVersion: createHash('sha256').update(fileText).digest('hex'),
     }));
-  };
+  });
 });
 test.afterEach(() => closeFileViewer({ refresh: false }));
 test.after(async () => { await vite.close(); dom.window.close(); });
@@ -46,15 +48,12 @@ async function loadEdit() {
   state.wsAllMessages = [{ type: 'assistant', content: [preview] }];
   observeToolDetails(preview, null);
   const loading = loadToolDetails('edit');
-  handleWsRpcMessage({
-    action: 'tool_details', requestId: sent.at(-1).requestId, ok: true,
-    sequence: 0, complete: true, content: JSON.stringify({ details: [{
+  sent.at(-1).resolve({ details: [{
       toolUse: { ...preview, truncated: false, input: {
         file_path: '/file.js', old_string: 'const value = 1;',
         new_string: 'const value = 2;\nconst ready = true;',
       } }, toolResult: null,
-    }] }),
-  });
+    }] });
   await loading;
 }
 

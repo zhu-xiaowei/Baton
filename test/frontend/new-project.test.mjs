@@ -25,11 +25,12 @@ test('directory picker navigates, previews creation, pages, and ignores obsolete
   globalThis.window = dom.window;
   globalThis.document = dom.window.document;
   const { state } = await import('../../web/js/state.js');
-  const { handleWsRpcMessage } = await import('../../web/js/ws-rpc.js');
+  const { mockBridgeFrames } = await import('./bridge-frames-mock.mjs');
+  let handleWsRpcMessage;
   const picker = await import('../../web/js/project/directory-picker.js');
   const requests = [];
   window.loadViewerLibs = async () => {};
-  window.wsSendReliable = request => requests.push(request);
+  handleWsRpcMessage = mockBridgeFrames(undefined, requests).answer;
   state.appState.device = 'Test device';
   const settle = () => new Promise(resolve => setImmediate(resolve));
   function reply(request, extra = {}) {
@@ -130,12 +131,13 @@ test('directory input filters prefixes while keeping ordinary folders ahead of h
   globalThis.window = dom.window;
   globalThis.document = dom.window.document;
   const { state } = await import('../../web/js/state.js');
-  const { handleWsRpcMessage } = await import('../../web/js/ws-rpc.js');
+  const { mockBridgeFrames } = await import('./bridge-frames-mock.mjs');
+  let handleWsRpcMessage;
   const picker = await import('../../web/js/project/directory-picker.js');
   const requests = [];
   const names = ['.hidden', 'zebra', 'aws', 'auto', 'account-dev', 'asset', '.agents'];
   window.loadViewerLibs = async () => {};
-  window.wsSendReliable = request => {
+  handleWsRpcMessage = mockBridgeFrames(undefined, [], request => {
     requests.push(request);
     const directory = request.path === '/home/test/asset' ? '/home/test/asset' : '/home/test';
     queueMicrotask(() => handleWsRpcMessage({
@@ -143,7 +145,7 @@ test('directory input filters prefixes while keeping ordinary folders ahead of h
       path: directory, targetPath: directory, parentPath: directory.endsWith('/asset') ? '/home/test' : '/home', exists: true,
       entries: (directory.endsWith('/asset') ? ['child'] : names).map(name => ({ name, type: 'directory' })),
     }));
-  };
+  }).answer;
   const input = document.getElementById('newProjectInput');
   const visibleNames = () => [...document.querySelectorAll('#newProjectDirectories .project-file-name')]
     .map(node => node.textContent);
@@ -207,12 +209,13 @@ test('visible folder preloads are bounded, skip offscreen work, and share foregr
     emit(entries) { this.callback(entries); }
   };
   const { state } = await import('../../web/js/state.js');
-  const { handleWsRpcMessage } = await import('../../web/js/ws-rpc.js');
+  const { mockBridgeFrames } = await import('./bridge-frames-mock.mjs');
+  let handleWsRpcMessage;
   const picker = await import('../../web/js/project/directory-picker.js');
   const requests = [];
   const settle = () => new Promise(resolve => setImmediate(resolve));
   window.loadViewerLibs = async () => {};
-  window.wsSendReliable = request => requests.push(request);
+  handleWsRpcMessage = mockBridgeFrames(undefined, requests).answer;
   function reply(request, entries = []) {
     handleWsRpcMessage({
       action: 'project_files', requestId: request.requestId, ok: true,

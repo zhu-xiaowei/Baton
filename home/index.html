@@ -1,0 +1,736 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Baton: your coding agents, on your phone</title>
+<meta name="description" content="Pick up your Claude Code, Codex and other coding-agent Sessions on your phone, right where you left off. End-to-end encrypted.">
+<meta name="theme-color" content="#0d1117" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+<meta name="color-scheme" content="dark light">
+<meta property="og:title" content="Baton">
+<meta property="og:description" content="Pick up your coding-agent Sessions on your phone, right where you left off on your computer.">
+<meta property="og:url" content="https://agentbaton.app/">
+<link rel="canonical" href="https://agentbaton.app/">
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='1024' height='1024' viewBox='172.58 163.62 679.84 711.76' preserveAspectRatio='none' %3E%3Cg transform='translate(512 512) scale(0.84) translate(-512 -512)'%3E%3Cg transform='translate(42 40.4987) scale(1.3055556)'%3E%3Cg transform='translate(2 -147)'%3E%3Cpath fill='%23000000' d='M535.83872 744.22272A81.92 81.92 0 0 0 634.88 664.10496v-320.1024a81.92 81.92 0 0 0-61.56288-79.36l-143.36-36.7616C378.12224 214.6304 327.68 253.7472 327.68 307.24096v116.5312a20.48 20.48 0 1 0 40.96 0v-116.5312a40.96 40.96 0 0 1 51.13856-39.66976l143.36 36.7616A40.96 40.96 0 0 1 593.92 344.00256v320.1024a40.96 40.96 0 0 1-49.52064 40.05888l-85.46304-18.26816a20.48 20.48 0 0 0-8.56064 40.05888l85.46304 18.26816zM180.96128 285.34784A81.92 81.92 0 0 0 81.92 365.4656v320.1024a81.92 81.92 0 0 0 61.56288 79.33952l143.36 36.7616c51.8144 13.29152 102.27712-25.84576 102.27712-79.33952V628.5312a20.48 20.48 0 1 0-40.96 0v93.77792a40.96 40.96 0 0 1-51.13856 39.66976l-143.36-36.7616A40.96 40.96 0 0 1 122.88 685.568v-320.1024a40.96 40.96 0 0 1 49.52064-40.05888l85.46304 18.24768a20.48 20.48 0 0 0 8.56064-40.05888l-85.46304-18.24768z'/%3E%3Cpath fill='%23000000' d='M272.708 610.145 488.708 423.145A24 24 0 0 0 457.292 386.855L241.292 573.855A24 24 0 0 0 272.708 610.145Z'/%3E%3C/g%3E%3C/g%3E%3C/g%3E%3C/svg%3E" media="(prefers-color-scheme: light)">
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='1024' height='1024' viewBox='172.58 163.62 679.84 711.76' preserveAspectRatio='none' %3E%3Cg transform='translate(512 512) scale(0.84) translate(-512 -512)'%3E%3Cg transform='translate(42 40.4987) scale(1.3055556)'%3E%3Cg transform='translate(2 -147)'%3E%3Cpath fill='%23E6EDF3' d='M535.83872 744.22272A81.92 81.92 0 0 0 634.88 664.10496v-320.1024a81.92 81.92 0 0 0-61.56288-79.36l-143.36-36.7616C378.12224 214.6304 327.68 253.7472 327.68 307.24096v116.5312a20.48 20.48 0 1 0 40.96 0v-116.5312a40.96 40.96 0 0 1 51.13856-39.66976l143.36 36.7616A40.96 40.96 0 0 1 593.92 344.00256v320.1024a40.96 40.96 0 0 1-49.52064 40.05888l-85.46304-18.26816a20.48 20.48 0 0 0-8.56064 40.05888l85.46304 18.26816zM180.96128 285.34784A81.92 81.92 0 0 0 81.92 365.4656v320.1024a81.92 81.92 0 0 0 61.56288 79.33952l143.36 36.7616c51.8144 13.29152 102.27712-25.84576 102.27712-79.33952V628.5312a20.48 20.48 0 1 0-40.96 0v93.77792a40.96 40.96 0 0 1-51.13856 39.66976l-143.36-36.7616A40.96 40.96 0 0 1 122.88 685.568v-320.1024a40.96 40.96 0 0 1 49.52064-40.05888l85.46304 18.24768a20.48 20.48 0 0 0 8.56064-40.05888l-85.46304-18.24768z'/%3E%3Cpath fill='%23E6EDF3' d='M272.708 610.145 488.708 423.145A24 24 0 0 0 457.292 386.855L241.292 573.855A24 24 0 0 0 272.708 610.145Z'/%3E%3C/g%3E%3C/g%3E%3C/g%3E%3C/svg%3E" media="(prefers-color-scheme: dark)">
+<script>
+(function(){var d=document.documentElement,s=null;try{s=new URLSearchParams(location.search).get('lang')||localStorage.getItem('baton-lang')}catch(e){}
+if(s!=='en'&&s!=='zh'){var l=(navigator.languages&&navigator.languages[0])||navigator.language||'';s=/^zh\b/i.test(l)?'zh':'en'}
+d.lang=s==='zh'?'zh-CN':'en';d.className='js';if(s==='zh')document.title='Baton：电脑上的 Agent，手机上接着用'})();
+</script>
+<style>
+:root{--bg:#0d1117;--surface:#161b22;--surface2:#1c2330;--border:#30363d;--border2:#21262d;--text:#e6edf3;--muted:#8b949e;--faint:#7d8590;--accent:#58a6ff;--accent2:#a371f7;--green:#3fb950;--amber:#d29922;--red:#f85149;--glow:rgba(56,139,253,.18);--glow2:rgba(163,113,247,.12);--btn:#e6edf3;--on-btn:#0d1117;--code:#0b0f14;--ctl:#1c2330;--ctl-h:#262c36;--ctl-b:#30363d;--ctl-t:#c9d1d9;--ok:#56d364;
+--sans:-apple-system,BlinkMacSystemFont,"Segoe UI","Helvetica Neue",Arial,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans CJK SC",sans-serif;--mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace}
+@media (prefers-color-scheme:light){:root{--bg:#ffffff;--surface:#f6f8fa;--surface2:#eaeef2;--border:#d0d7de;--border2:#e4e8ec;--text:#1f2328;--muted:#59636e;--faint:#656d76;--accent:#0969da;--accent2:#8250df;--glow:rgba(9,105,218,.10);--glow2:rgba(130,80,223,.08);--btn:#1f2328;--on-btn:#ffffff;--code:#f6f8fa;--ctl:#ffffff;--ctl-h:#f3f4f6;--ctl-b:#d0d7de;--ctl-t:#1f2328;--ok:#1a7f37}}
+/* product mocks always use the App's dark palette */
+.mock{--bg:#0d1117;--surface:#161b22;--surface2:#1c2330;--border:#30363d;--border2:#21262d;--text:#e6edf3;--muted:#8b949e;--faint:#6e7681;--accent:#58a6ff;color:var(--text)}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%;scroll-behavior:smooth;scroll-padding-top:72px}
+body{margin:0;background:var(--bg);color:var(--text);font:16px/1.6 var(--sans);-webkit-font-smoothing:antialiased;overflow-x:hidden}
+html[lang|=zh] .en,html:not([lang|=zh]) .zh{display:none!important}
+a{color:inherit;text-decoration:none}
+:focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:6px}
+.wrap{max-width:1120px;margin:0 auto;padding:0 24px}
+.mono{font-family:var(--mono)}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+svg.i{width:1em;height:1em;flex:none}
+/* header */
+header{position:sticky;top:0;z-index:20;backdrop-filter:saturate(1.6) blur(14px);-webkit-backdrop-filter:saturate(1.6) blur(14px);background:color-mix(in srgb,var(--bg) 78%,transparent);border-bottom:1px solid transparent;transition:border-color .2s}
+header.scrolled{border-color:var(--border2)}
+.nav{display:flex;align-items:center;gap:28px;height:60px}
+.brand{display:flex;align-items:center;gap:10px;font-weight:650;font-size:18px;letter-spacing:-.01em}
+.brand svg{width:26px;height:26px}
+.links{display:flex;gap:24px;font-size:14px;color:var(--muted)}
+.links a:hover{color:var(--text)}
+.nav .sp{flex:1}
+.lang{display:flex;border:1px solid var(--border);border-radius:999px;padding:2px;font-size:12px}
+.lang button{all:unset;cursor:pointer;padding:3px 10px;border-radius:999px;color:var(--muted)}
+.lang button[aria-pressed=true]{background:var(--surface2);color:var(--text)}
+.lang button:focus-visible{outline:2px solid var(--accent)}
+.gh{display:grid;place-items:center;width:34px;height:34px;border-radius:8px;color:var(--muted)}
+.gh:hover{color:var(--text);background:var(--surface)}
+.gh svg{width:20px;height:20px}
+/* hero */
+.hero{position:relative;padding:76px 0 0;text-align:center;isolation:isolate}
+.hero:before{content:"";position:absolute;inset:-60px 0 auto;height:720px;z-index:-1;background:radial-gradient(600px 320px at 50% 18%,var(--glow),transparent 70%),radial-gradient(420px 260px at 72% 46%,var(--glow2),transparent 70%);pointer-events:none}
+.hero:after{content:"";position:absolute;inset:0 0 auto;height:640px;z-index:-2;background-image:linear-gradient(var(--border2) 1px,transparent 1px),linear-gradient(90deg,var(--border2) 1px,transparent 1px);background-size:56px 56px;-webkit-mask-image:radial-gradient(ellipse 60% 55% at 50% 30%,#000 10%,transparent 75%);mask-image:radial-gradient(ellipse 60% 55% at 50% 30%,#000 10%,transparent 75%);opacity:.55;pointer-events:none}
+
+h1{text-wrap:balance;margin:22px auto 0;max-width:820px;font-size:clamp(40px,7.2vw,76px);line-height:1.04;letter-spacing:-.035em;font-weight:720}
+html[lang|=zh] h1{letter-spacing:-.01em;line-height:1.14;font-size:clamp(36px,6.4vw,68px)}
+.grad{background:linear-gradient(100deg,var(--accent) 10%,var(--accent2) 90%);-webkit-background-clip:text;background-clip:text;color:transparent}
+.lede{text-wrap:pretty;margin:26px auto 0;max-width:640px;font-size:clamp(16px,2vw,19px);color:var(--muted)}
+.go{max-width:640px;margin:32px 0 0;text-align:left}
+.gs+.gs{margin-top:16px}
+.gl{display:flex;align-items:center;gap:8px;margin:0;font-size:14px;font-weight:600;color:var(--text)}
+.gl i{display:inline-grid;place-items:center;flex:none;width:20px;height:20px;border-radius:50%;background:color-mix(in srgb,var(--accent) 18%,transparent);color:var(--accent);font:700 11.5px var(--mono);font-style:normal}
+.go .cmd{border-color:color-mix(in srgb,var(--accent) 35%,var(--border));box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 8%,transparent)}
+.os{flex:none;display:inline-flex;padding:2px;gap:2px;border:1px solid var(--ctl-b);border-radius:9px;background:var(--code)}
+.os button{all:unset;cursor:pointer;display:inline-flex;align-items:center;gap:2px;height:28px;padding:0 7px;border-radius:6px;color:var(--faint);--bg:var(--ctl);transition:background .15s,color .15s}
+.os button svg{width:14px;height:14px}
+.os button[aria-pressed=true]{background:var(--ctl);color:var(--ctl-t);box-shadow:0 0 0 1px var(--ctl-b)}
+.os button:not([aria-pressed=true]):hover{color:var(--muted)}
+.os button:active{transform:scale(.94)}
+.os button:focus-visible{outline:2px solid var(--accent)}
+.cta{display:flex;justify-content:center;margin-top:30px}
+.btn{display:inline-flex;align-items:center;gap:8px;height:44px;padding:0 22px;border-radius:10px;font-weight:600;font-size:15px;background:var(--btn);color:var(--on-btn);transition:transform .15s,opacity .15s}
+.btn:hover{opacity:.92;transform:translateY(-1px)}.btn:active{transform:scale(.97)}
+.agents{margin-top:44px}
+.agents p{margin:0 0 14px;font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--faint)}
+html[lang|=zh] .agents p{letter-spacing:.2em}
+.ags{display:flex;justify-content:center;gap:10px;margin:0;padding:0;list-style:none}
+.ags li{position:relative;display:flex;flex-direction:column;align-items:center;gap:6px;width:62px;animation:fade .5s both}
+.ags li:nth-child(2){animation-delay:.07s}.ags li:nth-child(3){animation-delay:.14s}.ags li:nth-child(4){animation-delay:.21s}.ags li:nth-child(5){animation-delay:.28s}.ags li:nth-child(6){animation-delay:.35s}.ags li:nth-child(7){animation-delay:.42s}
+.ag{display:grid;place-items:center;width:48px;height:48px;border:1px solid var(--border);border-radius:14px;background:color-mix(in srgb,var(--surface) 85%,transparent);outline:none;transition:border-color .2s,transform .2s}
+.ag svg{width:28px;height:28px}
+.ag .dsh{filter:brightness(1.45)}
+@media (prefers-color-scheme:light){.ag .dsh{filter:none}}
+.ags small{font-size:11px;color:var(--muted);white-space:nowrap}
+.fn2{display:none}
+@media (min-width:768px){.ags{gap:14px}.ags li{width:auto;min-width:64px}.ags small{font-size:12px}.sn{display:none}.fn2{display:inline}}
+.ag:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.ag[data-n]:hover,.ag[data-n]:focus-visible{border-color:var(--faint);transform:translateY(-2px)}
+@media (hover:hover) and (max-width:767px){.ag[data-n]:after{content:attr(data-n);position:absolute;bottom:calc(100% + 8px);left:50%;transform:translate(-50%,4px);padding:4px 9px;border-radius:7px;background:var(--btn);color:var(--on-btn);font-size:12px;font-weight:600;white-space:nowrap;opacity:0;pointer-events:none;transition:opacity .15s,transform .15s}
+.ag[data-n]:hover:after,.ag[data-n]:focus-visible:after{opacity:1;transform:translate(-50%,0)}}
+#start{scroll-margin-top:64px}
+@media (min-width:768px){#start .go{max-width:none;margin-top:40px;padding:28px;border:1px solid var(--border);border-radius:18px;background:linear-gradient(180deg,var(--surface),color-mix(in srgb,var(--surface) 40%,var(--bg)))}
+#start .gs+.gs{margin-top:24px;padding-top:24px;border-top:1px solid var(--border2)}}
+/* stage: Claude Code terminal + Baton App, same Session */
+.views{display:none}
+.stage{position:relative;height:609px;display:flex;justify-content:center;align-items:center;gap:40px;max-width:1000px;margin:56px auto 0;text-align:left;transition:opacity .35s}
+.stage.fade{opacity:0}
+/* Claude Code TUI */
+.term{flex:0 1 640px;min-width:0;height:609px;display:flex;flex-direction:column;border:1px solid var(--border);border-radius:14px;background:#0c0e12;box-shadow:0 30px 80px -20px rgba(0,0,0,.6);overflow:hidden;font:13px/1.5 var(--mono);color:#e6edf3}
+.bar{flex:none;display:flex;align-items:center;gap:7px;height:34px;padding:0 14px;border-bottom:1px solid #1d2128;background:#14171c;color:#6e7681;font:12px var(--sans)}
+.bar i{width:11px;height:11px;border-radius:50%;background:#2d323a}
+.bar span{flex:1;text-align:center;margin-right:40px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tb{flex:1;min-height:0;display:flex;flex-direction:column;padding:10px 16px 10px}
+.tlog{flex:1;min-height:0;overflow:hidden;display:flex;flex-direction:column}
+.tlog>*{flex:none;margin-top:.75em}
+.tlog>.hide{display:none}
+.tlog>.on{animation:tin .25s both}
+.cw{border:1px solid #d77757;border-radius:6px;padding:.45em 1.1em .5em;margin-top:0}
+.cw b{color:#d77757;font-weight:400}
+.cw p{margin:.7em 0 0;padding-left:2ch;color:#8b949e}
+.cw p+p{margin-top:.15em}
+.cu{color:#8b949e}
+.cl{position:relative;padding-left:2ch;white-space:pre-wrap;overflow-wrap:anywhere}
+.cl:before{content:"";position:absolute;left:.15ch;top:.5em;width:.62em;height:.62em;border-radius:50%;background:var(--d,#e6edf3)}
+.cl.ok{--d:#4eba65}.cl.err{--d:#ff6b80}
+.cl.run:before{animation:blink .9s steps(1) infinite}
+.cl .a{color:#8b949e}
+.cr{position:relative;padding-left:5ch;color:#8b949e}
+.cr:before{content:"";position:absolute;left:2.4ch;top:-.05em;width:.9ch;height:.85em;border:solid #6e7681;border-width:0 0 1px 1px}
+.cr .red{color:#ff6b80}.cr .grn{color:#4eba65}
+.cc{color:#b1b9f9}
+.tsp{flex:none;height:1.5em;margin-top:.6em;color:#d77757;white-space:nowrap;overflow:hidden;visibility:hidden}
+.tsp.on{visibility:visible}
+.tsp span{color:#6e7681}
+.tsp i{display:inline-block;width:1.4ch;font-style:normal}
+.tin{flex:none;margin-top:.5em;padding:.4em 1ch;border:1px solid #6e7681;border-radius:6px;color:#e6edf3;white-space:nowrap;overflow:hidden}
+.tin>b{font-weight:400;color:#8b949e;margin-right:1ch}
+.tin .cur{display:inline-block;width:.62em;height:1.15em;vertical-align:-.2em;background:#e6edf3}
+.hint{flex:none;padding:.3em 2ch 0;color:#6e7681;font-size:.92em}
+/* Baton App, drawn at 390x844 and scaled */
+.phone{flex:none;position:relative;width:291px;height:609px;padding:9px;border-radius:48px;background:linear-gradient(145deg,#353b45,#12161c 55%,#262b33);box-shadow:0 40px 90px -24px rgba(0,0,0,.75),inset 0 0 0 1px rgba(255,255,255,.08),0 0 70px -12px var(--glow)}
+.screen{position:relative;width:273px;height:591px;border-radius:40px;overflow:hidden;background:#0d1117}
+.app{position:absolute;left:0;top:0;width:390px;height:844px;transform:scale(.7);transform-origin:0 0;display:flex;flex-direction:column;font:16px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Noto Sans CJK SC",sans-serif;color:#e6edf3;background:#0d1117}
+.app .mono{font-family:"SF Mono",SFMono-Regular,ui-monospace,Menlo,monospace}
+.ios{flex:none;position:relative;display:flex;justify-content:space-between;align-items:center;height:54px;padding:6px 34px 0 46px;background:#161b22;font-weight:600;font-size:17px}
+.ios:after{content:"";position:absolute;left:50%;top:11px;width:124px;height:36px;margin-left:-62px;border-radius:20px;background:#000}
+.ios i{position:relative;display:block;width:26px;height:12.5px;border:1.5px solid rgba(230,237,243,.55);border-radius:4px}
+.ios i:after{content:"";position:absolute;inset:1.5px 4px 1.5px 1.5px;border-radius:1.5px;background:#e6edf3}
+.tbar{flex:none;display:flex;align-items:center;height:44px;padding:0 8px 0 12px;background:#161b22;box-shadow:inset 0 -1px #30363d}
+.tbar .lg{display:flex;align-items:center;gap:6px;font-size:17px;font-weight:600;flex:1}
+.tbar .lg svg{width:20px;height:21px}
+.tbar .ac{display:grid;place-items:center;width:44px;height:44px;color:#6e7681}
+.tbar .ac svg{width:22px;height:22px}
+.tbar .ns svg{width:26px;height:26px;padding:4px;border:1.5px solid currentColor;border-radius:50%}
+.crumb{flex:none;display:flex;align-items:center;gap:0;padding:7px 12px 7px 8px;background:#0d1117;border-bottom:1px solid #30363d;font-size:14px;line-height:1.8;white-space:nowrap}
+.crumb .ch{flex:none;padding:2px 7px;border:1px solid #30363d;border-radius:12px;background:#161b22;color:#c9d1d9;font-size:13px;line-height:1.5}
+.crumb .sp{padding:0 4px;color:#8b949e;font-size:15px}
+.crumb .ttl{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;font-size:15px;color:#c9d1d9}
+.crumb .rl{flex:none;display:inline-flex;align-items:center;gap:4px;margin-left:6px;padding:1px 6px;border:1px solid #30363d;border-radius:10px;background:#161b22;color:#8b949e;font-size:12px;line-height:20px}
+.crumb .rl svg{width:12px;height:12px}
+.crumb .rn{flex:none;display:grid;place-items:center;width:24px;height:24px;margin-left:6px;border:1px solid #30363d;border-radius:6px;background:#161b22;color:#8b949e}
+.crumb .rn svg{width:16px;height:16px}
+.msgs{flex:1;min-height:0;overflow:hidden;padding:10px 12px 4px}
+.mu{background:#2d333b;padding:10px 14px;margin:14px 0 8px;border-radius:12px;animation:tin .3s both}
+.mu .mt{font-size:16px;line-height:1.5;white-space:pre-wrap}
+.mu time{display:block;margin-top:4px;font-size:10px;color:#6e7681}
+.turn{flex:none}
+.tl{position:relative;padding:6px 0 6px 30px;animation:tin .3s both}
+.tl:before{content:"";position:absolute;left:9px;top:13px;width:7px;height:7px;border-radius:50%;background:#8b949e;z-index:2}
+.tl:after{content:"";position:absolute;left:12px;top:-2px;bottom:-2px;width:1px;background:#484f58}
+.tl:first-child:after{top:16px}
+.tl.at:before{top:21px}
+.tl.at:first-child:after{top:24px}
+.tl:last-child:after{bottom:calc(100% - 16px)}
+.tl:only-child:after{display:none}
+.tl.tool:before{background:#74c991}
+.tl.tool.err:before{background:#c74e39}
+.tl.tool.run:before{animation:blink .9s steps(1) infinite}
+.th{display:flex;align-items:baseline;gap:6px;font-size:15px;line-height:21px;white-space:nowrap;min-width:0}
+.th .cv{flex:none;color:#8b949e;display:inline-block}
+.th .cv.o{transform:rotate(90deg)}
+.th b{flex:none;color:#8b949e;font-weight:700}
+.th .ds{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;color:#8b949e;font-size:14px}
+.th .st{flex:none;font-size:13px;color:#8b949e}
+.th .st .p{color:#3fb950}.th .st .n{color:#f85149}
+.tk{color:#8b949e;font-size:15px;line-height:21px}
+.bd{display:grid;grid-template-columns:max-content 1fr;margin-top:4px;border:.8px solid #3d444d;border-radius:6px;overflow:hidden}
+.bd>div{display:contents}
+.bd>div+div>*{border-top:.8px solid #3d444d}
+.bd .k{color:#8b949e;opacity:.6;font-size:12px;padding:10px 10px 6px 6px}
+.bd .v{font-size:14px;line-height:1.5;padding:8px 8px 6px;white-space:pre-wrap;color:#e6edf3;min-width:0}
+.bd .v .red{color:#f85149}.bd .v .grn{color:#3fb950}
+.df{margin-top:4px;border:.8px solid #3d444d;border-radius:6px;overflow:hidden;font-size:13px;line-height:1.6}
+.df div{padding:0 8px;white-space:pre;overflow:hidden;text-overflow:ellipsis}
+.df .m{background:rgba(248,81,73,.15)}.df .a{background:rgba(63,185,80,.2)}
+.at{padding-top:12px;font-size:16px;line-height:1.55;overflow-wrap:break-word}
+.at code{background:#161b22;color:#d7ba7d;padding:2px 6px;border-radius:4px;font:14px "SF Mono",SFMono-Regular,ui-monospace,Menlo,monospace}
+.at .cur,.cur2{display:inline-block;width:3px;height:15px;margin-left:2px;background:#fff;border-radius:1px;vertical-align:-2px}
+.spn{flex:none;height:32px;display:flex;align-items:center;gap:10px;padding:0 16px 16px 18px;font-size:13px;color:#fff;visibility:hidden}
+.spn.on{visibility:visible}
+.spn i{font-style:normal;min-width:14px;text-align:center;line-height:16px;height:16px}
+.spn span{white-space:nowrap;line-height:16px;height:16px}
+.ccur{display:inline-block;width:3px;height:13px;background:#fff;border-radius:1px;vertical-align:-1px}
+.ib{flex:none;padding:8px 12px 34px;background:#0d1117;position:relative}
+.ib:after{content:"";position:absolute;left:50%;bottom:9px;width:134px;height:5px;margin-left:-67px;border-radius:3px;background:#e6edf3}
+.ir{display:flex;align-items:center;gap:4px;padding:4px;background:#161b22;border:1px solid #30363d;border-radius:22px}
+.ir .pl,.ir .sd{flex:none;display:grid;place-items:center;width:36px;height:36px;border-radius:50%;background:#30363d;color:#c9d1d9}
+.ir .ph{flex:1;padding:7px 5px;color:#6e7681;font-size:16px;line-height:22px}
+.ir .mc{flex:none;display:grid;place-items:center;width:36px;height:36px;color:#8b949e}
+.ir svg{width:18px;height:18px}
+.ir .sd{color:#6e7681}
+.ir .sd .sq{display:none}
+.ir .sd.stop{background:#6e7681;color:#e6edf3}
+.ir .sd.stop .sq{display:block}.ir .sd.stop .up{display:none}
+/* in-app notification (approved design) */
+.ia{position:absolute;left:8px;right:8px;top:62px;z-index:5;display:grid;grid-template-columns:38px 1fr;column-gap:10px;padding:11px 34px 12px 12px;border-radius:20px;background:rgba(36,41,47,.82);border:1px solid rgba(255,255,255,.08);box-shadow:0 8px 28px rgba(0,0,0,.45);-webkit-backdrop-filter:saturate(180%) blur(20px);backdrop-filter:saturate(180%) blur(20px);transform:translateY(-140%);opacity:0;transition:transform .32s cubic-bezier(.2,.9,.3,1.2),opacity .25s}
+.ia.on{transform:none;opacity:1}
+.ia .ic{grid-row:1/span 3;align-self:center;display:grid;place-items:center;width:38px;height:38px;border-radius:9px;background:#fff;color:#000}
+.ia .ic svg{width:28px;height:28px}
+.ia .hd{display:flex;align-items:baseline;gap:8px;min-width:0}
+.ia .ti{flex:1;min-width:0;font-weight:600;font-size:14.5px;line-height:1.3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ia .tm{flex:none;margin-left:auto;font-size:12px;color:#8b949e}
+.ia .sb{font-weight:600;font-size:14px;line-height:1.3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ia .by{font-size:14px;line-height:1.35;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.ia .x{position:absolute;top:7px;right:7px;width:24px;height:24px;display:grid;place-items:center;color:#8b949e;font-size:15px}
+@keyframes tin{from{opacity:0;transform:translateY(6px)}}
+/* sections */
+section{padding:96px 0 0}
+h2{text-wrap:balance;margin:0;font-size:clamp(30px,4.4vw,46px);line-height:1.12;letter-spacing:-.025em;font-weight:700}
+html[lang|=zh] h2{letter-spacing:0}
+.sub{margin:14px 0 0;max-width:620px;color:var(--muted);font-size:17px}
+.card{position:relative;border:1px solid var(--border);border-radius:18px;background:linear-gradient(180deg,var(--surface),color-mix(in srgb,var(--surface) 40%,var(--bg)));padding:28px;overflow:hidden}
+.card h3{margin:14px 0 6px;font-size:21px;letter-spacing:-.01em}
+.card p{text-wrap:pretty;margin:0;color:var(--muted);font-size:15px}
+.cmd{display:flex;align-items:center;gap:6px;margin-top:8px;padding:5px;border:1px solid var(--border);border-radius:12px;background:var(--code);color:var(--text);font:12.5px var(--mono)}
+.cmd code{flex:1;min-width:0;overflow-x:auto;white-space:nowrap;padding:8px 10px;scrollbar-width:none;-webkit-mask-image:linear-gradient(90deg,#000 calc(100% - 16px),transparent);mask-image:linear-gradient(90deg,#000 calc(100% - 16px),transparent)}
+.cmd code::-webkit-scrollbar{display:none}
+.cmd code:before{content:"$ ";color:var(--faint)}
+.cmd.ps code:before{content:"PS> "}
+.cmd code:before{margin-right:0}
+.copy{all:unset;flex:none;cursor:pointer;display:inline-flex;align-items:center;height:32px;padding:0 11px;border-radius:8px;background:var(--ctl);border:1px solid var(--ctl-b);color:var(--ctl-t);font:500 12.5px var(--sans)}
+.copy:hover{background:var(--ctl-h)}
+.copy:focus-visible{outline:2px solid var(--accent)}
+.copy.ok{color:var(--ok)}
+.plat{display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin-top:8px}
+.plat a{display:flex;flex-direction:column;align-items:center;gap:8px;min-width:0;padding:14px 2px 10px;border:1px solid var(--border);border-radius:12px;background:var(--bg);font-size:12px;color:var(--muted);white-space:nowrap;transition:border-color .15s,transform .15s,color .15s}
+.plat a:hover{border-color:var(--faint);color:var(--text)}
+.plat a:active{transform:scale(.94);opacity:.75}
+.plat a:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.plat .qr{display:none}
+@media (hover:hover) and (pointer:fine){.plat a{position:relative}
+.plat .qr{display:flex;flex-direction:column;align-items:center;gap:6px;position:absolute;bottom:calc(100% + 10px);left:50%;z-index:5;padding:10px;border:1px solid var(--border);border-radius:12px;background:#fff;color:#1f2328;font-size:12px;box-shadow:0 8px 24px rgba(0,0,0,.25);opacity:0;visibility:hidden;transform:translate(-50%,4px);transition:opacity .15s,transform .15s,visibility .15s;pointer-events:none}
+.plat .qr img{width:132px;height:132px}
+.plat a:hover .qr,.plat a:focus-visible .qr{opacity:1;visibility:visible;transform:translate(-50%,0)}
+@media (max-width:767px){.plat a:first-child .qr{left:0;transform:translateY(4px)}.plat a:first-child:hover .qr,.plat a:first-child:focus-visible .qr{transform:none}}}
+.plat svg{width:28px;height:28px;color:var(--text)}
+/* features */
+.feats{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:40px}
+.feat{padding:0;display:flex;flex-direction:column}
+.feat .txt{padding:26px 28px 28px}
+.feat h3{margin:0 0 6px;display:flex;align-items:center;gap:10px}
+.feat h3 small{font:500 11px var(--mono);color:var(--faint);padding:2px 7px;border:1px solid var(--border);border-radius:6px;letter-spacing:0}
+/* developer tools: drawn from the App's own CSS (desktop sizes, dark theme) */
+.vis{position:relative;height:380px;margin:20px 20px 0;border:1px solid var(--border);border-bottom:0;border-radius:12px 12px 0 0;background:#0d1117;overflow:hidden;display:flex;flex-direction:column;font:14px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC",sans-serif;color:#e6edf3}
+.vis:after{content:"";position:absolute;inset:auto 0 0;height:36px;background:linear-gradient(transparent,#0d1117);pointer-events:none;z-index:3}
+.vis svg{flex:none}
+.hb{flex:none;display:flex;align-items:center;gap:6px;min-height:44px;padding:6px 8px 6px 6px;border-bottom:1px solid #30363d;background:#161b22;white-space:nowrap}
+.hb .bk{display:grid;place-items:center;width:28px;height:28px;color:#8b949e}
+.hb .bk svg,.hb .ws svg{width:20px;height:20px}
+.hb .pi{padding:1px 7px;border:1px solid #484f58;border-radius:12px;background:#0d1117;color:#c9d1d9;font-size:12px;line-height:1.8}
+.hb .gap{flex:1}
+.hb .ws{display:grid;place-items:center;width:28px;height:28px;color:#6e7681}
+.hb .br{display:inline-flex;align-items:center;gap:4px;color:#c9d1d9;font-size:13px}
+.hb .br svg{width:13px;height:13px;color:#8b949e}
+.hb .sep{color:#8b949e;font-size:13px;margin:0 -2px}
+.fr{flex:none;display:flex;align-items:center;gap:11px;min-height:42px;padding:8px 16px;border-bottom:1px solid #21262d}
+.fr .fi{display:grid;place-items:center;width:22px;height:22px;color:#d7ba7d}
+.fr .fi svg{width:20px;height:20px}
+.fr .fn{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fr .cv{color:#6e7681;font-size:22px;line-height:1}
+.in .fr{animation:fade .4s both}
+.in .fr:nth-child(3){animation-delay:.05s}.in .fr:nth-child(4){animation-delay:.1s}.in .fr:nth-child(5){animation-delay:.15s}.in .fr:nth-child(6){animation-delay:.2s}.in .fr:nth-child(7){animation-delay:.25s}.in .fr:nth-child(8){animation-delay:.3s}
+.in .fr.tap{animation:fade .4s .1s both,tap 2.6s 1.2s ease-in-out infinite}
+@keyframes tap{0%,30%,100%{background:transparent}10%,20%{background:#161b22}}
+/* terminal page */
+.tsel{display:inline-flex;align-items:center;gap:8px;padding:1px 10px;border:1px solid #484f58;border-radius:12px;background:#0d1117;color:#c9d1d9;font-size:12px;line-height:1.8}
+.tsel svg{width:14px;height:14px;color:#8b949e}
+.xt{position:relative;flex:1;min-height:0;padding:6px 8px;font:13px/1.35 Menlo,Monaco,Consolas,monospace;color:#e6edf3;white-space:pre;overflow:hidden}
+.xt .b{color:#58a6ff;font-weight:700}
+.xt .g{color:#3fb950}
+.xt .ty{display:inline-block;vertical-align:bottom;overflow:hidden;width:11ch}
+.in .xt .ty{animation:type 1.1s steps(11) .3s both}
+.xt .o{animation:fade .3s both;animation-play-state:paused}
+.in .xt .o{animation-play-state:running}
+.xt .o1{animation-delay:1.6s}.xt .o2{animation-delay:1.8s}.xt .o3{animation-delay:1.95s}.xt .o4{animation-delay:2.1s}
+.xt .cur{display:inline-block;width:.6em;height:1.15em;vertical-align:-.2em;background:#e6edf3;animation:blink 1s steps(1) infinite}
+.joy{position:absolute;right:10px;bottom:6px;display:grid;grid-template:repeat(3,30px)/repeat(3,30px);gap:2px;padding:4px;border:1px solid rgba(139,148,158,.4);border-radius:50%;background:rgba(13,17,23,.6);color:#e6edf3;font:17px/30px var(--sans);text-align:center;opacity:0;transform:scale(.8)}
+.joy b{grid-area:2/2;margin:11px;border-radius:50%;background:#8b949e}
+.joy .u{grid-area:1/2}.joy .l{grid-area:2/1}.joy .r{grid-area:2/3;border-radius:8px;background:rgba(56,139,253,.6)}.joy .d{grid-area:3/2}
+.in .joy{animation:joy 3.6s 2.6s ease both infinite}
+@keyframes joy{0%{opacity:0;transform:scale(.8)}12%,80%{opacity:1;transform:none}100%{opacity:0;transform:scale(.9)}}
+.kb{position:relative;z-index:4;flex:none;display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:4px;padding:5px 6px;border-top:1px solid #30363d;background:#0d1117}
+.kb span{display:grid;place-items:center;height:32px;border:1px solid #30363d;border-radius:7px;background:#161b22;color:#c9d1d9;font-size:12px}
+.vis.kbv:after{display:none}
+/* localhost preview */
+.pv{flex:none;display:flex;align-items:center;gap:6px;height:44px;padding:0 8px;border-bottom:1px solid #30363d;background:#161b22;color:#8b949e}
+.pv svg{width:18px;height:18px}
+.pv .uf{flex:1;min-width:0;display:flex;align-items:center;gap:6px;height:30px;padding:0 6px 0 10px;border:1px solid #30363d;border-radius:8px;background:#0d1117;color:#e6edf3;font-size:13px;white-space:nowrap;overflow:hidden}
+.pv .uf span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis}
+.prog{flex:none;height:2px;background:#58a6ff;transform-origin:left;opacity:0}
+.in .prog{animation:load 1.2s cubic-bezier(.3,.6,.2,1) .2s both}
+.page{flex:1;padding:16px;background:linear-gradient(180deg,#0f1b2d,#0d1117 70%)}
+.page>*{animation:fade .5s both;animation-play-state:paused}
+.in .page>*{animation-play-state:running}
+.in .page .nv{animation-delay:1.1s}.in .page .pg{animation-delay:1.3s}
+.page .nv{display:flex;justify-content:space-between;align-items:center;font-size:14px;font-weight:700}
+.page .nv span{display:flex;gap:6px}
+.page .nv i{display:block;width:26px;height:6px;border-radius:3px;background:#21262d}
+.pg{display:grid;grid-template-columns:1.25fr 1fr;gap:12px;margin-top:16px}
+.pg .bx{border:1px solid #21262d;border-radius:10px;padding:12px;background:#161b22}
+.pg h4{margin:0 0 8px;font-size:13px}
+.ln{height:7px;border-radius:4px;background:#21262d;margin:8px 0}
+.sum{display:flex;justify-content:space-between;gap:8px;font-size:12px;color:#8b949e;margin:5px 0}
+.sum b{color:#e6edf3}
+.pay{margin-top:10px;height:30px;border-radius:7px;background:linear-gradient(90deg,#1f6feb,#8957e5);color:#fff;font-size:12px;font-weight:600;display:grid;place-items:center}
+/* git page */
+.cb{flex:none;display:flex;flex-direction:column;gap:8px;padding:10px 12px;border-bottom:1px solid #30363d}
+.cb .ci{padding:7px 10px;border:1px solid #30363d;border-radius:8px;background:#010409;color:#6e7681;font-size:14px;line-height:20px}
+.cb .ca{display:grid;place-items:center;height:34px;border-radius:8px;background:#238636;color:#fff;font-size:14px;font-weight:500}
+.in .cb .ca{animation:glow 2.4s 1.6s ease-in-out infinite}
+.sh{flex:none;display:flex;align-items:center;gap:7px;height:40px;padding:0 4px 0 12px;background:#1c2128;font-size:14px;font-weight:500}
+.sh svg{width:15px;height:15px}
+.sh .ct{display:inline-grid;place-items:center;min-width:23px;height:23px;border-radius:12px;background:#30363d;color:#c9d1d9;font-size:12px;font-weight:400}
+.sh .gap{flex:1}
+.sh .ac{display:grid;place-items:center;width:32px;color:#8b949e}
+.sh .ac svg{width:17px;height:17px}
+.sh .rp{margin-right:6px;padding:1px 8px;border:1px solid #484f58;border-radius:12px;background:#0d1117;color:#c9d1d9;font-size:12px;font-weight:400;line-height:1.8}
+.gf{flex:none;display:flex;align-items:center;gap:9px;min-height:38px;padding:0 4px 0 15px;border-top:1px solid #21262d}
+.gf svg{width:20px;height:20px}
+.gf .nm{white-space:nowrap}
+.gf .dr{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#8b949e;font-size:11px}
+.gf .st{width:20px;text-align:center;font-size:13px;font-weight:500;color:#d29922}
+.gf .st.a{color:#3fb950}
+.gf .ac{display:grid;place-items:center;width:32px;color:#8b949e}
+.gf .ac svg{width:17px;height:17px}
+.gc{position:relative;flex:none;display:flex;align-items:center;gap:4px;height:34px;padding:0 12px 0 36px;white-space:nowrap}
+.gc .sj{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis}
+.gc .au{color:#8b949e;font-size:12px}
+.gc .tm{color:#8b949e;font-size:11px;margin-left:4px}
+.gc .rf{padding:0 6px;border:1px solid rgba(88,166,255,.5);border-radius:8px;background:rgba(88,166,255,.18);color:#58a6ff;font-size:10.5px;line-height:14px;font-weight:600}
+.gsv{position:absolute;left:4px;top:0;width:28px;height:187px;overflow:visible}
+.gsv path{fill:none;stroke-width:2;stroke-linecap:round}
+.in .gsv path{stroke-dasharray:200;animation:draw 1.4s ease both}
+.in .gsv .p2{animation-delay:.4s}
+.gsv circle{transform-box:fill-box;transform-origin:center}
+.in .gsv circle{animation:pop .35s both}
+.in .gsv circle:nth-of-type(6){animation-delay:0s}.in .gsv circle:nth-of-type(2){animation-delay:.2s}.in .gsv circle:nth-of-type(3){animation-delay:.4s}.in .gsv circle:nth-of-type(4){animation-delay:.6s}.in .gsv circle:nth-of-type(5){animation-delay:.8s}
+.gwrap{position:relative;flex:none}
+/* reveal */
+.js .rv{opacity:0;transform:translateY(18px);transition:opacity .7s cubic-bezier(.2,.7,.2,1),transform .7s cubic-bezier(.2,.7,.2,1)}
+.js .rv.in{opacity:1;transform:none}
+.feats .rv:nth-child(2n){transition-delay:.08s}
+/* comparison */
+.cmp{margin-top:40px;border:1px solid var(--border);border-radius:18px;background:linear-gradient(180deg,var(--surface),color-mix(in srgb,var(--surface) 40%,var(--bg)));overflow:visible}
+.cmp table{width:100%;border-collapse:separate;border-spacing:0;table-layout:fixed}
+.cmp th,.cmp td{padding:13px 6px;text-align:center;border-bottom:1px solid var(--border2);font-size:15px}
+.cmp tbody tr:last-child>*{border-bottom:0}
+.cmp thead th{font-weight:600;font-size:14px;color:var(--muted);padding:16px 6px}
+.cmp thead th.b{color:var(--text);font-size:16px;border-radius:12px 12px 0 0}
+.cmp tbody th{text-align:left;font-weight:500;padding-left:22px}.cmp thead th:first-child{width:24%}
+.cmp .b{background:color-mix(in srgb,var(--accent2) 10%,transparent);box-shadow:inset 1.5px 0 color-mix(in srgb,var(--accent2) 45%,transparent),inset -1.5px 0 color-mix(in srgb,var(--accent2) 45%,transparent)}.cmp thead th.b{box-shadow:inset 1.5px 1.5px color-mix(in srgb,var(--accent2) 45%,transparent),inset -1.5px 0 color-mix(in srgb,var(--accent2) 45%,transparent)}.cmp tr.tot td.b{box-shadow:inset 1.5px -1.5px color-mix(in srgb,var(--accent2) 45%,transparent),inset -1.5px 0 color-mix(in srgb,var(--accent2) 45%,transparent)}.cmp .lg{width:17px;height:17px;margin:-3px 6px 0 0;vertical-align:middle}.cmp tbody tr:not(.tot):hover>*{background-color:color-mix(in srgb,var(--text) 3%,transparent)}.cmp tbody tr:not(.tot):hover>.b{background-color:color-mix(in srgb,var(--accent2) 14%,transparent)}
+.cmp tr.tot .b{border-radius:0 0 12px 12px}
+.cmp td{position:relative;line-height:1}
+.cmp td.y:before,.cmp td.p:before,.cmp td.n:before,.cmp-note i:before{content:"";display:inline-block;width:20px;height:20px;vertical-align:middle;background:currentColor;-webkit-mask:var(--m) center/contain no-repeat;mask:var(--m) center/contain no-repeat}.cmp-note i:before{width:15px;height:15px;margin:-2px 2px 0 0}.cmp .y,.cmp-note .y{color:var(--green);--m:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Cpath fill-rule='evenodd' d='M10 1a9 9 0 1 0 0 18a9 9 0 0 0 0-18zm4.9 6.2l-1.4-1.4-5 5.2-2-2-1.4 1.4 3.4 3.4z'/%3E%3C/svg%3E")}.cmp .p,.cmp-note .p{color:var(--amber);--m:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Cpath d='M10 1a9 9 0 1 0 0 18a9 9 0 0 0 0-18zm0 2v14a7 7 0 0 1 0-14z'/%3E%3C/svg%3E")}.cmp .n,.cmp-note .n{color:var(--faint);--m:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Cpath d='M10 1a9 9 0 1 0 0 18a9 9 0 0 0 0-18zm0 2a7 7 0 1 1 0 14a7 7 0 0 1 0-14z'/%3E%3C/svg%3E")}.cmp .n:before,.cmp-note .n:before{opacity:.85}
+.cmp td.sz{font:600 14px var(--sans);color:var(--muted)}.cmp td.sz small{font-size:11px;font-weight:500}.cmp td.b.sz{color:var(--text);font-size:17px;font-weight:750}
+.cmp tr.tot>*{font-size:18px;font-weight:700;padding:16px 6px;color:var(--text)}
+.cmp tr.tot td small{font-size:12px;font-weight:500;color:var(--faint)}.cmp tr.tot th{padding-left:22px;text-align:left}
+
+.cmp td[data-en]{cursor:help}
+.cmp td[data-en]:hover:after,.cmp td[data-en]:focus:after{content:attr(data-en);position:absolute;z-index:5;left:50%;bottom:calc(100% - 4px);transform:translateX(-50%);width:max-content;max-width:180px;padding:6px 9px;border-radius:8px;background:var(--surface2);border:1px solid var(--border);color:var(--text);font:500 12px/1.4 var(--sans);text-align:left;box-shadow:0 6px 20px rgba(0,0,0,.25)}
+html[lang|=zh] .cmp td[data-zh]:hover:after,html[lang|=zh] .cmp td[data-zh]:focus:after{content:attr(data-zh)}
+.cmp td[data-en]:focus{outline:none;box-shadow:inset 0 0 0 2px var(--accent)}
+.cmp td.b[data-en]:hover:after,.cmp td.b[data-en]:focus:after{left:0;transform:none}.cmp td:nth-last-child(-n+2)[data-en]:hover:after,.cmp td:nth-last-child(-n+2)[data-en]:focus:after{left:auto;right:0;transform:none}@media (forced-colors:active){.cmp td:before,.cmp-note i:before{forced-color-adjust:none;background:CanvasText}}
+.js .cmp.rv td:before{transform:scale(0);transition:transform .4s cubic-bezier(.34,1.56,.64,1) calc(var(--r,0)*45ms + .15s)}.js .cmp.rv.in td:before{transform:none}@media (prefers-reduced-motion:reduce){.js .cmp.rv td:before{transform:none;transition:none}}
+.cmp-note{margin:14px 4px 0;color:var(--faint);font-size:13px;line-height:1.8}
+@media (max-width:640px){.cmp td:before{width:17px!important;height:17px!important}.cmp .lg{display:none}.cmp{margin-top:28px;border-radius:14px}.cmp th,.cmp td{padding:10px 1px;font-size:15px}.cmp tbody th{padding:10px 4px 10px 11px;width:38%;font-size:12.5px;line-height:1.3}.cmp thead th:first-child{width:38%}.cmp thead th{font-size:11px;padding:12px 1px}.cmp thead th.b{font-size:12px}.cmp td.sz{font-size:11px;line-height:1.25}.cmp td.sz small{display:block;font-size:9.5px}.cmp tr.tot th{padding-left:11px}.cmp tr.tot>*{font-size:15px}.cmp tr.tot td small{font-size:10px}}
+/* footer */
+footer{margin-top:110px;border-top:1px solid var(--border2);padding:28px 0 40px;font-size:14px;color:var(--muted)}
+.foot{display:flex;align-items:center;gap:22px;flex-wrap:wrap}
+.foot a:hover{color:var(--text)}
+.foot .sp{flex:1}
+.foot .brand{font-size:15px;color:var(--text)}
+.foot .brand svg{width:20px;height:20px}
+.foot .gh{width:auto;height:auto;gap:6px;display:inline-flex}
+.foot .gh svg{width:16px;height:16px}
+@keyframes blink{50%{opacity:0}}
+@keyframes pulse{50%{opacity:.35}}
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes dash{to{stroke-dashoffset:-20}}
+@keyframes type{from{width:0}}
+@keyframes fade{from{opacity:0;transform:translateY(4px)}}
+@keyframes hl{from{background:transparent}}
+@keyframes load{0%{transform:scaleX(0);opacity:1}85%{transform:scaleX(1);opacity:1}100%{opacity:0}}
+@keyframes draw{from{stroke-dashoffset:240}to{stroke-dashoffset:0}}
+@keyframes pop{from{transform:scale(0)}}
+@keyframes glow{50%{box-shadow:0 0 0 4px rgba(46,160,67,.25),0 0 22px rgba(46,160,67,.35)}}
+ /* responsive */
+@media (max-width:1000px){.stage{gap:24px}}
+@media (max-width:820px){.feats{grid-template-columns:1fr}.links{display:none}}
+@media (max-width:760px){
+.stage{flex-direction:column;height:auto;gap:20px;max-width:440px;margin-top:40px}
+.term{flex:none;width:100%;height:520px;font-size:10.5px}
+.tb{padding:10px 10px 8px}
+.js .stage{display:block;height:609px}
+.js .views{display:flex;justify-content:center;gap:6px;margin-top:18px}
+.views button{all:unset;cursor:pointer;padding:5px 13px;border:1px solid var(--border);border-radius:999px;font-size:12.5px;color:var(--faint);transition:color .3s,background .3s,border-color .3s}
+.views button[aria-pressed=true]{color:var(--text);background:var(--surface);border-color:var(--faint)}
+.views button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.views button:active{transform:scale(.96)}
+.js .stage .term,.js .stage .phone{position:absolute;transition:opacity .6s,transform .6s cubic-bezier(.2,.7,.2,1)}
+.js .stage .term{left:0;right:0;top:70px;height:450px}
+.js .stage .phone{left:50%;top:0;margin-left:-145.5px;opacity:0;transform:translateX(48px) scale(.96)}
+.js .stage.v-phone .term{opacity:0;transform:translateX(-48px) scale(.96)}
+.js .stage.v-phone .phone{opacity:1;transform:none}
+}
+@media (max-width:640px){
+.wrap{padding:0 18px}.nav{gap:12px}
+.hero{padding:48px 0 24px}
+.card.feat{padding:0}
+.cmd{font-size:12.5px}
+section{padding-top:76px}
+.card{padding:22px 18px}
+.go{margin-top:26px}.ags{gap:6px}.ags li{width:44px}.ag{width:44px;height:44px;border-radius:12px}.ag svg{width:26px;height:26px}.ags small{font-size:10px;letter-spacing:-.01em}.cta{margin-top:26px}.agents{margin-top:38px}.os button{padding:0 6px}.go .cmd{font-size:12px}.go .cmd code{padding:8px 6px}.plat{gap:5px}.plat a{padding:11px 0 8px;gap:6px;font-size:10.5px;letter-spacing:-.01em;border-radius:10px}.plat svg{width:24px;height:24px}
+.feat .txt{padding:22px 20px 24px}
+.vis{margin:16px 14px 0;height:370px}
+.foot{gap:16px 20px}.foot .sp{flex-basis:100%;height:0}
+}
+@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}*,*:before,*:after{animation:none!important;transition:none!important}.js .rv{opacity:1;transform:none}}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+<symbol id="logo" viewBox="0 0 720 720"><g transform="translate(2 -147)" fill="currentColor"><path d="M535.84 744.22A81.92 81.92 0 0 0 634.88 664.1V344a81.92 81.92 0 0 0-61.56-79.36l-143.36-36.76C378.12 214.63 327.68 253.75 327.68 307.24v116.53a20.48 20.48 0 1 0 40.96 0V307.24a40.96 40.96 0 0 1 51.14-39.67l143.36 36.76A40.96 40.96 0 0 1 593.92 344v320.1a40.96 40.96 0 0 1-49.52 40.06l-85.46-18.27a20.48 20.48 0 0 0-8.56 40.06l85.46 18.27zM180.96 285.35A81.92 81.92 0 0 0 81.92 365.47v320.1a81.92 81.92 0 0 0 61.56 79.34l143.36 36.76c51.81 13.29 102.28-25.85 102.28-79.34V628.53a20.48 20.48 0 1 0-40.96 0v93.78a40.96 40.96 0 0 1-51.14 39.67l-143.36-36.76A40.96 40.96 0 0 1 122.88 685.57V365.47a40.96 40.96 0 0 1 49.52-40.06l85.46 18.25a20.48 20.48 0 0 0 8.56-40.06l-85.46-18.25z"/><path d="M272.71 610.15l216-187a24 24 0 0 0-31.42-36.29l-216 187a24 24 0 0 0 31.42 36.29z"/></g></symbol>
+<symbol id="gh" viewBox="0 0 16 16"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></symbol>
+<symbol id="phone" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><rect x="6" y="2.5" width="12" height="19" rx="3"/><path d="M10.5 18.5h3"/></g></symbol>
+<symbol id="laptop" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4.5" width="16" height="11" rx="2"/><path d="M2 19.5h20"/></g></symbol>
+<symbol id="globe" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.6 3.7 5.6 3.7 9s-1.2 6.4-3.7 9c-2.5-2.6-3.7-5.6-3.7-9S9.5 5.6 12 3z"/></g></symbol>
+<symbol id="lock" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="4.5" y="10.5" width="15" height="10" rx="2.5"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/></g></symbol>
+<symbol id="p-apple" viewBox="0 0 24 24"><path fill="currentColor" d="M12.152 6.896c-.948 0-2.415-1.078-3.96-1.04-2.04.027-3.91 1.183-4.961 3.014-2.117 3.675-.546 9.103 1.519 12.09 1.013 1.454 2.208 3.09 3.792 3.039 1.52-.065 2.09-.987 3.935-.987 1.831 0 2.35.987 3.96.948 1.637-.026 2.676-1.48 3.676-2.948 1.156-1.688 1.636-3.325 1.662-3.415-.039-.013-3.182-1.221-3.22-4.857-.026-3.04 2.48-4.494 2.597-4.559-1.429-2.09-3.623-2.324-4.39-2.376-2-.156-3.675 1.09-4.61 1.09zM15.53 3.83c.843-1.012 1.4-2.427 1.245-3.83-1.207.052-2.662.805-3.532 1.818-.78.896-1.454 2.338-1.273 3.714 1.338.104 2.715-.688 3.559-1.701"/></symbol>
+<symbol id="p-mac" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12.5" rx="1.8" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M1.5 19.5h21" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><use href="#p-apple" x="8.4" y="5.7" width="7.2" height="8.6"/></symbol>
+<symbol id="p-android" viewBox="0 0 24 24"><path fill="currentColor" d="M17.6 9.48l1.84-3.18c.16-.31.04-.69-.26-.85a.64.64 0 0 0-.83.22l-1.88 3.24a11.46 11.46 0 0 0-8.94 0L5.65 5.67a.64.64 0 0 0-.87-.2c-.28.18-.37.54-.22.83L6.4 9.48A10.78 10.78 0 0 0 1 18h22a10.78 10.78 0 0 0-5.4-8.52zM7 15.25a1.25 1.25 0 1 1 0-2.5 1.25 1.25 0 0 1 0 2.5zm10 0a1.25 1.25 0 1 1 0-2.5 1.25 1.25 0 0 1 0 2.5z"/></symbol>
+<symbol id="p-win" viewBox="0 0 24 24"><path fill="currentColor" d="M1 4.2l9-1.25v8.6H1zm10.2-1.4L23 1.2v10.35H11.2zM1 12.45h9v8.6l-9-1.25zm10.2 0H23V22.8l-11.8-1.6z"/></symbol>
+<symbol id="p-linux" viewBox="0 0 24 24"><path fill="currentColor" d="M12 1.6c-2.7 0-4.1 2.2-4.1 4.9 0 1.6-.6 2.9-1.7 4.4C4.9 12.8 3.8 15 3.8 17c0 2.9 3.7 4.6 8.2 4.6s8.2-1.7 8.2-4.6c0-2-1.1-4.2-2.4-6.1-1.1-1.5-1.7-2.8-1.7-4.4 0-2.7-1.4-4.9-4.1-4.9z"/><ellipse cx="12" cy="15.4" rx="3.7" ry="4.7" style="fill:var(--bg)"/><ellipse cx="10.5" cy="6.4" rx="1" ry="1.25" style="fill:var(--bg)"/><ellipse cx="13.5" cy="6.4" rx="1" ry="1.25" style="fill:var(--bg)"/><path fill="#e3b341" d="M10.4 8.5h3.2L12 10.4z"/><ellipse cx="8.2" cy="21.3" rx="2.6" ry="1.2" fill="#e3b341"/><ellipse cx="15.8" cy="21.3" rx="2.6" ry="1.2" fill="#e3b341"/></symbol>
+<symbol id="i-back" viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+<symbol id="i-down" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+<symbol id="i-minus" viewBox="0 0 24 24"><path d="M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+<symbol id="i-folder" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9V6a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9Z"/><path d="M3 9h18"/></g></symbol>
+<symbol id="i-branch" viewBox="0 0 1024 1024"><g fill="currentColor"><path d="M320 320c-70.6 0-128-57.4-128-128s57.4-128 128-128 128 57.4 128 128-57.4 128-128 128zm0-192c-35.2 0-64 28.8-64 64s28.8 64 64 64 64-28.8 64-64-28.8-64-64-64zM320 960c-70.6 0-128-57.4-128-128s57.4-128 128-128 128 57.4 128 128-57.4 128-128 128zm0-192c-35.2 0-64 28.8-64 64s28.8 64 64 64 64-28.8 64-64-28.8-64-64-64z"/><path d="M320 768c-17.6 0-32-14.4-32-32V288c0-17.6 14.4-32 32-32s32 14.4 32 32v448c0 17.6-14.4 32-32 32zM704 448c-70.6 0-128-57.4-128-128s57.4-128 128-128 128 57.4 128 128-57.4 128-128 128zm0-192c-35.2 0-64 28.8-64 64s28.8 64 64 64 64-28.8 64-64-28.8-64-64-64z"/><path d="M320 768c-17.6 0-32-14.4-32-32 0-60 24.2-105 71.8-133.8 38.8-23.4 88.2-33.6 136-43.6 109.2-22.6 176-41.6 176-142.6 0-17.6 14.4-32 32-32s32 14.4 32 32c0 70-26.4 122.4-78.4 155.8-43 27.6-96.8 38.8-148.8 49.4-100 20.8-156.6 36.4-156.6 114.8 0 17.6-14.4 32-32 32z"/></g></symbol>
+<symbol id="f-ts" viewBox="0 0 16 16"><path fill="#0288d1" d="M2 2v12h12V2zm4 6h3v1H8v4H7V9H6zm5 0h2v1h-2v1h1a1.003 1.003 0 0 1 1 1v1a1.003 1.003 0 0 1-1 1h-2v-1h2v-1h-1a1.003 1.003 0 0 1-1-1V9a1.003 1.003 0 0 1 1-1"/></symbol>
+<symbol id="f-md" viewBox="0 0 32 32"><path fill="#42a5f5" d="m14 10-4 3.5L6 10H4v12h4v-6l2 2 2-2v6h4V10zm12 6v-6h-4v6h-4l6 8 6-8z"/></symbol>
+<symbol id="f-json" viewBox="0 -960 960 960"><path fill="#f9a825" d="M560-160v-80h120q17 0 28.5-11.5T720-280v-80q0-38 22-69t58-44v-14q-36-13-58-44t-22-69v-80q0-17-11.5-28.5T680-720H560v-80h120q50 0 85 35t35 85v80q0 17 11.5 28.5T840-560h40v160h-40q-17 0-28.5 11.5T800-360v80q0 50-35 85t-85 35zm-280 0q-50 0-85-35t-35-85v-80q0-17-11.5-28.5T120-400H80v-160h40q17 0 28.5-11.5T160-600v-80q0-50 35-85t85-35h120v80H280q-17 0-28.5 11.5T240-680v80q0 38-22 69t-58 44v14q36 13 58 44t22 69v80q0 17 11.5 28.5T280-240h120v80z"/></symbol>
+<symbol id="f-git" viewBox="0 0 32 32"><path fill="#e64a19" d="M13.172 2.828 11.78 4.22l1.91 1.91 2 2A2.986 2.986 0 0 1 20 10.81a3.25 3.25 0 0 1-.31 1.31l2.06 2a2.68 2.68 0 0 1 3.37.57 2.86 2.86 0 0 1 .88 2.117 3.02 3.02 0 0 1-.856 2.109A2.9 2.9 0 0 1 23 19.81a2.93 2.93 0 0 1-2.13-.87 2.694 2.694 0 0 1-.56-3.38l-2-2.06a3 3 0 0 1-.31.12V20a3 3 0 0 1 1.44 1.09 2.92 2.92 0 0 1 .56 1.72 2.88 2.88 0 0 1-.878 2.128 2.98 2.98 0 0 1-2.048.871 2.981 2.981 0 0 1-2.514-4.719A3 3 0 0 1 16 20v-6.38a2.96 2.96 0 0 1-1.44-1.09 2.9 2.9 0 0 1-.56-1.72 2.9 2.9 0 0 1 .31-1.31l-3.9-3.9-7.579 7.572a4 4 0 0 0-.001 5.658l10.342 10.342a4 4 0 0 0 5.656 0l10.344-10.344a4 4 0 0 0 0-5.656L18.828 2.828a4 4 0 0 0-5.656 0"/></symbol>
+<symbol id="rt-claude" viewBox="0 0 1024 1024"><path fill="#D97757" d="M229.0688 665.4464l183.1424-102.7072 3.1232-8.9088-3.1232-4.9664h-8.9088l-30.6688-1.8432-104.704-2.816-90.7776-3.7888-87.9104-4.7104-22.1696-4.7104-20.7872-27.3408 2.1504-13.6704 18.6368-12.4416 26.624 2.304 58.9824 3.9936 88.3712 6.144 64.1024 3.7888 95.0272 9.8816h15.104l2.1504-6.0928-5.2224-3.7888-3.9936-3.7888-91.4944-61.952-99.0208-65.4848-51.8144-37.7344-28.1088-19.0464-14.1312-17.92-6.144-39.1168 25.4464-28.0064 34.2016 2.304 8.7552 2.3552 34.6624 26.624 74.0352 57.2928L391.2704 380.416l14.1824 11.776 5.632-3.9936 0.7168-2.816-6.3488-10.6496-52.5824-94.9248-56.1152-96.6144-24.9856-40.0384-6.6048-24.0128c-2.5088-9.216-3.8912-18.7392-4.0448-28.2624l29.0304-39.3216 16.0256-5.2224 38.656 5.2224 16.2816 14.1312 24.064 54.8864 38.8608 86.4768L484.352 324.608l17.7152 34.8672 9.4208 32.3072 3.5328 9.8816h6.144v-5.6832l4.9664-66.2016 9.216-81.3056 8.9088-104.5504 3.1232-29.4912 14.592-35.328 28.9792-19.0976 22.6816 10.8544 18.6368 26.5728-2.6112 17.2032-11.1104 71.8336-21.7088 112.64-14.1312 75.3664h8.2432l9.4208-9.3696 38.1952-50.688 64.1024-80.0768 28.3136-31.7952 32.9728-35.072 21.248-16.7424h40.0896l29.4912 43.8272-13.2096 45.2608-41.2672 52.2752-34.2016 44.288-49.0496 65.9456-30.6688 52.7872 2.816 4.2496 7.2704-0.768 110.7968-23.5008 59.8528-10.8544 71.424-12.2368 32.3072 15.0528 3.5328 15.3088-12.7488 31.3344-76.3904 18.8416-89.6 17.92-133.4272 31.5392-1.6384 1.1776 1.8944 2.3552 60.1088 5.6832 25.7024 1.3824h62.9248l117.1968 8.7552 30.6688 20.2752 18.3808 24.7808-3.072 18.8416-47.1552 24.064-63.6416-15.104-148.5824-35.328-50.8928-12.7488h-7.0656v4.2496l42.3936 41.4208 77.824 70.2464 97.3312 90.4192 4.9152 22.4256-12.4928 17.664-13.2096-1.8944-85.5552-64.3072-33.024-28.9792-74.752-62.8736h-4.9664v6.6048l17.2032 25.1904 90.9824 136.6016 4.7104 41.8816-6.6048 13.7216-23.6032 8.2432-25.9072-4.7104-53.2992-74.7008-54.8864-84.0704-44.3392-75.4176-5.4272 3.1232-26.1632 281.4976-12.2368 14.336-28.2624 10.8544-23.552-17.8688-12.4928-28.9792 12.4928-57.2928 15.104-74.6496 12.2368-59.392 11.1104-73.728 6.6048-24.5248-.4608-1.6384-5.4272.7168-55.6544 76.3392-84.5824 114.2784-66.9696 71.5776-16.0768 6.3488-27.8016-14.336 2.6112-25.7024 15.5648-22.8352 92.672-117.8112 55.8592-73.0112 36.096-42.1376-.256-6.144h-2.1504l-246.1184 159.6928-43.8272 5.6832-18.8928-17.7152 2.3552-28.928 8.96-9.4208 74.0352-50.8928-.256.256z"/></symbol>
+<symbol id="rt-codex" viewBox="2 2 20 20"><path fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" d="M9.064 3.344a4.578 4.578 0 012.285-.312c1 .115 1.891.54 2.673 1.275.01.01.024.017.037.021a.09.09 0 00.043 0 4.55 4.55 0 013.046.275l.047.022.116.057a4.581 4.581 0 012.188 2.399c.209.51.313 1.041.315 1.595a4.24 4.24 0 01-.134 1.223.123.123 0 00.03.115c.594.607.988 1.33 1.183 2.17.289 1.425-.007 2.71-.887 3.854l-.136.166a4.548 4.548 0 01-2.201 1.388.123.123 0 00-.081.076c-.191.551-.383 1.023-.74 1.494-.9 1.187-2.222 1.846-3.711 1.838-1.187-.006-2.239-.44-3.157-1.302a.107.107 0 00-.105-.024c-.388.125-.78.143-1.204.138a4.441 4.441 0 01-1.945-.466 4.544 4.544 0 01-1.61-1.335c-.152-.202-.303-.392-.414-.617a5.81 5.81 0 01-.37-.961 4.582 4.582 0 01-.014-2.298.124.124 0 00.006-.056.085.085 0 00-.027-.048 4.467 4.467 0 01-1.034-1.651 3.896 3.896 0 01-.251-1.192 5.189 5.189 0 01.141-1.6c.337-1.112.982-1.985 1.933-2.618.212-.141.413-.251.601-.33.215-.089.43-.164.646-.227a.098.098 0 00.065-.066 4.51 4.51 0 01.829-1.615 4.535 4.535 0 011.837-1.388z"/><path fill="currentColor" d="M12.546 13.909a.637.637 0 000 1.272h3.636a.637.637 0 100-1.272h-3.636zM8.462 9.23a.637.637 0 00-1.106.631l1.272 2.224-1.266 2.136a.636.636 0 101.095.649l1.454-2.455a.636.636 0 00.005-.64L8.462 9.23z"/></symbol>
+<symbol id="rt-pi" viewBox="100 100 600 600"><path fill="#F09082" d="M165.29 165.29H517.36V400H400V282.65H165.29Z"/><path fill="#4D9ABF" d="M165.29 282.65H282.65V400H400V517.36H282.65V634.72H165.29Z"/><path fill="#F1BE58" d="M517.36 400H634.72V634.72H517.36Z"/></symbol>
+<symbol id="rt-hermes" viewBox="0 0 256 256"><g fill="currentColor"><path d="M131 8c-2 0-5 0-5 0-2 0-3 0-4 0-1 0-6 1-7 1l-1 1c-1 0-2 0-2 0 0 0-1 0-2 0-2 1-5 2-6 2l-1 0-1 0c0 0-1 0-1 1-1 0-1 0-2 0-1 0-2 1-2 1-1 0-2 0-3 1-1 0-1 0-2 0l-1 1c-1 0-2 0-2 0 0 0 0 1-1 1l-1 0c0 0-2 1-3 1-5 3-15 8-18 10 0 0-1 0-2 1-2 1-3 2-4 3 0 0-1 0-1 1-1 0-5 3-6 4-3 2-5 4-7 6-2 2-4 5-5 6l-1 1c-1 1-3 4-4 6-1 3-5 9-5 11l0 1-1 0 0 1c0 1-1 3-2 5l0 2c-1 2-1 4-1 4l0 1 0 1c0 0 0 1-1 2 0 2 0 2 0 6 0 4 0 5 1 8 0 2 0 3 1 5l0 1c0 0 1 1 1 2 1 2 1 2 2 4 1 0 2 2 4 3 1 1 1 2 1 2 0 0 1 0 1 1 2 1 6 3 8 4l1 0c2 1 3 1 3 1 1 0 1 0 0 0 0 0-2-1-2-2-1-1-2-2-2-2-1-1-2-4-2-4l-1-1 0-1c0 0-1-2-1-3l0-1c0 0 0 1 1 1 1 3 3 6 5 8 2 1 4 3 5 3l0 1 0 1c0 1 0 3-1 7 0 1 0 3 0 4 0 0 0 1 0 2 0 1 0 2 0 3 0 1-1 3-1 3 0 1 0 2 0 2 0 1 0 1 0 2 0 3 0 5-1 6 0 2 0 4 0 5 0 1-1 3-1 5 0 1 0 3 0 4l0 1c-1 1-1 2-1 4 0 1 0 2 0 2l0 1-1 1c0 1 0 2 0 4l0 1c-1 1-1 1-1 2l0 1c-1 3-2 7-4 8-1 2-3 3-4 4-2 0-5 0-6 0-2-1-3-2-4-3-2-2-3-4-4-8 0-1 0-5 0-7 1-2 1-3 2-5 0-1 1-2 1-2 0 0-3 3-4 4l0 1c-1 1-1 2-1 2l-1 0c0 1-1 4-1 5-1 3-1 3-1 6 0 4 0 4 0 6 1 2 1 3 2 5 1 2 3 4 5 5 1 1 1 2 3 2 1 1 2 1 4 2 2 0 4 0 7 0 1-1 4-2 6-3 1 0 1 0 1-1 4-2 7-5 9-9 1-1 1-2 1-3l1-1 0 2c-1 1-1 4-1 4l0 1-1 0 0 1c0 1-2 3-2 4-1 2-2 3-4 4-3 3-5 5-8 5-1 1-5 1-6 0-1 0-4-1-4-1l-1 0c0 0-2-1-3-2-2-1-2-1-4-3-2-1-3-3-4-5 0-1 0-1-1-3 0-1-1-3-1-4l0-1 0-1 0-1-1 0c0 1 0 6 1 7l0 1c0 2 0 4 1 6 0 1 2 5 3 6 0 1 2 2 2 3 2 2 6 4 8 6 1 0 1 0 2 0 1 1 2 1 3 1 0 1 1 1 1 1l1 0 1 0c1 1 1 1 1 2 0 1 1 2 1 3 1 4 3 6 6 8 1 0 2 0 2 0l1 1 1 0c1 0 1 0 4 0 3 0 3 0 4 0 1 0 2 0 3-1 4-2 7-5 9-9 1-1 1-1 1 0 0 1-1 3-1 4-1 1-1 4-2 5-2 6-4 9-7 13-1 1-3 2-3 2l28 0c0 0 4-2 5-3 1 0 1 0 2 0l-1 1c-1 1-1 2-2 2l1 0c1 0 1-1 2-2 0-1 0-1 1-1l1 0 1 0c-1 1-1 2-1 3l-1 0 4 0 1 0 0-1c1-1 1-1 1-2 2-2 5-6 6-7 2-1 3-2 3-1 0 0-1 0-1 1-1 2-3 4-7 8l-1 2 6 0 1 0c0-1 2-3 4-5 0-1 1-2 2-2 2-3 3-3 4-4 1-1 2-2 2-2 1 0 0 0 0 1l0 1-1 1 0 1c5-4 11-7 17-10 3-2 6-4 9-5 1-1 5-4 7-4 0 1-1 1-1 2-2 1-8 8-9 9-1 1-3 3-3 3-2 3-4 6-7 8-2 2-4 5-5 5l0 1 6 0c0-2 1-4 2-5 2-4 4-8 7-11 3-4 8-7 13-10 4-2 10-4 15-5-5 1-10 5-15 8l-5 5c-2 3-4 5-6 8-2 3-3 6-4 10l-1 0 6 0c1-5 4-10 8-13 4-5 9-8 14-11 8-4 17-4 26-1 10 3 18 12 20 22l1 3 2 0 0-2c-3-14-13-24-26-27-2-1-4-1-6-1-1 0-1 0-1-1-1 0 0 0 0 0 1 0 2 0 4 0 2 0 3 1 5 1l1 0c5 1 9 3 12 5 2 2 4 3 5 5 2 2 4 5 5 8 2 4 3 8 3 12l3 0c-1-2-1-4 0-6 2-3 5-4 7-6 3-3 5-5 6-8 2-3 4-9 5-14 0-3 0-6 1-9 0-3 0-6-1-10 0-5-1-11-2-16-1-5-2-10-4-14l0-1 0-1 0-1c-1 0-1-1-1-1l0-1c0 0 0-1 0-2-1 0-1-1-1-2l0-1-1-1 0-1c0-1 0-1 0-2l-1 0 0-1 0-1c0-1 0-1-1-1l0-1c0-1 0-1 0-2l0-1c-1-1-1-3-1-3 0-1-1-1-1-2 0-1 0-1-1-3 0-1 0-2 0-2l0-1c0 0 0-1-1-1 0-1 0-1 0-2 0-1 0-1 0-2-1-1-1-2-1-2l0-1 0-1c-1-1-1-2-1-3 0-1-1-2-1-3l0-1 0-1c0-1-1-2-1-2l0-1c0-1 0-1 0-2l0-1c-1 0-1-1-1-2 0-1 0-2 0-2 0 0 0-1-1-1 0-2 0-3 0-3 0 0 0-1-1-3 0 0 0-1 0-2l0-1 0-1c0 0-1 0-1-1l0-2 0-1c0-1-1-1-1-2l0-1c0-1 0-2 0-2-1-1-1-2-1-3l0-1 0-1-1-1 0-1c0-1-1-5-2-6 0-1 0-2 0-2-1-1-1-2-1-2 0 0-1-1-1-3-1-1-1-2-1-2 0-1 0-1-1-2 0-1-1-3-1-3l0-1c0 0-1 0-1-1l0-1c-1-1-1-2-2-5-2-3-2-4-4-6 0-1-1-2-1-2 0-1-1-2-2-3-1-1-3-4-4-5 0-1-1-2-2-2-1-2-5-5-7-7-2-2-4-4-5-4 0 0-1-1-2-1-3-2-6-4-10-6-1 0-2-1-3-1-1 0-1 0-2-1l-1 0-1 0c0-1-2-1-4-2-3-1-3-1-5-1-3-1-3-1-6-1 0 0-1 0-1-1-1 0-1 0-2 0l-1 0c-2 0-5 0-9 0zM111 12c4 0 4 0 8 1 1 0 2 0 2 0l1 1c0 0 2 0 3 0l0 1c1 0 1 0 2 0l1 1 1 0 1 1c0 0 3 1 4 1 0 1 0 1 1 2 1 0 1 0 2 1 0 0 1 0 2 1 1 2 6 6 8 8 1 2 2 3 3 4 1 2 2 3 2 3 0 0 0 1 1 1 1 3 3 5 4 8 2 3 3 5 3 6l1 2 0 1 1 1c0 0 0 1 0 2 0 0 1 1 1 2l0 1c1 1 1 1 1 2l0 1 0 1c1 0 1 0 1 1 0 0 0 2 1 4 0 1 0 2 0 2 0 1 0 2 0 2 0 1-1 1-1 1l-1 0-1 1c0 1 0 2 1 2l2 1c0 0 4 2 5 3 1 1 2 2 2 2 0 1 0 1 0 0-1 0-2-1-2-1-1 0-2-1-2-1l-1 0c-1-1-2-1-3-1-2-1-2-2-3-3 0-2 0-3 0-3l1-1 1 0 1-1 0-1c-1-1-1-2-1-2 0-1-1-1-1-1-1 0-2 0-4 0 0 1-1 1-2 1-3 0-4 0-4 1-1 1-1 1-1 2 0 1 0 1 1 1 0 1 0 1 1 1 2 0 2 0 2 2l0 3c-1 1-1 1-1 2 0 0-1 1-3 3-2 2-2 2-1 0 0-1 1-2 2-3 2-2 2-2 2-3 0-1 0-1-1-2l-2-1c0 0-1-1-1-2l0-1c0 0 0-1-1-1 0-1 0-2 0-4-1-2-1-4-1-4-1-1-1-1-1-2l0-1c0-1-1-1-1-1 0 0 0-1 0-2-1-1-1-2-1-2 0-2-1-3-2-5-1-2-3-6-3-7l-1-1c-3-5-8-11-14-15-2-2-3-3-5-4l-1-1c-1-1-6-3-6-3-1 0-3-1-5-2-3 0-7-1-11-1-2 0-6 1-8 1l-1 0c-1 0-2 0-2 1-2 0-3 0-1-1l1 0 1-1 1 0 1 0c2-1 4-2 6-2 3-1 4-1 5-2l1 0c1 0 1 0 3 0 2-1 2-1 6-1zM85 19l-1 0 1 0zM189 33c0 0 0 1 1 1 1 1 3 3 4 4 1 1 4 5 5 7 0 1 2 4 2 5 1 2 3 6 3 6l0 1c1 1 2 5 3 5l0 1c0 0 1 3 2 5 0 1 0 3 1 4 0 1 1 3 1 3 0 1 0 2 1 5 1 3 1 4 1 4l0 1c-1-3-2-6-2-8-1-2-2-6-2-7-1 0-1-1-1-1l0-1 0-1c-1 0-1-2-1-2l0-1-1 0c0-1-2-7-2-8-1-2-3-6-4-6 0-1 0-1 0-2l-1 0 0-1-1-1c0-1-2-2-2-3 0-1-1-1-1-1-1-1-1-2-1-2l0 1 1 1c0 1 1 2 0 4 0 3 0 4 0 5l0 1 1 0c-1 0-1-1-2-2l-1-1c0 0 0 1 1 2 1 2 2 5 3 7 1 1 1 1 1 2l1 3 1 1c-1 0-1 0-1-1-2-4-3-6-4-7 0 0 0-1-1-1 0-1 0-1 0-2l-1 0 0-1-1-1c0 0 0 1 0 2l1 2c0 1 0 0-1-1l-1-1 0 1c0 1 0 3 1 4l0 1 1 1c0 1 0 1 0 2 1 1 1 1 1 2 0 1 1 1 1 2 1 3 2 5 2 5 0 0-1 0-1-1 0-1-3-7-3-8l-1 0c0 0 0-1 0-2-2-2-3-4-5-6 0-1-1-1-1-1l0 1c1 0 1 0 1 2 1 0 1 1 1 1l0 1 1 1 0 1c0 1 1 1 1 1l0 1c0 1 1 2 1 2l0 1c0 0 0 1 1 1 0 0 0 1 1 2 0 3 1 4 1 5l0-1c-1 0-1-1-1-1 0 0 0-1-1-2 0 0 0-1 0-2-1 0-1-1-1-1 0-1-5-11-6-12 0-1-1-1-1-1 0 1-1 2-2 3l-1 0-1 0c-1-1-1-1-2-1 0 0-1 0-1-1l-1 0c-1 0-1 0-1-1l-1 0c-1 0-2 0-2 0 0-1 0-1 0 0 0 0 0 1 1 2 1 2 1 3 2 5 1 1 1 1 1 2l1 2c0 1 0 1 1 1 0 0 0 2 1 3l0 1 1 1c0 1 0 1 0 2l1 0 0 1 0 1c1 0 1 1 1 1l0 1c1 1 1 2 1 2l0 1c0 0 0 1 1 1l0 1 0 1 1 1c0 0 0 1 0 2 1 1 1 2 1 2 0 0 1 2 1 3l0 1c1 1 1 2 1 2 0 1 1 2 1 2l0 1c0 1 1 3 1 3l0 1c0 1 1 2 1 2 0 1 0 1 0 2l1 1c0 1 0 1 0 2 0 1 1 1 1 2l0 1c0 0 0 1 1 3 0 0 0 1 0 2l1 1 0 1 0 1c0 0 1 1 1 2l0 1 1 1c0 1 0 2 1 3 1 3 1 5 2 7 0 0 0 1 0 2 1 1 1 2 1 3l0 1c0 1 1 2 1 2l0 1c0 0 0 1 0 2l0 1 1 1 0 1 0 1c0 0 0 1 0 2 0 1 1 1 1 2 0 0 0 1 0 2l0 1c0 2 1 3 1 4 0 1 0 2 0 3l0 1c0 1 0 2 0 3 1 0 1 1 1 2l-1 0 0-1c0 0 0-2-1-6l0-1 0-1c0-1 0-2 0-2 0-1-1-1-1-2l0-1 0-1c0-1 0-2 0-2-1-1-1-1-1-2 0 0 0-2 0-3l-1 0 0-1c0-1 0-1 0-2 0-1-1-2-1-3l0-1c0-1 0-2-1-2l0-1c0-1 0-1 0-2l0-1c-1-1-1-3-2-4 0-1 0-1 0-2l-1-1c0-1 0-2 0-2-1-1-1-2-1-2 0-1 0-1-1-2 0-1 0-2-1-3 0-1 0-2 0-2 0-1-1-2-1-2 0-1 0-2 0-2-1-1-1-2-1-3 0-1-1-1-1-2l0-1 0-1c0 0-1-2-1-3 0 0-1-1-1-2 0-1 0-3-1-3l0-2c-1-1-1-2-1-2 0-1 0-1 0-2-1-3-1-3-2-3 0 0 0-2-1-4-1-2-1-4-2-5 0-1 0-1 0-2l-1-1c0 0 0-1 0-2-2-4-5-10-6-12-1-1-1-2-2-3 0 1 0 2 1 3l0 1c0 0-1 0-1-1l-1-1c-1-1-3-3-4-4l-1 0c0 0-1 0-1-1l-1 0-1 0c0 1-1 1-1 0l0-1-1-1 1 0c2 0 4 0 6 0l0-1c0-1-1-3-1-4 0 0 0-1 0-2l-1-1c0 0 1 0 1 1 0 0 2 2 2 3l1 2 1 0 1 0 1 1c0 0 1 0 2 0l1 1 1 0 1 0 1 0c1-1 2-3 3-3l-1-1c0-1-1-1-1-3-1 0-1-1-2-2l-1-1c0-1 1 0 2 2 2 2 3 3 3 3l0-1 0-1 1 0c1 0 1 0 3 0 0 0 0-1 0-2l-1 0c0-1-2-3-2-4-2-2-3-3-2-3 0 0 1 1 2 3 3 3 7 6 7 6l-1-1 0-1-1 0 0-1-1-1c0 0 0-1-1-1l0-1c0 0-1 0-1-1 1 0 4 4 5 6l1 1 0 1c0 0 0-2 0-3 1-3 0-4 0-5 0-1-2-4-2-4l0-1zM129 37c1 0 4 3 5 5 1 1 2 2 2 2l0 1c1 1 1 1 2 4l1 2 1 0c0-1 1-1 1-1 1 0 2 0 2 1 1 1 1 2 1 2l0 1 1 1 0 1c0 0 0 1 0 0-1 0-3-1-3-1-1-1-1 0-1 0l0 1c0 0-2-2-2-3 0-1-4-7-5-8l-1-1 0 1c0 0-1 0-1 1 0 1 0 1 0 2 0 1 0 1 0 2 1 0 1 1 1 1l1 2-1 0 0-1c-1-1-2-1-2-1 0 0 0 1 1 2l0 1c0 0 0 1 1 2l0 1-1-1c-1-2-2-3-2-3-1 0 0 0 0 0 0 1-1 2-1 1l0-1-1 0c0 0-1 0-1 1 0 0 0 1 0 2l0 1-1-1 0-1-1-1-2 0c-2 0-3 0-3 0l0-1c-1 0-1-1-1-1 0-1-1-1-1-2l0-1c1-1 2-2 3-3l0-1c-1 0-1-1-1-2-1-2-2-2-2-2 0 0 1 0 2 2l1 1c0-1 1-1 2-1l1 0c0-1 0-1 0-2-1-1-1-2-1-3 0 0 1 1 2 2 1 2 2 2 2 2l3-2 1 0c0-1 0-1-1-2l-1-1zM109 41c0 0 1 0 1 1 2 2 5 6 6 8 1 0 1 1 1 1 1 1 3 6 4 7l0 1c0 1 1 1 1 1 0 1 0 1 0 2 1 1 1 2 1 2 0 0-1-1-2-2l-2-1 0 1c0 0 1 1 1 2 0 2 0 3 0 5l0 1 0-1 0-1c-1 0-1-1-1-2 0 0-1-1-1-2l0-1c0 0 0-1-1-1 0-1 0-2 0-2 0 0 0 2 0 4 0 2-1 4-1 4 0 0 0-1 0-2-1-1-1-2-3-4-1-1-1-2-1-1l0 1 1 1c0 0 0 1 0 2 0 1 0 2 0 2 0 1 0 2 0 2l0-1-1-4c-1 0-1 0-1-1l-1 0c-1 0-2 1-2 1l0 1 0 2 0-1-1-1c0-1-3-2-5-2l-1-1-1 0c-1-1-1-3-1-4l0-1c1 0 1-1 2-1l1 0 1-1c2 0 2 0 1-1 0-1 0-2 0-2 0 0 1 0 1 1 0 1 0 1 0 2l1 0 0 1c0 0 1-1 2-2l1-1 0-1c0 0 0-1-1-3 0-1 0-2 0-2 0 0 0 1 1 2 0 2 0 2 1 2l1 0 0 1c0 1 1 2 1 2 0 0 0-1 0-3 0-1 0-2 0-3-1-1-1-2-1-2l0-1c-1-1-1-2-1-3l-1-1zM177 41l0 1 0-1zM53 42c-1 1-1 1-1 0l1 0zM72 43l-1 2c-1 1-3 6-4 7l0 1c0 1-1 1-1 1l0 1 0 1-1 1 0 1 0 1c-1 0-1 1-1 1l0 1c0 1-1 3-1 3 0 0 0 1-1 1l0 1 0 1c0 0-1 1-1 2 0 1 0 1 0-2l0-3-1 0 0 1 0-2 0-1 0 1c-1 0-1 0-2 0l-1 1-1 1-1 1 0 1-2 0-1 0 0-1c0-1 0-1 1-2l0-1c0-1 1-1 1-1l0-1 1-1 0-1c1-1 1-1 1-2l1-1c0 0 0-1 1-1l0-1c0 0 1-1 1-2 2-3 3-4 2-1-2 3-4 7-5 9l0 1c0 0-1 1 0 1l1-1 1 0c1-1 2-2 3-3 0 0 1-2 2-4 3-3 3-4 6-9 2-2 3-2 3-2zM52 43zM51 43c1 0 0 1-1 2-2 2-4 5-6 7l0 1c0 0-1 1-1 2 0 0-1 0-1 1l-1 1c0 1-2 5-2 5l-1 1c0 2-1 3-1 3l0 1c-1 0-1 1-1 1 0 1-2 5-2 5l-1 1c0 1 0 1-1 3 0 1 0 1 0 0 0 0 0-3 1-4 0 0 0-1 0-2 1 0 1-1 1-1 0 0 1-2 1-3l0-1 1-1-1 0-1 1 0-1c1-1 1-2 1-2l-1 1 0-1c0 0 1-1 1-2 0 0 0-1 1-1 0-1 0-1 0-2 1 0 1-1 1-1 0 0 1-1 2-3 1-1 4-3 5-4 3-3 6-6 7-6l0-1zM83 47c1 0 1 1 1 6 0 5 0 8 0 11 0 2 0 3 0 1l-1 0c0-2-1-3-1-3 0-1 0-1 0 0l0 1c0 1 0 2 0 2l0-1c-1 0-1-1-1-1l0-1-1 0-2 0c-1 1-1 1-2 1l-1 0c-1 0-1 1-1 2 0 1 0 1 0 0 0-2 0-2-1-2 0 0-2 1-4 1l-2 0c-2-2-2-2-2-3l0-1c0 0 1-1 1-2 0 0 0-1 1-2l0-1c1 0 2 0 3 1 2 1 4 2 4 2 0 0 0-1 1-2 0-1 0-1 0-2l0-1c1-1 1-4 2-4l0-1c0 1 0 1 0 2-1 1-1 2-1 3 0 1 0 1 0 2l-1 1c0 1 0 2 0 2l1 0 1 0c1-1 2-1 2-1 1 0 1 0 2-1 0-1 1-4 1-4l0-1c0-1 1-1 1-2l0-1 0-1zM77 47l0 1 0-1zM52 48c0 1-1 2-1 2 0 0-1 1-1 2-1 1-1 2-2 2l-1 1c0 1 1 1 1 1l1 0 1-1 1-1c1-1 1-2 1-2 1 0 3-3 3-3 0-1 1-1 0 0 0 0-3 4-3 5l0 1-2 2 0 1-1 1 1 0c1 0 1 0 2 0l2 0 0-2c1 0 1-1 1-1l0 1c0 1-1 3-2 4l0 1c-1 1-1 1-1 2l-1 1 0 2c-1 0-1 1-1 1l0 1c0 1-1 2-1 2-1 2-1 2 0 0 0-2 0-3 0-3l0-1c0 0-1 1-2 2-1 1-1 1-1-1l0-1c0-1 0-1 0 0l-1 0c0 0 0-1 0-2 1-1 1-2 0-2 0 1-2 5-3 7l0 1c0 1-1 1-1 1l0 1 0 1c-1 1-2 5-2 5 0 0 0-3 1-5l0-1 1-3c0 0 0-1 1-1 0-2 0-2 1-3 0-1 0-1 0 0l-1 0-2 0c0 0-1 0-2 0 0-1 0-2 1-3l0-1 0-1 1 0c0-1 1-3 1-3 0 0 0-1 1-1 0-1 0-1 1-1l0-1 1 0c1 0 1 0 2 0l1-1c1-1 2-2 2-3 0 0 1 0 1-1 1-1 2-2 2-2zM95 51l1 0 0 2c0 1 1 1 1 2l0 1c0 1 0 1 0 2 1 2 1 2 2 5 0 0 0 1 0 2 0 0-1 0-1-1-1-1-1-2-1-2-1 0-4 0-7 0-2 0-2 0-2-1-1 0-1 0-1 1l0 1 0-1-1-1c0-1 0-2 0-2l-1-1c0-1 0-4 0-5l1 0c1 0 2 0 5 0 1 0 2 1 3 1 1 0 1 0 1-1 0-1 0-1 0-2zM56 55zM55 56l1 0-1 0zM141 56l0 1 0-1zM133 57l0 1 0-1zM200 64l0 1 0-1zM200 65zM86 67l0 1 0-1zM86 68c0 0 1 2 1 3l0 1c0 0 1 1 1 3 1 0 1 1 1 1l0 1 0 1c1 0 1 1 1 2 1 1 1 2 1 2 1 1 1 2 1 2 0 0 2 3 3 5l0 1 1 1 0 1c1 1 1 2 2 2l0 1 0 1c-1 0-1 0-2 0l-1 0c-1-1-2-4-3-6l-1-1 0-1c0-1-1-2-1-2 0 0-1-3-1-5 0 0 0-1-1-1 0-1 0-1 0-2 0-1-1-3-1-4 0-1 0-2 0-2-1-2-1-3-1-4zM197 71l0 1 0-1zM194 74l1 0-1 0zM213 85l0 1 0-1zM213 87c1 0 1 1 1 1l-1 0 0-1zM63 88l1 0-1 0zM64 88l0 1 1 1c0 0 1 2 2 3 2 3 6 6 8 7 0 1 1 1 1 1 1 0 2-1 3-1 0 0 1 0 4-1l2 0-1 0c0 1-1 2-2 3-1 1-1 3-1 3l1 0c0-1 1-1 1-1 0 0 1 0 1-1l1 0 1-1 2-1c2-1 4-2 5-2l0-1 1 0c1 0 2 0 3-1l1 0c1-1 1-1 4 3 0 0 2 0 3 0 2 0 4 0 5 0 3 0 9 0 10 0 1 0 1 0 1-3 0-1 0-3 0-3l0 1c0 1 1 1 1 1 0 2 0 3 0 3 1 1 1 1 2 1 1 1 4 1 5 1 2 1 3 1 3 1l0 1c0 1 0 14 0 16 0 1 0 2 0 3 0 1 0 4 0 4l-1 1c0 1 0 2 0 4 0 1 0 1 0 2l-1 1c0 0 0 1 0 2l0 1 0 1c0 0 0 1-1 1l0 1c0 1 0 3 0 4-1 0-1 1-1 2l0 1c0 1 0 1 0 2 0 0-1 1-1 2l0 1c0 1 0 3-1 4l0 1c0 1 0 2 0 4-1 0-1 1-1 2l0 1c0 2-1 3-1 4l0 3 0 1c0 1 0 2 0 3-1 0-1 2-1 3 0 1 0 2 0 5 0 5 0 5 1 9 0 1 0 1 0 2 0 0-1 1-2 1-1 1-2 3-3 3 0 1-1 1-1 1l-1-1c-1-3-2-5-4-7-2-3-5-6-6-7-2-2-3-2-6-2-1 0-2 0-2 1-1 0-2 0-3 0 0 0-1 0-2 0l-1 0c-3 1-3 1-5 1l-2 0c-2 0-5 0-7 0-1 0-3-1-3-1l-1 0c-1-1-2-2-3-3 0-1-1-2-1-2 0-1 0-1-1-1 0 0 0-1-1-2 0-1 0-2-1-2-4-7-5-10-7-14-1-2-2-4-2-5l0-1-1-2c0 0 0-1 0-2 0 0-1-1-1-2l0-1c0-1 0-8 0-9 0-1 0-3 0-4 0-1 1-1 1 0 0 2 0 2 1 4 1 1 2 2 4 3 1 1 1 2 2 3 0 1 0 2-1 3-1 2-1 3-1 4l0 1 0 1c1 1 1 1 2 3l1 1-1 0 0 1c0 0 1 2 1 3 0 0 1 1 2 3 1 0 1 1 1 1l1 0 1 0-1-1 1-1c1 0 1 0 2 0 1-1 2-1 1-1-2 0-3 1-4 0l-2 0c-1-1-1-1-1-2l0-1c1-1 1-1 3-1 0 0 1 0 1-1 1 0 1 0 3 0 1 0 1 0 4 1 1 0 2 0 2 0l0 1c-1 0-3 1-3 1l1 0c2-1 3-1 3-1l1-1 1 0 0-1c0-1-1-1-1-1 0 1 0 1-1 1-1-1-2-1-3-2l-1 0-1-1c-3-1-3-2-6-2-1-1-2 0-3 0l-1 0c0-1 0-1-1-2 0-1-1-1-1-1l1 0 0-1c1-1 1-2 1-3 0-1 0-1-1-2 0-1-1-1-2-3-2-1-2-2-3-3-1-2-1-3-1-4l0-1c0-1 2-2 3-3 0 0 2-1 2-2 1 0 1-1 2-3 1-1 2-2 2-3l0-1c0-1 0-1 0-2 0-2 0-2 0-3 0-1-1-1-1-2-1-1-2-3-3-3l-1-1c-2-1-4-2-4-1 1 0 1 0 1 1 1 0 1 0 2 1l1 0 1 1c1 0 1 0 2 1l0 1c-1-1-4-1-5-1-1-1-2 0-3 0l-1 1 1-1c1 0 3 0 4 0l1 0c1 1 2 1 2 1l1 0c0 0 1 0 1 1l0 1c0 0 1 1 1 2 0 0-1 0-1-1-1-1-2-1-3-2 0 0-1-1-2-1-1 0-3 0-3 0-1 0-2 1-2 1-1 0-1-1-3-3 0-1 0-2 0-2l2-1 1-1c0 0 1 0 2 0 1 0 2 0 3 0 1 1 1 0 0 0 0-1 0-1-2-1l0-1 1 0c0-1 1-1 2-1l1 0c1-1 3-1 5-2 1 0 0 0 0-1-1-2-3-5-4-8-1-1-1-3-1-3l0-1zM97 102c-3 0-3 0-5 0-3 1-3 1-4 2-2 2-3 3-3 4 0 0 1 0 2-1l1 0c0-1 2-2 2-1 0 0-1 0-1 1l-1 0 0 1-1 0 0 1 1 0-1 1c-1 1-1 1 0 0l1 0-1 1-1 1 1 0 1 0 0-1 0 1 0 1c0 1 0 1 0 0 1-1 1-2 2-3 1-1 2-2 3-2l1 0c-1 1-1 2-1 2-1 3-1 3 1 4l-1 1c1 1 3 3 4 4 0 0 1 0 2 0 1 0 1 0 2 0 0-1 2-2 2-3 1 0 2-1 2-1 0-1-1-1-1-1-1-1-1-1 0-1 1 0 1-1 1-1l0-1c-1 0 0-1 0 0 1 0 1 0 2 0 0 1 1 1 2 2l1 0 0 1c0 1-1 2-2 3-2 1-3 2-6 3-1 0-3 0-5 0-3 0-4 0-7-1-1 0-2 0-3 0 0 0 0 1 0 0 1 0 2 0 2 0l1 1c1 0 1 0 1 1-1 1-1 1 0 0l1 0 1 0 0 1c0-1 1-1 1-1l0 1 1-1 0 1c1 0 1 1 1 0 1-1 1-1 2 0l0 1 0-1 1 0 1 0 1 0 1 0 1 0 1 0-1-1 1 0 2 0c1 0 1 0 0 0l0-1c0 0 2 0 3 0l-1-1c0 0 0-1 1-1 1 0 2 0 1 0l-1 0c0-1 0-1 2-1l1 0-1-1 1 0 1 0-1 0c-1 0-1-1 0-1l1 0 1 0 0-1c1 0 0 0-1 0l0-1 1 0c0 0 1-1 3-1 0 0 1 0 1-1 0 0-1 0-2 0l-2 0c1 0 2-1 2-1l-1 0c-1 0-3 1-3 0l-1 0c0 0 0-1 1 0 0 0 0-1-1-1 0 0-1-1-2-1 0 0-2-1-3-2-1 0-2-1-2-1l-1 0c-1 0-1-1-2-1l-1 0-1 0c-2-1-3-1-4-1l1 0c2-1 2-1 4 0 1 0 3 1 3 1l1 0 1 1 1 0 1 0c0 1 1 1 1 1l-1-1-1 0-1-1c0 0-1 0-2-1l-1 0-1 0-1-1c-1 0-1 0-3 0zM89 104zM90 104l1 0c-1 1-1 1-1 0zM88 104l0 1 0-1zM90 105l-1 0 1 0zM89 105l-1 1-1 1-1 0 1-1 1 0c0-1 1-1 1-1zM108 106l1 0-1 0zM166 109c2 0 4 1 6 2 0 1 2 2 2 2 0 1-1 1-1 1-3 0-3 0-4-1-1 0-2-1-5-1-1 0-2 0-2 1-1 0-2 0-2 0-1 1-2 1-2 0l-1 0c-1 0-1 0-1-1 1 0 2-1 3-2 2-1 4-1 7-1zM88 115l0 1 1 0-1-1zM60 116l0 1 0 1 1 1 1 0-1 1 0 1c1 2 2 3 2 4 1 0 1 0 0 0-1 1-1 1-2 1l-1 0 0-1-1 0 0-1c0-1-1-3-1-6 0-1 0-1 1-2l1 0zM59 127l0 1 1 0c0-1 1-1 1 0-1 0-2 1-3 2l0-1c0-1 0-2 0-2l1 0zM66 136l0 1c2 0 3 1 4 3 1 0 0-1 0-2l-1-1c-1 0-2-1-3-1zM190 148c0 0 1 6 1 11 0 4 0 6-1 10l0 1c-1 0-1-1 0-3 0-3 0-3 0-8 0-5 0-6 0-10l0-1zM64 149l1 0c0 1 0 1 1 2l0 1c0 1-1-1-2-2l0-1zM69 151l1 0c1 0 1 1 1 1l1 0c0 0 1 0 1 1l-1 0c-2 0-3 0-3 0-1 0-2-1-2-1l1-1 1 0zM69 153l0 1-1 0 0-1 1 0zM70 154c1 0 1 0 0 1l-1 0 1-1zM150 155l0 2c0 3 1 6 1 7 0 1 0 2 0 3 0 3 0 5 1 6 0 0 0 1-1 1l-1 0c-1 1-1 1-2 2-2 1-5 3-6 3l0 1c-1 0-1 0 0-1l0-1c0 0 0-1 1-2 0-1 0-1 0-2l1-1 0-1c0-1 1-2 1-2 0 0 1-3 1-4l0-1c0 0 1 0 1-1 0 0 0-1 0-2 1 0 1-1 1-1 0 0 0-1 1-2 0-1 0-2 0-2l1-2zM215 155c1 6 3 13 4 18 1 6 1 10 1 17 0 3 0 6-1 9 0 2 0 5-1 7 0 1 0 2 0 1-1 0 0-4 0-5 0-3 0-2 1-5 1-18-3-29-4-42zM70 157c0 0-1 1-1 2l0 1 1 0c0-1 0-1 1-1l0-1c-1 0-1-1-1-1zM190 170c0 1 0 1-1 1l0-1 1 0zM183 171l0 1 0-1zM183 173c0 1-2 7-2 7l0 1-1 0 0-1c1-1 2-4 2-6 0-1 1-1 1-1zM152 181l1 0 0 1 0 1 0 1c0 1 1 1 1 2 0 0 0 1 0 2 0 1 0 1 0 2 0 0-2 3-4 4l-2 1c-1 0-3 0-4 0-1 0-2-1-2-2-1-1-2-3-2-4 0-1 1-2 2-2 1-1 3-2 5-3l1-1 1 0 1-1c1 0 1-1 2-1zM180 181l0 1 0-1zM180 182l0 1 0-1zM67 199c0 4-1 7-1 8l0 1c-1 0-1 2-1 3l0 1-1 0c0 0 0 1 0 2-1 2-3 5-4 7-1 1-2 2-3 2-1 1-2 2-4 2 0 0-2 0-3 0-2 0-3 0-4 0-1-1-2-2-2-2-1-1-2-2-2-2 1 0 2 0 3 0 4 0 5 0 7-1 2 0 4-1 5-2 1-1 3-4 4-6 1 0 1-1 1-1 1-1 2-3 2-4l0-1 1 0 0-1c0-1 1-2 1-5 1 0 1-1 1-1zM126 199l0 1 1 1 0 1c2 4 4 6 10 10 0 1 1 1 1 1 1 1 4 3 6 4l1 0-1 1c-1 1-2 1-2 1 0 0 0 1-1 1 0 0-2 2-4 3l-1 0 0 1-1 0c-1 1-3 2-5 3-1 0-1 0-2 1l-1 0c-1 0-1 0-1 1l-1 0-4 2c0 0-1 0-2 1 0 0-1 0-2 1l-1 0c0-1-1-3-1-4-1-1-2-2-3-4 0-1-1-2-2-3 0-1-1-3-2-4-2-3-3-5-3-5 0 0 1 0 2 0 1 0 3 0 3-1l1 0c0 0 1 0 1-1l2 0 4-4c4-4 8-8 8-8zM218 208l0 1-1 0 0-1 1 0zM217 210z"/></g></symbol>
+<symbol id="rt-opencode" viewBox="-45 -15 330 330"><g fill="currentColor"><path fill-opacity=".28" d="M180 240H60V120H180V240Z"/><path fill-rule="evenodd" d="M180 60H60V240H180V60ZM240 300H0V0H240V300Z"/></g></symbol>
+<symbol id="rt-kiro" viewBox="0 0 1200 1200"><circle cx="600" cy="600" r="600" fill="#9046FF"/><mask id="rtkm" style="mask-type:luminance" maskUnits="userSpaceOnUse" x="272" y="202" width="655" height="796"><path d="M926.578 202.793H272.637V997.857H926.578V202.793Z" fill="white"/></mask><g mask="url(#rtkm)"><path d="M398.554 818.914C316.315 1001.03 491.477 1046.74 620.672 940.156C658.687 1059.66 801.052 970.473 852.234 877.795C964.787 673.567 919.318 465.357 907.64 422.374C827.637 129.443 427.623 128.946 358.8 423.865C342.651 475.544 342.402 534.18 333.458 595.051C328.986 625.86 325.507 645.488 313.83 677.785C306.873 696.424 297.68 712.819 282.773 740.645C259.915 783.881 269.604 867.113 387.87 823.883L399.051 818.914H398.554Z" fill="white"/><path d="M636.123 549.353C603.328 549.353 598.359 510.097 598.359 486.742C598.359 465.623 602.086 448.977 609.293 438.293C615.504 428.852 624.697 424.131 636.123 424.131C647.555 424.131 657.492 428.852 664.447 438.541C672.398 449.474 676.623 466.12 676.623 486.742C676.623 525.998 661.471 549.353 636.375 549.353H636.123Z" fill="black"/><path d="M771.24 549.353C738.445 549.353 733.477 510.097 733.477 486.742C733.477 465.623 737.203 448.977 744.41 438.293C750.621 428.852 759.814 424.131 771.24 424.131C782.672 424.131 792.609 428.852 799.564 438.541C807.516 449.474 811.74 466.12 811.74 486.742C811.74 525.998 796.588 549.353 771.492 549.353H771.24Z" fill="black"/></g></symbol>
+<symbol id="rt-dsh" viewBox="0 -1.95 27 27"><path fill="#4D6BFE" d="M26.5174 3.39471C26.235 3.2567 26.1137 3.52006 25.9487 3.65346C25.8923 3.69659 25.8446 3.75294 25.7969 3.80469C25.3846 4.24516 24.9027 4.53439 24.2737 4.49989C23.3536 4.44814 22.5682 4.73737 21.8735 5.44119C21.7258 4.57349 21.2353 4.0554 20.4889 3.72304C20.0985 3.55054 19.7034 3.37746 19.4297 3.00197C19.2388 2.73459 19.1865 2.43673 19.091 2.14289C19.0301 1.96579 18.9697 1.78466 18.7656 1.75418C18.5442 1.71968 18.4574 1.90541 18.3705 2.06067C18.0232 2.69549 17.8887 3.39471 17.9019 4.10313C17.9324 5.6965 18.6051 6.96556 19.9421 7.86834C20.0939 7.97184 20.133 8.07535 20.0852 8.22658C19.9938 8.53766 19.8857 8.83955 19.7903 9.15063C19.7293 9.34901 19.6384 9.39271 19.4257 9.30588C18.692 8.9994 18.0583 8.54571 17.4982 7.99772C16.5477 7.07827 15.6881 6.06336 14.6162 5.26869C14.3644 5.08296 14.1125 4.91045 13.8521 4.746C12.7584 3.68394 13.9952 2.81164 14.2816 2.70814C14.5812 2.60003 14.3857 2.22857 13.4179 2.23317C12.4502 2.2372 11.5646 2.56151 10.4359 2.99335C10.2708 3.05832 10.0972 3.10547 9.91951 3.14457C8.8954 2.95022 7.83162 2.90709 6.72069 3.03245C4.62877 3.26533 2.95777 4.25436 1.72954 5.94261C0.254043 7.97184 -0.0932678 10.2777 0.33167 12.6824C0.778458 15.2171 2.07225 17.3153 4.06008 18.9558C6.12152 20.6567 8.49577 21.4905 11.2047 21.3306C12.8498 21.2358 14.6812 21.0155 16.7473 19.2669C17.2682 19.5262 17.8151 19.6297 18.7219 19.7074C19.4205 19.7723 20.0933 19.6729 20.6143 19.5648C21.4302 19.3923 21.3739 18.6367 21.0789 18.4981C18.6874 17.3843 19.2124 17.8374 18.7351 17.4706C19.9501 16.033 21.8063 13.4776 22.379 9.99821C22.4353 9.61409 22.5072 9.073 22.4986 8.76192C22.494 8.57216 22.5377 8.49856 22.7545 8.47671C23.3536 8.40771 23.935 8.24383 24.4692 7.94999C26.0188 7.10357 26.6439 5.71318 26.7911 4.04678C26.8129 3.79204 26.7865 3.52869 26.5174 3.39471ZM13.0143 18.3946C10.6964 16.5724 9.5722 15.9726 9.10816 15.9985C8.67402 16.0244 8.75222 16.5212 8.84768 16.8449C8.94773 17.1646 9.07768 17.3849 9.25996 17.6655C9.38589 17.8512 9.47272 18.1272 9.13404 18.3348C8.38766 18.7965 7.08985 18.1796 7.0289 18.1491C5.51833 17.2595 4.25559 16.0853 3.36546 14.4793C2.50581 12.9337 2.0067 11.2753 1.92447 9.50542C1.90262 9.07818 2.02855 8.92695 2.45406 8.84932C3.01413 8.74582 3.59144 8.72397 4.15093 8.80619C6.51656 9.15178 8.53027 10.2092 10.2185 11.8848C11.1822 12.8388 11.9114 13.979 12.6623 15.0929C13.461 16.2757 14.3201 17.4027 15.4144 18.3268C15.8008 18.6505 16.109 18.8966 16.404 19.0783C15.5144 19.1778 14.0297 19.1991 13.0143 18.3958V18.3946ZM14.1252 11.2489C14.1252 11.0591 14.277 10.9079 14.4679 10.9079C14.511 10.9079 14.5501 10.9165 14.5852 10.9292C14.6329 10.9464 14.6766 10.9723 14.7111 11.0114C14.7721 11.0718 14.8066 11.158 14.8066 11.2489C14.8066 11.4386 14.6548 11.5899 14.4639 11.5899C14.273 11.5899 14.1252 11.4386 14.1252 11.2489ZM17.5759 13.0188C17.3545 13.1096 17.1331 13.1873 16.9203 13.1959C16.5903 13.2131 16.2303 13.0791 16.0348 12.9153C15.7312 12.6605 15.5139 12.5179 15.423 12.0734C15.3839 11.8837 15.4057 11.5899 15.4402 11.4214C15.5185 11.0585 15.4316 10.8257 15.1757 10.614C14.9676 10.4415 14.7025 10.3938 14.4115 10.3938C14.3029 10.3938 14.2034 10.3461 14.1292 10.3076C14.0079 10.2472 13.9078 10.096 14.0033 9.91023C14.0338 9.84985 14.1815 9.70322 14.216 9.67734C14.6111 9.45251 15.0665 9.52612 15.488 9.6946C15.8784 9.85445 16.174 10.1477 16.5989 10.5623C17.033 11.0631 17.1112 11.2011 17.3585 11.5772C17.554 11.871 17.7317 12.1729 17.8536 12.5185C17.9272 12.7341 17.8317 12.9107 17.5759 13.0188Z"/></symbol>
+</svg>
+
+<header id="top">
+<nav class="wrap nav" aria-label="Main">
+<a class="brand" href="/" aria-label="Baton home"><svg aria-hidden="true"><use href="#logo"/></svg>Baton</a>
+<div class="links"><a href="#start"><span class="en">Get started</span><span class="zh" lang="zh-CN">快速开始</span></a><a href="#features"><span class="en">Features</span><span class="zh" lang="zh-CN">功能</span></a><a href="#compare"><span class="en">Compare</span><span class="zh" lang="zh-CN">对比</span></a><a href="/privacy/"><span class="en">Privacy</span><span class="zh" lang="zh-CN">隐私</span></a></div>
+<div class="sp"></div>
+<div class="lang" role="group" aria-label="Language"><button type="button" data-lang="en" aria-pressed="true">EN</button><button type="button" data-lang="zh" aria-pressed="false" lang="zh-CN">中文</button></div>
+<a class="gh" href="https://github.com/agentbaton/baton" aria-label="Baton on GitHub"><svg aria-hidden="true"><use href="#gh"/></svg></a>
+</nav>
+</header>
+
+<main>
+<div class="hero">
+<div class="wrap">
+<h1><span class="en">Pass the baton<br><span class="grad">to your phone.</span></span><span class="zh" lang="zh-CN">电脑上的 Agent，<br><span class="grad">手机上接着用。</span></span></h1>
+<p class="lede"><span class="en">Pick up your coding-agent Sessions on your phone, right where you left off. Watch live, reply and approve — your conversations stay on your computer.</span><span class="zh" lang="zh-CN">离开电脑，Claude Code、Codex 等编程 Agent 的 Session 也能在手机上接着用：实时看输出、继续对话、审批权限。对话始终留在你自己的电脑上。</span></p>
+<div class="cta"><a class="btn" href="#start"><span class="en">Get started</span><span class="zh" lang="zh-CN">开始使用</span><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8h9M8.5 4l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></a></div>
+<div class="agents">
+<p><span class="en">Works with 7 agents</span><span class="zh" lang="zh-CN">支持 7 种 Agent</span></p>
+<ul class="ags"><li><span class="ag" role="img" aria-label="Claude Code" data-n="Claude Code"><svg class="claude" aria-hidden="true"><use href="#rt-claude"/></svg></span><small aria-hidden="true"><span class="sn">Claude</span><span class="fn2">Claude Code</span></small></li><li><span class="ag" role="img" aria-label="Codex" data-n="Codex"><svg class="codex" aria-hidden="true"><use href="#rt-codex"/></svg></span><small aria-hidden="true">Codex</small></li><li><span class="ag" role="img" aria-label="Pi" data-n="Pi"><svg class="pi" aria-hidden="true"><use href="#rt-pi"/></svg></span><small aria-hidden="true">Pi</small></li><li><span class="ag" role="img" aria-label="Hermes" data-n="Hermes"><svg class="hermes" aria-hidden="true"><use href="#rt-hermes"/></svg></span><small aria-hidden="true">Hermes</small></li><li><span class="ag" role="img" aria-label="OpenCode" data-n="OpenCode"><svg class="opencode" aria-hidden="true"><use href="#rt-opencode"/></svg></span><small aria-hidden="true">OpenCode</small></li><li><span class="ag" role="img" aria-label="Kiro" data-n="Kiro"><svg class="kiro" aria-hidden="true"><use href="#rt-kiro"/></svg></span><small aria-hidden="true">Kiro</small></li><li><span class="ag" role="img" aria-label="DeepSeek Harness" data-n="DeepSeek Harness"><svg class="dsh" aria-hidden="true"><use href="#rt-dsh"/></svg></span><small aria-hidden="true"><span class="sn">DeepSeek</span><span class="fn2">DeepSeek Harness</span></small></li></ul>
+</div>
+
+<div class="stage" id="stage" role="img" aria-label="Animated example: Claude Code works in a terminal, and the same Session continues in the Baton App on a phone">
+<div class="term" aria-hidden="true">
+<div class="bar"><i></i><i></i><i></i><span>acme-web — claude</span></div>
+<div class="tb">
+<div class="tlog" id="tlog">
+<div class="cw"><b>✻</b> Welcome to Claude Code!<p>/help for help, /status for your current setup</p><p>cwd: ~/acme-web</p></div>
+<div class="cu hide" data-s="u">&gt; <span class="en">fix the flaky checkout test</span><span class="zh" lang="zh-CN">checkout 测试老挂，修一下</span></div>
+<div class="cl hide" data-s="t1"><span class="en">I'll start by looking at the test.</span><span class="zh" lang="zh-CN">我先看一下这个测试。</span></div>
+<div class="hide" data-s="read"><div class="cl ok"><b>Read</b>(src/checkout.test.ts)</div><div class="cr">Read 42 lines <span class="a">(ctrl+r to expand)</span></div></div>
+<div class="hide" data-s="bash1"><div class="cl err"><b>Bash</b>(npm test -- checkout)</div><div class="cr"><span class="red">1 failed</span>, 41 passed</div></div>
+<div class="hide" data-s="edit"><div class="cl ok"><b>Update</b>(src/checkout.ts)</div><div class="cr">Updated src/checkout.ts with 2 additions and 1 removal</div></div>
+<div class="hide" data-s="bash2"><div class="cl ok"><b>Bash</b>(npm test -- checkout)</div><div class="cr"><span class="grn">42 passed</span> (1.8s)</div></div>
+<div class="cl hide" data-s="reply" id="trep"></div>
+</div>
+<div class="tsp" id="tsp"><i>✻</i> Thinking… <span>(esc to interrupt)</span></div>
+<div class="tin"><b>&gt;</b><span id="ttype"></span><span class="cur"></span></div>
+<div class="hint">? for shortcuts</div>
+</div>
+</div>
+
+<div class="phone" aria-hidden="true"><div class="screen"><div class="app">
+<div class="ios"><span>9:41</span><i></i></div>
+<div class="tbar"><span class="lg"><svg><use href="#logo"/></svg>Baton</span>
+<span class="ac"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9V6a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9Z"/><path d="M3 9h18"/></svg></span>
+<span class="ac"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="7" cy="5" r="2.2"/><circle cx="7" cy="19" r="2.2"/><circle cx="17" cy="7.5" r="2.2"/><path d="M7 7.2v9.6M17 9.7c0 5-10 3-10 7"/></svg></span>
+<span class="ac"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="18" rx="3"/><path d="m6.5 8.5 3.5 3.5-3.5 3.5M13.5 15.5h4"/></svg></span>
+<span class="ac ns"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></span></div>
+<div class="crumb"><span class="ch">MacBook-Pro</span><span class="sp">/</span><span class="ch">acme-web</span><span class="sp">/</span><span class="ttl"><span class="en">fix the flaky checkout test</span><span class="zh" lang="zh-CN">checkout 测试老挂，修一下</span></span><span class="rl"><svg><use href="#rt-claude"/></svg>Claude</span><span class="rn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m16 3 5 5-12 12-6 1 1-6Z M14 5l5 5"/></svg></span></div>
+<div class="msgs" id="pmsgs"></div>
+<div class="spn" id="pspn"><i>·</i><span>Thinking...</span></div>
+<div class="ib"><div class="ir"><span class="pl"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></span><span class="ph"><span class="en">Send a message...</span><span class="zh" lang="zh-CN">发送消息...</span></span><span class="mc"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0"/><path d="M12 19v3"/></svg></span><span class="sd" id="psend"><svg class="up" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg><svg class="sq" viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="2" fill="currentColor"/></svg></span></div></div>
+<div class="ia" id="pia"><span class="ic"><svg><use href="#logo"/></svg></span><div class="hd"><span class="ti">website</span><span class="tm"><span class="en">now</span><span class="zh" lang="zh-CN">现在</span></span></div><div class="sb"><span class="en">Homepage copy</span><span class="zh" lang="zh-CN">首页文案</span></div><div class="by"><span class="en">✅ Done · Rewrote the hero copy and kept both languages in sync.</span><span class="zh" lang="zh-CN">✅ Done · 已重写首页主标题，中英文同步更新。</span></div><span class="x">✕</span></div>
+</div></div></div>
+</div>
+
+<div class="views" role="group" aria-label="View"><button type="button" data-v="term" aria-pressed="true"><span class="en">On your computer</span><span class="zh" lang="zh-CN">在电脑上</span></button><button type="button" data-v="phone" aria-pressed="false"><span class="en">On your phone</span><span class="zh" lang="zh-CN">在手机上</span></button></div>
+<div hidden id="pool">
+<div class="mu" data-s="u"><div class="mt"><span class="en">fix the flaky checkout test</span><span class="zh" lang="zh-CN">checkout 测试老挂，修一下</span></div><time>10:42:08</time></div>
+<div class="at tl" data-s="t1"><span class="en">I'll start by looking at the test.</span><span class="zh" lang="zh-CN">我先看一下这个测试。</span></div>
+<div class="tl tool" data-s="read"><div class="th"><span class="cv">›</span><b>Read</b><span class="ds mono">src/checkout.test.ts</span></div></div>
+<div class="tl tool err" data-s="bash1"><div class="th"><span class="cv o">›</span><b>Bash</b><span class="ds">Run checkout tests</span></div><div class="bd mono"><div><span class="k">IN</span><span class="v">npm test -- checkout</span></div><div><span class="k">OUT</span><span class="v"><span class="red">✕ pays once per order</span>
+1 failed, 41 passed</span></div></div></div>
+<div class="tl" data-s="think"><div class="tk">› Thinking</div></div>
+<div class="tl tool" data-s="edit"><div class="th"><span class="cv o">›</span><b>Edit</b><span class="ds mono">src/checkout.ts</span><span class="st"><span class="p">+2</span> <span class="n">−1</span></span></div><div class="df mono"><div class="m">-  return charge(total)</div><div class="a">+  const res = await charge(total)</div><div class="a">+  return res.confirmed()</div></div></div>
+<div class="tl tool" data-s="bash2"><div class="th"><span class="cv o">›</span><b>Bash</b><span class="ds">Run checkout tests</span></div><div class="bd mono"><div><span class="k">IN</span><span class="v">npm test -- checkout</span></div><div><span class="k">OUT</span><span class="v"><span class="grn">42 passed</span> (1.8s)</span></div></div></div>
+<div class="at tl" data-s="reply" id="prep"></div>
+</div>
+</div>
+</div>
+
+<section id="start">
+<div class="wrap">
+<div class="rv"><h2><span class="en">Get started in two steps</span><span class="zh" lang="zh-CN">两步开始使用</span></h2></div>
+<div class="go">
+<div class="gs">
+<p class="gl"><i>1</i><span class="en">Install Bridge on your computer</span><span class="zh" lang="zh-CN">在电脑上安装 Bridge</span></p>
+<div class="cmd"><span class="os" role="group" aria-label="Operating system"><button type="button" data-o="unix" aria-pressed="true" aria-label="macOS / Linux" title="macOS / Linux"><svg aria-hidden="true"><use href="#p-apple"/></svg><svg aria-hidden="true"><use href="#p-linux"/></svg></button><button type="button" data-o="win" aria-pressed="false" aria-label="Windows" title="Windows"><svg aria-hidden="true"><use href="#p-win"/></svg></button></span><code tabindex="0">curl -fsSL https://agentbaton.app/install | bash</code><button type="button" class="copy" aria-live="polite"><span class="en">Copy</span><span class="zh" lang="zh-CN">复制</span></button></div>
+</div>
+<div class="gs">
+<p class="gl"><i>2</i><span class="en">Get the App, scan the QR or paste the Start URL</span><span class="zh" lang="zh-CN">下载 App，扫码或粘贴 Start URL 连接</span></p>
+<div class="plat">
+<a href="https://testflight.apple.com/join/2HqQHD22" data-os="ios"><svg aria-hidden="true"><use href="#p-apple"/></svg>iOS<span class="qr" aria-hidden="true"><img src="/qr-ios.avif" alt="" loading="lazy" width="132" height="132"><span class="en">Scan to install</span><span class="zh" lang="zh-CN">扫码安装</span></span></a>
+<a href="https://dl.agentbaton.app/Baton.apk" data-os="android"><svg aria-hidden="true"><use href="#p-android"/></svg>Android<span class="qr" aria-hidden="true"><img src="/qr-android.avif" alt="" loading="lazy" width="132" height="132"><span class="en">Scan to install</span><span class="zh" lang="zh-CN">扫码安装</span></span></a>
+<a href="https://dl.agentbaton.app/Baton.dmg" data-os="mac"><svg aria-hidden="true"><use href="#p-mac"/></svg>macOS</a>
+<a href="https://dl.agentbaton.app/Baton.exe" data-os="win"><svg aria-hidden="true"><use href="#p-win"/></svg>Windows</a>
+<a href="https://dl.agentbaton.app/Baton.deb" data-os="linux"><svg aria-hidden="true"><use href="#p-linux"/></svg>Linux</a>
+<a href="https://web.agentbaton.app"><svg aria-hidden="true"><use href="#globe"/></svg>Web</a>
+</div>
+</div>
+</div>
+</div>
+</section>
+
+<section id="features">
+<div class="wrap">
+<div class="rv"><h2><span class="en">Not just the chat.<br>Your whole dev box.</span><span class="zh" lang="zh-CN">不止对话，<br>整台开发机都在手边。</span></h2>
+</div>
+<div class="feats">
+
+<article class="card feat rv">
+<div class="vis mock" aria-hidden="true">
+<div class="hb"><span class="bk"><svg><use href="#i-back"/></svg></span><span class="pi">acme-web</span><span class="gap"></span><span class="ws"><svg><use href="#i-branch"/></svg></span></div>
+<div class="fr"><span class="fi"><svg><use href="#i-folder"/></svg></span><span class="fn">docs</span><span class="cv">›</span></div>
+<div class="fr"><span class="fi"><svg><use href="#i-folder"/></svg></span><span class="fn">public</span><span class="cv">›</span></div>
+<div class="fr tap"><span class="fi"><svg><use href="#i-folder"/></svg></span><span class="fn">src</span><span class="cv">›</span></div>
+<div class="fr"><span class="fi"><svg><use href="#f-git"/></svg></span><span class="fn">.gitignore</span></div>
+<div class="fr"><span class="fi"><svg><use href="#f-md"/></svg></span><span class="fn">README.md</span></div>
+<div class="fr"><span class="fi"><svg><use href="#f-json"/></svg></span><span class="fn">package.json</span></div>
+<div class="fr"><span class="fi"><svg><use href="#f-ts"/></svg></span><span class="fn">tsconfig.json</span></div>
+</div>
+<div class="txt"><h3><span class="en">Project files</span><span class="zh" lang="zh-CN">项目文件</span></h3><p><span class="en">Browse, download and share your source.</span><span class="zh" lang="zh-CN">浏览、下载和分享源码。</span></p></div>
+</article>
+
+<article class="card feat rv">
+<div class="vis mock kbv" aria-hidden="true">
+<div class="hb"><span class="bk"><svg><use href="#i-back"/></svg></span><span class="pi">acme-web</span><span class="gap"></span><span class="tsel">Terminal 1<svg viewBox="0 0 16 16"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></span></div>
+<div class="xt">[you@mac acme-web]$ ls
+README.md  <span class="b">docs</span>  package.json  <span class="b">public</span>  <span class="b">src</span>
+[you@mac acme-web]$ <span class="ty">npm run dev</span>
+<span class="o o1">&gt; acme-web@1.4.0 dev</span>
+<span class="o o2">  <span class="g">VITE v6.2</span>  ready in 312 ms</span>
+<span class="o o3">  ➜  Local:   <span class="b">http://localhost:3000/</span></span>
+<span class="o o4"><span class="cur"></span></span><div class="joy"><span class="u">↑</span><span class="l">←</span><b></b><span class="r">→</span><span class="d">↓</span></div></div>
+<div class="kb"><span>Esc</span><span>Tab</span><span>Ctrl</span><span>Shift</span><span>Alt</span><span>Paste</span><span>Enter</span></div>
+</div>
+<div class="txt"><h3><span class="en">Terminals</span><span class="zh" lang="zh-CN">终端</span></h3><p><span class="en">Your shells, live on every device.</span><span class="zh" lang="zh-CN">终端在每台设备上实时同步。</span></p></div>
+</article>
+
+<article class="card feat rv">
+<div class="vis mock" aria-hidden="true">
+<div class="pv"><svg><use href="#i-back"/></svg><svg style="transform:scaleX(-1);opacity:.5"><use href="#i-back"/></svg><span class="uf"><span>http://localhost:3000/checkout</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M20 12a8 8 0 1 1-2.3-5.6M20 4v4h-4"/></svg></span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></svg><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></div>
+<div class="prog"></div>
+<div class="page"><div class="nv">acme<span><i></i><i></i><i></i></span></div>
+<div class="pg"><div class="bx"><h4>Checkout</h4><div class="ln" style="width:90%"></div><div class="ln" style="width:70%"></div><div class="ln" style="width:80%"></div><div class="ln" style="width:55%"></div></div>
+<div class="bx"><div class="sum">Subtotal<b>$48.00</b></div><div class="sum">Shipping<b>$0.00</b></div><div class="sum">Total<b>$48.00</b></div><div class="pay">Pay now</div></div></div></div>
+</div>
+<div class="txt"><h3><span class="en">Localhost previews</span><span class="zh" lang="zh-CN">本地端口预览</span></h3><p><span class="en">Open any local port, no SSH.</span><span class="zh" lang="zh-CN">直接打开本地端口，无需 SSH。</span></p></div>
+</article>
+
+<article class="card feat rv">
+<div class="vis mock" aria-hidden="true">
+<div class="hb"><span class="bk"><svg><use href="#i-back"/></svg></span><span class="pi">acme-web</span><span class="sep">›</span><span class="br"><svg><use href="#i-branch"/></svg>fix/checkout</span><span class="gap"></span><span class="ws"><svg><use href="#i-folder"/></svg></span></div>
+<div class="cb"><div class="ci">Message (commit to fix/checkout)</div><div class="ca">Commit 1 file</div></div>
+<div class="sh"><svg><use href="#i-down"/></svg>Staged Changes<span class="ct">1</span><span class="gap"></span><span class="ac"><svg><use href="#i-minus"/></svg></span></div>
+<div class="gf"><svg><use href="#f-ts"/></svg><span class="nm">checkout.ts</span><span class="dr">src</span><span class="st">M</span><span class="ac"><svg><use href="#i-minus"/></svg></span></div>
+<div class="sh"><svg><use href="#i-down"/></svg>Graph<span class="gap"></span><span class="rp">All branches ⌄</span></div>
+<div class="gwrap"><svg class="gsv" viewBox="0 0 28 187"><path d="M8 17V187" stroke="#58a6ff"/><path class="p2" d="M8 17C8 25.5 20 25.5 20 34V102C20 110.5 8 110.5 8 119" stroke="#3fb950"/><circle cx="8" cy="17" r="6" fill="#0d1117" stroke="#58a6ff" stroke-width="2"/><circle cx="20" cy="51" r="4" fill="#3fb950"/><circle cx="20" cy="85" r="4" fill="#3fb950"/><circle cx="8" cy="119" r="4" fill="#58a6ff"/><circle cx="8" cy="153" r="4" fill="#58a6ff"/><circle class="hd" cx="8" cy="17" r="2.5" fill="#58a6ff"/></svg>
+<div class="gc"><span class="sj">Merge fix/checkout</span><span class="rf">main</span><span class="tm">2m</span></div>
+<div class="gc"><span class="sj">Await payment confirmation</span><span class="au">you</span><span class="tm">5m</span></div>
+<div class="gc"><span class="sj">Add checkout test</span><span class="au">you</span><span class="tm">14m</span></div>
+<div class="gc"><span class="sj">Bump vite to 6.2</span><span class="au">you</span><span class="tm">1h</span></div>
+<div class="gc"><span class="sj">Cart totals</span><span class="au">you</span><span class="tm">3h</span></div></div>
+</div>
+<div class="txt"><h3>Git</h3><p><span class="en">Review, commit and push.</span><span class="zh" lang="zh-CN">查看改动、提交和推送。</span></p></div>
+</article>
+
+</div>
+</div>
+</section>
+
+<section id="compare">
+<div class="wrap">
+<div class="rv"><h2><span class="en">How Baton compares</span><span class="zh" lang="zh-CN">和同类工具比一比</span></h2>
+<p class="sub"><span class="en">Against other open-source apps for coding agents on your phone.</span><span class="zh" lang="zh-CN">对比其他开源的手机端编程 Agent 工具。</span></p></div>
+<div class="cmp rv"><table>
+<thead><tr><th></th><th scope="col" class="b"><svg class="lg" aria-hidden="true"><use href="#logo"/></svg>Baton</th><th scope="col">Orca</th><th scope="col">t3code</th><th scope="col">Paseo</th><th scope="col">Happy</th></tr></thead>
+<tbody><tr style="--r:0"><th scope="row"><span class="en">Major agents</span><span class="zh" lang="zh-CN">主流 Agent</span></th><td class="b y" tabindex="0" data-zh="Claude Code、Codex 等 7 种" data-en="Claude Code, Codex and 5 more"><i class="sr">Supported</i></td><td class="y"><i class="sr">Supported</i></td><td class="y"><i class="sr">Supported</i></td><td class="y"><i class="sr">Supported</i></td><td class="y"><i class="sr">Supported</i></td></tr><tr style="--r:1"><th scope="row"><span class="en">Live session sync</span><span class="zh" lang="zh-CN">会话实时同步</span></th><td class="b y" tabindex="0" data-zh="终端、VS Code 里的会话都能实时看" data-en="Sessions in your terminal or IDE, live"><i class="sr">Supported</i></td><td class="n" tabindex="0" data-zh="只显示 Orca 自己的会话" data-en="Only sessions run by Orca"><i class="sr">Not supported</i></td><td class="n" tabindex="0" data-zh="只能一次性导入" data-en="One-time import only"><i class="sr">Not supported</i></td><td class="n" tabindex="0" data-zh="只能手动导入" data-en="Manual import only"><i class="sr">Not supported</i></td><td class="p" tabindex="0" data-zh="只限用 happy 启动的会话" data-en="Only sessions started via happy"><i class="sr">Partly</i></td></tr><tr style="--r:2"><th scope="row"><span class="en">Phone ⇄ computer handoff</span><span class="zh" lang="zh-CN">双向接力</span></th><td class="b y" tabindex="0" data-zh="接管时先关闭终端进程，避免记录分叉" data-en="Closes the terminal process first so history never forks"><i class="sr">Supported</i></td><td class="p" tabindex="0" data-zh="只限 Orca 自己的终端" data-en="Only Orca&#x27;s own terminal"><i class="sr">Partly</i></td><td class="p" tabindex="0" data-zh="终端会话要先导入" data-en="Terminal sessions must be imported"><i class="sr">Partly</i></td><td class="p" tabindex="0" data-zh="终端会话要先导入" data-en="Terminal sessions must be imported"><i class="sr">Partly</i></td><td class="p" tabindex="0" data-zh="只限用 happy 启动的会话" data-en="Only sessions started via happy"><i class="sr">Partly</i></td></tr><tr style="--r:3"><th scope="row"><span class="en">Push notifications</span><span class="zh" lang="zh-CN">推送通知</span></th><td class="b y" tabindex="0" data-zh="完成、需要输入时提醒" data-en="When a session finishes or needs you"><i class="sr">Supported</i></td><td class="y" tabindex="0" data-zh="不用登录" data-en="No sign-in needed"><i class="sr">Supported</i></td><td class="p" tabindex="0" data-zh="要注册 T3 Connect 账号" data-en="Needs a T3 Connect account"><i class="sr">Partly</i></td><td class="y"><i class="sr">Supported</i></td><td class="y"><i class="sr">Supported</i></td></tr><tr style="--r:4"><th scope="row"><span class="en">End-to-end encryption</span><span class="zh" lang="zh-CN">端到端加密</span></th><td class="b y" tabindex="0" data-zh="消息、文件、视频全部加密" data-en="Messages, files and video, all encrypted"><i class="sr">Supported</i></td><td class="y"><i class="sr">Supported</i></td><td class="p" tabindex="0" data-zh="官方中继经 Cloudflare 解密；自配 Tailscale 才加密" data-en="Official relay decrypts at Cloudflare; E2EE only via your own Tailscale"><i class="sr">Partly</i></td><td class="y"><i class="sr">Supported</i></td><td class="p" tabindex="0" data-zh="推送正文是明文" data-en="Push text is plaintext"><i class="sr">Partly</i></td></tr><tr style="--r:5"><th scope="row"><span class="en">No sign-up</span><span class="zh" lang="zh-CN">免注册</span></th><td class="b y" tabindex="0" data-zh="扫码配对" data-en="Scan a QR code to pair"><i class="sr">Supported</i></td><td class="p" tabindex="0" data-zh="中继要登录" data-en="Relay needs an account"><i class="sr">Partly</i></td><td class="p" tabindex="0" data-zh="远程使用要登录" data-en="Remote use needs an account"><i class="sr">Partly</i></td><td class="y"><i class="sr">Supported</i></td><td class="y"><i class="sr">Supported</i></td></tr><tr style="--r:6"><th scope="row"><span class="en">Auto-discovers all sessions</span><span class="zh" lang="zh-CN">自动发现所有会话</span></th><td class="b y" tabindex="0" data-zh="装好就能看到全部" data-en="Everything shows up once installed"><i class="sr">Supported</i></td><td class="p" tabindex="0" data-zh="要在 Orca 工作区里打开" data-en="Listed inside an Orca workspace"><i class="sr">Partly</i></td><td class="p" tabindex="0" data-zh="手动导入，最近 30 天、200 条" data-en="Manual import, last 30 days / 200 messages"><i class="sr">Partly</i></td><td class="p" tabindex="0" data-zh="要手动导入" data-en="Manual import"><i class="sr">Partly</i></td><td class="n" tabindex="0" data-zh="只显示用 happy 启动的" data-en="Only sessions started via happy"><i class="sr">Not supported</i></td></tr><tr style="--r:7"><th scope="row"><span class="en">Mobile terminal</span><span class="zh" lang="zh-CN">手机终端</span></th><td class="b y" tabindex="0" data-zh="macOS、Linux、Windows" data-en="macOS, Linux and Windows"><i class="sr">Supported</i></td><td class="y"><i class="sr">Supported</i></td><td class="y"><i class="sr">Supported</i></td><td class="y"><i class="sr">Supported</i></td><td class="n"><i class="sr">Not supported</i></td></tr><tr style="--r:8"><th scope="row"><span class="en">Git commit &amp; push</span><span class="zh" lang="zh-CN">Git 提交与推送</span></th><td class="b y" tabindex="0" data-zh="暂存、提交、推送、提交图" data-en="Stage, commit, push, branch graph"><i class="sr">Supported</i></td><td class="y"><i class="sr">Supported</i></td><td class="y" tabindex="0" data-zh="选文件提交、推送、开 PR" data-en="Commit chosen files, push, open PRs"><i class="sr">Supported</i></td><td class="p" tabindex="0" data-zh="提交时全部暂存" data-en="Commits stage everything"><i class="sr">Partly</i></td><td class="p" tabindex="0" data-zh="只能查看改动" data-en="View changes only"><i class="sr">Partly</i></td></tr><tr style="--r:9"><th scope="row"><span class="en">File preview</span><span class="zh" lang="zh-CN">文件预览</span></th><td class="b y" tabindex="0" data-zh="含 Office、PDF、视频" data-en="Office, PDF and video too"><i class="sr">Supported</i></td><td class="p" tabindex="0" data-zh="不能预览 Office" data-en="No Office preview"><i class="sr">Partly</i></td><td class="p" tabindex="0" data-zh="不能预览 Office" data-en="No Office preview"><i class="sr">Partly</i></td><td class="p" tabindex="0" data-zh="只有 Markdown、网页、图片、代码" data-en="Markdown, HTML, images and code only"><i class="sr">Partly</i></td><td class="p" tabindex="0" data-zh="格式有限" data-en="Limited formats"><i class="sr">Partly</i></td></tr><tr style="--r:10"><th scope="row"><span class="en">Localhost preview</span><span class="zh" lang="zh-CN">本地端口预览</span></th><td class="b y" tabindex="0" data-zh="手机上打开真实网页，不用 SSH" data-en="Real pages on your phone, no SSH"><i class="sr">Supported</i></td><td class="p" tabindex="0" data-zh="截屏画面，要开着桌面端" data-en="Screen stream from the desktop app"><i class="sr">Partly</i></td><td class="y"><i class="sr">Supported</i></td><td class="p" tabindex="0" data-zh="要自己配公网代理域名" data-en="Needs your own public proxy domain"><i class="sr">Partly</i></td><td class="p" tabindex="0" data-zh="要配对 Happy Desktop" data-en="Needs Happy Desktop"><i class="sr">Partly</i></td></tr><tr style="--r:11"><th scope="row"><span class="en">Mermaid &amp; HTML</span><span class="zh" lang="zh-CN">Mermaid 与网页</span></th><td class="b y" tabindex="0" data-zh="所有 Agent 都能内嵌图表和网页" data-en="Diagrams and HTML pages for every agent"><i class="sr">Supported</i></td><td class="p" tabindex="0" data-zh="网页显示为纯文本" data-en="HTML shown as text"><i class="sr">Partly</i></td><td class="y"><i class="sr">Supported</i></td><td class="p" tabindex="0" data-zh="网页只在文件面板" data-en="HTML only in the file panel"><i class="sr">Partly</i></td><td class="p" tabindex="0" data-zh="网页要 Happy Desktop" data-en="HTML needs Happy Desktop"><i class="sr">Partly</i></td></tr><tr style="--r:12"><th scope="row"><span class="en">App size</span><span class="zh" lang="zh-CN">安装包大小</span></th><td class="b sz">5.6<small> MB</small></td><td class=" sz" tabindex="0" data-zh="v1.4.269，x64 DMG" data-en="v1.4.269, x64 DMG">304<small> MB</small></td><td class=" sz" tabindex="0" data-zh="v0.1.11，x64 DMG" data-en="v0.1.11, x64 DMG">244<small> MB</small></td><td class=" sz" tabindex="0" data-zh="v0.17.2，x64 DMG" data-en="v0.17.2, x64 DMG">200<small> MB</small></td><td class=" sz" tabindex="0" data-zh="v2026.11.4，x64 DMG" data-en="v2026.11.4, x64 DMG">151<small> MB</small></td></tr><tr class="tot"><th scope="row"><span class="en">Total</span><span class="zh" lang="zh-CN">合计</span></th><td class="b">12<small>/12</small></td><td class="">5<small>/12</small></td><td class="">5<small>/12</small></td><td class="">5<small>/12</small></td><td class="">3<small>/12</small></td></tr></tbody>
+</table></div>
+<p class="cmp-note"><i class="y"></i> <span class="en">Supported</span><span class="zh" lang="zh-CN">支持</span>　<i class="p"></i> <span class="en">Partly supported</span><span class="zh" lang="zh-CN">部分支持</span>　<i class="n"></i> <span class="en">Not supported</span><span class="zh" lang="zh-CN">不支持</span><br>
+<span class="en">As of November 2026. Tap a cell for details.</span><span class="zh" lang="zh-CN">截至 2026 年 11 月，点格子查看说明。</span></p>
+</div>
+</section>
+</main>
+
+<footer>
+<div class="wrap foot">
+<a class="brand" href="#top"><svg aria-hidden="true"><use href="#logo"/></svg>Baton</a>
+<span class="sp"></span>
+<a href="/privacy/"><span class="en">Privacy</span><span class="zh" lang="zh-CN">隐私政策</span></a>
+<a href="mailto:support@agentbaton.app"><span class="en">Support</span><span class="zh" lang="zh-CN">支持</span></a>
+<a class="gh" href="https://github.com/agentbaton/baton"><svg aria-hidden="true"><use href="#gh"/></svg>GitHub</a>
+<span>©&#xFE0E; 2026 Baton</span>
+</div>
+</footer>
+
+<script>
+(function(){
+var d=document.documentElement,$=function(s,r){return(r||document).querySelector(s)},$$=function(s,r){return[].slice.call((r||document).querySelectorAll(s))};
+var reduce=matchMedia('(prefers-reduced-motion: reduce)').matches;
+function zh(){return d.lang.indexOf('zh')===0}
+function setLang(l){d.lang=l==='zh'?'zh-CN':'en';try{localStorage.setItem('baton-lang',l)}catch(e){}sync();if(window.onLang)onLang()}
+function sync(){var z=zh();$$('.lang button').forEach(function(b){b.setAttribute('aria-pressed',String((b.dataset.lang==='zh')===z))});
+document.title=z?'Baton：电脑上的 Agent，手机上接着用':'Baton: your coding agents, on your phone'}
+$$('.lang button').forEach(function(b){b.onclick=function(){setLang(b.dataset.lang)}});sync();
+
+var h=$('header');addEventListener('scroll',function(){h.classList.toggle('scrolled',scrollY>8)},{passive:true});
+
+// OS detection: tab + suggested download
+var ua=navigator.userAgent,os=/iPhone|iPad|iPod/.test(ua)?'ios':/Android/.test(ua)?'android':/Win/.test(ua)?'win':/Mac/.test(ua)?'mac':/Linux|X11/.test(ua)?'linux':'';
+var CMD={unix:'curl -fsSL https://agentbaton.app/install | bash',win:'irm https://agentbaton.app/install.ps1 | iex'},cur;
+function setOS(o){cur=o;var c=$('.go .cmd');c.classList.toggle('ps',o==='win');$('code',c).textContent=CMD[o];$$('.os button').forEach(function(b){b.setAttribute('aria-pressed',String(b.dataset.o===o))})}
+$$('.os button').forEach(function(b){b.onclick=function(){setOS(b.dataset.o)}});setOS(os==='win'?'win':'unix');
+
+$$('.copy').forEach(function(b){b.onclick=function(){var t=b.parentNode.querySelector('code').textContent;
+function done(){b.classList.add('ok');b.innerHTML='<span class="en">Copied</span><span class="zh" lang="zh-CN">已复制</span>';setTimeout(function(){b.classList.remove('ok');b.innerHTML='<span class="en">Copy</span><span class="zh" lang="zh-CN">复制</span>'},1600)}
+if(navigator.clipboard&&isSecureContext)navigator.clipboard.writeText(t).then(done,fallback);else fallback();
+function fallback(){var a=document.createElement('textarea');a.value=t;a.style.position='fixed';a.style.opacity='0';document.body.appendChild(a);a.select();a.setSelectionRange(0,t.length);try{document.execCommand('copy');done()}catch(e){}a.remove()}}});
+
+// scroll reveal
+var io='IntersectionObserver' in window&&new IntersectionObserver(function(es){es.forEach(function(e){if(e.isIntersecting){e.target.classList.add('in');io.unobserve(e.target)}})},{rootMargin:'0px 0px -8% 0px',threshold:.12});
+$$('.rv').forEach(function(el){io?io.observe(el):el.classList.add('in')});
+
+// hero: Claude Code works in the terminal; the same Session continues in the App
+var stage=$('#stage');
+var REPLY={en:"Fixed. The test asserted before the payment mock resolved, so `checkout()` now awaits `res.confirmed()`. All 42 tests pass.",
+zh:"已修复。测试在支付 mock 返回前就断言了，现在 `checkout()` 会先等待 `res.confirmed()`。42 个测试全部通过。"};
+var PROMPT={en:'fix the flaky checkout test',zh:'checkout 测试老挂，修一下'};
+var GLYPHS=['·','✢','✦','✶','✻','✽','✻','✶','✦','✢'],VERBS=['Thinking','Cooking','Pondering'];
+function md(t,cls){return t.replace(/[&<>]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;'}[c]}).replace(/`([^`]+)`/g,'<code class="'+cls+'">$1</code>').replace(/`[^`]*$/,'')}
+var tlog=$('#tlog'),tsp=$('#tsp'),ttype=$('#ttype'),trep=$('#trep'),pmsgs=$('#pmsgs'),pspn=$('#pspn'),psend=$('#psend'),pia=$('#pia'),pool=$('#pool');
+var poolItems=$$('[data-s]',pool),termItems=$$('[data-s]',tlog),narrow=matchMedia('(max-width:760px)');
+var timers=[],visible=true,running=false,gi=0,turn;
+setInterval(function(){gi=(gi+1)%GLYPHS.length;$('i',tsp).textContent=GLYPHS[gi];$('i',pspn).textContent=GLYPHS[gi]},120);
+var pv=$('span',pspn),vi=0,old='';
+(function typeVerb(){var nt=VERBS[vi++%VERBS.length]+'...',ot=old,pos=0,len=nt.length;old=nt;
+var iv=setInterval(function(){if(++pos>len){clearInterval(iv);pv.textContent=nt;setTimeout(typeVerb,1500);return}
+pv.innerHTML=nt.slice(0,pos)+'<span class="ccur"></span>'+(pos<ot.length?ot.slice(pos):'')},800/len)})();
+function at(ms,f){timers.push(setTimeout(f,ms))}
+var manual=false;
+function view(v){stage.classList.toggle('v-phone',v==='phone');$$('.views button').forEach(function(b){b.setAttribute('aria-pressed',String(b.dataset.v===v))})}
+$$('.views button').forEach(function(b){b.onclick=function(){manual=true;view(b.dataset.v)}});
+function show(k){termItems.forEach(function(el){if(el.dataset.s===k){el.classList.remove('hide');el.classList.add('on')}});
+var p=poolItems.filter(function(el){return el.dataset.s===k})[0];if(!p)return;
+if(k==='u'){pmsgs.appendChild(p);turn=document.createElement('div');turn.className='turn';pmsgs.appendChild(turn)}else turn.appendChild(p);pin()}
+function pin(){tlog.scrollTop=tlog.scrollHeight;pmsgs.scrollTop=pmsgs.scrollHeight}
+function busy(on){tsp.classList.toggle('on',on);pspn.classList.toggle('on',on);psend.classList.toggle('stop',on)}
+function reset(){timers.forEach(clearTimeout);timers=[];
+termItems.forEach(function(el){el.classList.add('hide');el.classList.remove('on')});
+poolItems.forEach(function(el){pool.appendChild(el)});pmsgs.textContent='';trep.textContent='';$('#prep').textContent='';ttype.textContent='';
+$$('.tool',pool).forEach(function(el){el.classList.remove('run')});busy(false);pia.classList.remove('on')}
+function final(){reset();['u','t1','read','bash1','think','edit','bash2','reply'].forEach(show);var k=zh()?'zh':'en';
+trep.innerHTML=md(REPLY[k],'cc');$('#prep').innerHTML=md(REPLY[k],'');pia.classList.add('on');view('phone');pin()}
+function cycle(){running=true;reset();manual=false;view('term');stage.classList.remove('fade');
+var k=zh()?'zh':'en',p=PROMPT[k],r=REPLY[k],i=0,step=k==='zh'?1:2,phone=narrow.matches;
+(function type(){ttype.textContent=p.slice(0,++i);if(i<p.length)timers.push(setTimeout(type,k==='zh'?90:45))})();
+at(1500,function(){ttype.textContent='';show('u');busy(true)});
+at(2300,function(){show('t1')});
+at(3000,function(){show('read')});
+at(3800,function(){show('bash1');$('[data-s=bash1]',pmsgs).classList.add('run')});
+at(4500,function(){$('[data-s=bash1]',pmsgs).classList.remove('run')});
+at(5100,function(){show('think')});
+if(phone)at(5900,function(){if(!manual)view('phone')});
+at(6900,function(){show('edit')});
+at(7900,function(){show('bash2');$('[data-s=bash2]',pmsgs).classList.add('run')});
+at(8500,function(){$('[data-s=bash2]',pmsgs).classList.remove('run')});
+var j=0,prep=$('#prep');
+at(9100,function tick(){if(j===0)show('reply');j=Math.min(r.length,j+step);var t=r.slice(0,j);
+trep.innerHTML=md(t,'cc');prep.innerHTML=md(t,'')+'<span class="cur"></span>';pin();
+if(j<r.length)timers.push(setTimeout(tick,k==='zh'?55:28));else at(400,done)});
+function done(){prep.innerHTML=md(r,'');busy(false);at(900,function(){pia.classList.add('on')});
+at(6200,function(){pia.classList.remove('on')});at(7000,function(){stage.classList.add('fade')});
+at(7400,function(){visible?cycle():running=false})}}
+window.onLang=function(){if(reduce||!io)final();else if(running){var p=manual&&stage.classList.contains('v-phone');cycle();if(p){manual=true;view('phone')}}};
+if(reduce||!io)final();
+else{stage.classList.add('anim');new IntersectionObserver(function(es){visible=es[0].isIntersecting;if(visible&&!running)cycle()}).observe(stage)}
+
+})();
+</script>
+</body>
+</html>

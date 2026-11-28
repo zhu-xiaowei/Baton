@@ -9,4 +9,5 @@ android {
 dependencies {
   implementation(project(":tauri-android"))
   implementation("androidx.core:core-ktx:1.7.0")
+  implementation("androidx.lifecycle:lifecycle-process:2.10.0") // the app's own version
 }

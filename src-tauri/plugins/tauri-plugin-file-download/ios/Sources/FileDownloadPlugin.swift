@@ -75,7 +75,10 @@ class FileDownloadPlugin: Plugin {
     let args: DownloadArgs
     do { args = try invoke.parseArgs(DownloadArgs.self) }
     catch { invoke.reject("Invalid download arguments"); return }
-    guard let url = URL(string: args.url), url.scheme == "https", url.host != nil, url.user == nil, url.password == nil else {
+    // The page's media server serves sealed files on loopback (NSAllowsLocalNetworking).
+    let parsed = URL(string: args.url)
+    let loopback = parsed?.scheme == "http" && ["127.0.0.1", "localhost"].contains(parsed?.host ?? "")
+    guard let url = parsed, url.scheme == "https" || loopback, url.host != nil, url.user == nil, url.password == nil else {
       invoke.reject("Downloads require an HTTPS URL"); return
     }
     let name = (args.name.replacingOccurrences(of: "\\", with: "/") as NSString).lastPathComponent
@@ -101,7 +104,7 @@ class FileDownloadPlugin: Plugin {
         guard let response = task.response as? HTTPURLResponse, (200..<300).contains(response.statusCode),
               let temporary = temporary else { throw NSError(domain: "Download failed", code: 1) }
         let size = try temporary.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
-        guard size <= 512 * 1024 * 1024 else { throw NSError(domain: "File exceeds 512 MB", code: 1) }
+        guard size <= 5_000_000_000 else { throw NSError(domain: "File exceeds 5 GB", code: 1) }
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("baton-download-" + UUID().uuidString)
         directory = folder
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)

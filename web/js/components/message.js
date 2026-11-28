@@ -1,6 +1,8 @@
 import { extractAttachments, fileAttachmentHtml } from './attachment.js';
 import { systemEventId } from '../timeline.js';
 import { copyButtonHtml } from '../copy.js';
+import { loadThinking } from '../tool-details.js';
+import { showToast } from './toast.js';
 
 // Message bubble components
 (function () {
@@ -170,7 +172,8 @@ import { copyButtonHtml } from '../copy.js';
       const cbMatch = imgPath.match(/baton-bridge:(.+)/);
       const key = cbMatch ? cbMatch[1] : imgPath.split(/[\\/]/).pop();
       if (key && key.match(/\.(jpg|png|jpeg)$/i)) {
-        badges.push(`<div class="img-placeholder" data-key="${esc(key)}"><svg class="img-spinner" viewBox="0 0 36 36"><circle cx="18" cy="18" r="14" fill="none" stroke="rgba(var(--spinner-rgb), 0.15)" stroke-width="3"/><circle cx="18" cy="18" r="14" fill="none" stroke="var(--text-secondary)" stroke-width="3" stroke-dasharray="80" stroke-dashoffset="60" stroke-linecap="round"><animateTransform attributeName="transform" type="rotate" from="0 18 18" to="360 18 18" dur="1s" repeatCount="indefinite"/></circle></svg></div>`);
+        const local = cbMatch ? '' : ` data-local="${esc(imgPath)}"`;
+        badges.push(`<div class="img-placeholder" data-key="${esc(key)}"${local}><svg class="img-spinner" viewBox="0 0 36 36"><circle cx="18" cy="18" r="14" fill="none" stroke="rgba(var(--spinner-rgb), 0.15)" stroke-width="3"/><circle cx="18" cy="18" r="14" fill="none" stroke="var(--text-secondary)" stroke-width="3" stroke-dasharray="80" stroke-dashoffset="60" stroke-linecap="round"><animateTransform attributeName="transform" type="rotate" from="0 18 18" to="360 18 18" dur="1s" repeatCount="indefinite"/></circle></svg></div>`);
       }
     });
     const attachHtml = badges.length ? `<div class="msg-attachments">${badges.join('')}</div>` : '';
@@ -201,24 +204,56 @@ import { copyButtonHtml } from '../copy.js';
     return INTERRUPT_MAP[text] || 'Interrupted';
   };
 
-  // Render thinking block (collapsible)
-  window.renderThinking = function (block) {
+  // Render thinking block (collapsible). `ref` names text a history page left out (loaded on expand).
+  window.renderThinking = function (block, ref = '') {
     const secs = Math.round((block.duration_ms || 0) / 1000);
     const label = secs > 0 ? `Thought for ${secs}s` : 'Thinking';
     const duration = Number.isFinite(block.duration_ms)
       ? ` data-thinking-duration-ms="${Math.max(0, block.duration_ms)}"` : '';
-    const id = 'think-' + Math.random().toString(36).slice(2, 8);
-    return `<div class="thinking-block"${duration}>
-      <div class="thinking-toggle" onclick="var b=document.getElementById('${id}');if(!b.textContent.trim())return;this.classList.toggle('open');b.style.display=b.style.display==='block'?'none':'block'"><span class="thinking-label">${label}</span> <span class="thinking-chevron">&#8250;</span></div>
-      <div class="thinking-body" id="${id}">${esc(block.thinking || '')}</div>
+    const remote = block.truncated && !block.thinking && ref ? ` data-thinking-ref="${esc(ref)}"` : '';
+    return `<div class="thinking-block"${duration}${remote}>
+      <div class="thinking-toggle" onclick="toggleThinking(this)"><span class="thinking-label">${label}</span> <span class="thinking-chevron">&#8250;</span></div>
+      <div class="thinking-body">${esc(block.thinking || '')}</div>
     </div>`;
+  };
+
+  window.toggleThinking = async function (toggle) {
+    const block = toggle.closest('.thinking-block');
+    const body = block?.querySelector('.thinking-body');
+    if (!body) return;
+    if (!body.textContent.trim() && block.dataset.thinkingRef) {
+      if (block.getAttribute('aria-busy') === 'true') return;
+      block.setAttribute('aria-busy', 'true');
+      try {
+        body.textContent = await loadThinking(block.dataset.thinkingRef);
+      } catch (error) {
+        if (block.isConnected) showToast(error.message); // not after a Session switch
+        return;
+      } finally {
+        block.removeAttribute('aria-busy');
+      }
+    }
+    if (!body.textContent.trim()) return;
+    toggle.classList.toggle('open');
+    body.style.display = body.style.display === 'block' ? 'none' : 'block';
+  };
+
+  const SYSTEM_EVENT_ICONS = {
+    clock: '<circle cx="8" cy="9" r="5"/><path d="M8 6.5V9l1.8 1.2M3.5 3.2l1.6-1.2M12.5 3.2l-1.6-1.2"/>',
+    team: '<circle cx="6" cy="5.5" r="2.2"/><path d="M2 13c.4-2.2 2-3.5 4-3.5s3.6 1.3 4 3.5"/><circle cx="11.3" cy="6" r="1.7"/><path d="M11 9.6c1.6.1 2.7 1.2 3 3"/>',
+    revert: '<path d="M4 6h6a3 3 0 010 6H6"/><path d="M6 3.5L3.5 6 6 8.5"/>',
+    bookmark: '<path d="M4.5 2.5h7v11l-3.5-2.6-3.5 2.6z"/>',
+    alert: '<circle cx="8" cy="8" r="6"/><path d="M8 4.8v3.8M8 11.1v.1"/>',
   };
 
   window.renderSystemEvent = function (msg) {
     const content = contentText(msg);
     if (!content) return '';
     const segment = esc(systemEventId(msg)).replace(/"/g, '&quot;');
-    return `<div class="msg-system-event" data-timeline-segment="${segment}"${msg.timestamp ? ` data-ts="${esc(msg.timestamp)}"` : ''}><span>${esc(content)}</span></div>`;
+    const icon = SYSTEM_EVENT_ICONS[msg.icon];
+    const svg = icon ? `<svg class="msg-event-icon" viewBox="0 0 16 16" aria-hidden="true">${icon}</svg>` : '';
+    const notice = msg.icon === 'alert' ? ' msg-system-notice' : '';
+    return `<div class="msg-system-event${notice}" data-timeline-segment="${segment}"${msg.timestamp ? ` data-ts="${esc(msg.timestamp)}"` : ''}>${svg}<span>${esc(content)}</span></div>`;
   };
 
   window.renderSummary = function (msg) {

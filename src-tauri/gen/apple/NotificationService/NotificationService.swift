@@ -1,10 +1,12 @@
+import CryptoKit
 import Foundation
 import Security
 import UserNotifications
 
-// A push carries only an event ID: the relay and Apple never see the text. Resolve it
-// against the user's own server (credentials shared by the app through a keychain group);
-// if that fails in time, the placeholder from the push is shown and the tap still works.
+// A push carries an event ID and usually the alert sealed by the Bridge: the relay and Apple never
+// see the text. Open it from the push, else resolve the ID against the user's own server
+// (credentials shared by the app through a keychain group); if that fails in time, the
+// placeholder from the push is shown and the tap still works.
 final class NotificationService: UNNotificationServiceExtension {
   private var deliver: ((UNNotificationContent) -> Void)?
   private var content: UNMutableNotificationContent?
@@ -17,8 +19,15 @@ final class NotificationService: UNNotificationServiceExtension {
     let content = request.content.mutableCopy() as! UNMutableNotificationContent
     self.content = content
     deliver = contentHandler
+    let saved = Self.credentials()
+    var pushed: [String: Any] = [:]
+    for (key, value) in content.userInfo { if let key = key as? String { pushed[key] = value } }
+    if pushed["eventId"] != nil, let event = Self.open(pushed, saved?.2 ?? "") {
+      Self.show(event, in: content)
+      return finish()
+    }
     guard let id = content.userInfo["id"] as? String,
-          let (server, apiKey) = Self.credentials(),
+          let (server, apiKey, notifyKey) = saved,
           var url = URLComponents(string: server + "/api/notifications/event") else {
       return finish()
     }
@@ -28,18 +37,22 @@ final class NotificationService: UNNotificationServiceExtension {
     task = URLSession.shared.dataTask(with: fetch) { [weak self] data, response, _ in
       if (response as? HTTPURLResponse)?.statusCode == 200,
          let data = data,
-         let event = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] {
-        // Two bold lines, each truncated on its own: a long project name no longer hides the session.
-        content.title = event["projectName"] as? String ?? event["title"] as? String ?? content.title
-        content.subtitle = event["sessionTitle"] as? String ?? ""
-        content.body = event["body"] as? String ?? content.body
-        content.threadIdentifier = event["rootSessionId"] as? String ?? ""
-        // The app opens the session from these on tap.
-        content.userInfo = event.compactMapValues { $0 as? String }.merging(["id": id]) { $1 }
+         let event = Self.open((try? JSONSerialization.jsonObject(with: data)) as? [String: Any], notifyKey) {
+        Self.show(event.merging(["id": id]) { $1 }, in: content)
       }
       self?.finish()
     }
     task?.resume()
+  }
+
+  private static func show(_ event: [String: Any], in content: UNMutableNotificationContent) {
+    // Two bold lines, each truncated on its own: a long project name no longer hides the session.
+    content.title = event["projectName"] as? String ?? event["title"] as? String ?? content.title
+    content.subtitle = event["sessionTitle"] as? String ?? ""
+    content.body = event["body"] as? String ?? content.body
+    content.threadIdentifier = event["rootSessionId"] as? String ?? ""
+    // The app opens the session from these on tap.
+    content.userInfo = event.compactMapValues { $0 as? String }
   }
 
   override func serviceExtensionTimeWillExpire() {
@@ -53,7 +66,20 @@ final class NotificationService: UNNotificationServiceExtension {
     deliver(content)
   }
 
-  private static func credentials() -> (String, String)? {
+  // A sealed alert (`e`, bridge/notify.mjs): AES-GCM bound to its eventId; plaintext after a 5-byte header.
+  private static func open(_ event: [String: Any]?, _ key: String) -> [String: Any]? {
+    guard var event = event, let text = event["e"] as? String, !text.isEmpty else { return event }
+    // Sealed but not openable (no key yet): keep the placeholder from the push.
+    guard let sealed = Data(base64Encoded: text),
+          let keyData = Data(base64Encoded: key), let box = try? AES.GCM.SealedBox(combined: sealed),
+          let plain = try? AES.GCM.open(box, using: SymmetricKey(data: keyData),
+                                        authenticating: Data(((event["eventId"] as? String) ?? "").utf8)),
+          let fields = (try? JSONSerialization.jsonObject(with: plain.dropFirst(5))) as? [String: Any] else { return nil }
+    event.merge(fields) { $1 }
+    return event
+  }
+
+  private static func credentials() -> (String, String, String)? {
     let query: [String: Any] = [
       kSecClass as String: kSecClassGenericPassword,
       kSecAttrService as String: "com.batonai.push",
@@ -67,6 +93,6 @@ final class NotificationService: UNNotificationServiceExtension {
           let data = result as? Data,
           let saved = (try? JSONSerialization.jsonObject(with: data)) as? [String: String],
           let server = saved["server"], let apiKey = saved["apiKey"] else { return nil }
-    return (server, apiKey)
+    return (server, apiKey, saved["notifyKey"] ?? "")
   }
 }

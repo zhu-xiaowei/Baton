@@ -79,7 +79,7 @@ import { state } from '../state.js';
     // Hold the spinner until the skeleton clears — else it shows under the loading placeholder.
     var skeleton = !!document.querySelector('#content .skeleton-messages');
     var shouldShow = state.wsRunning && !promptUp && !skeleton;
-    var runtime = state.appState.runtime === 'codex' ? 'codex' : 'claude';
+    var runtime = state.appState.runtime || 'claude';
 
     if (state.wsRunning && !_wasRunning) {
       clearTimeout(_hideTimer);

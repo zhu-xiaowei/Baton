@@ -9,6 +9,7 @@ import {
   resolveClaudeBinForCapability,
 } from './runtime-capabilities.mjs';
 import { runExecutable } from './platform.mjs';
+import { cachedRuntimeBin, forgetRuntimeBin } from './runtime-bin.mjs';
 import { attachmentPreviewText } from './attachments.mjs';
 
 // Mirrors CC's SKIP_FIRST_PROMPT_PATTERN (sessionStorage.ts).
@@ -461,13 +462,18 @@ export function readLiveSessionStatuses(claudePids, dir = CLAUDE_SESSIONS) {
 }
 
 // Without ps: CC reads busy while background agents run (shell while only Bash does).
-export function liveRecordStatus(sessionId, dir = CLAUDE_SESSIONS) {
+// sessionId → CC's status in its newest live record.
+export function liveRecordStatuses(dir = CLAUDE_SESSIONS) {
   const alive = (pid) => { try { process.kill(Number(pid), 0); return true; } catch { return false; } };
-  let latest;  // a session resumed elsewhere keeps its older process's record
+  const latest = new Map();  // a session resumed elsewhere keeps its older process's record
   for (const record of liveRecords(dir, alive)) {
-    if (record.sessionId === sessionId && !(latest?.updatedAt > record.updatedAt)) latest = record;
+    if (!(latest.get(record.sessionId)?.updatedAt > record.updatedAt)) latest.set(record.sessionId, record);
   }
-  return latest?.status;
+  return new Map([...latest].map(([sessionId, record]) => [sessionId, record.status]));
+}
+
+export function liveRecordStatus(sessionId, dir = CLAUDE_SESSIONS) {
+  return liveRecordStatuses(dir).get(sessionId);
 }
 
 export function liveRecordBusy(sessionId, dir = CLAUDE_SESSIONS) {
@@ -537,15 +543,15 @@ function* liveRecords(dir, isLive) {
 }
 
 // Field 22 of /proc/<pid>/stat; the comm field before it may contain spaces.
-function processStartTime(pid) {
+export function processStartTime(pid) {
   const stat = fs.readFileSync(`/proc/${pid}/stat`, 'utf8');
   return stat.slice(stat.lastIndexOf(')') + 2).split(' ')[19];
 }
 
 // A session that cd's into a git worktree gets its jsonl moved to a separate
 // project dir (parentHash + "--claude-worktrees-<name>"), producing a second
-// DDB row for the same sessionId. Collapse worktree hashes to the parent so one
-// session stays one row. Applied only to the projectHash POSTed to the server —
+// row for the same sessionId. Collapse worktree hashes to the parent so one
+// session stays one row. Applied only to the projectHash Session rows report —
 // on-disk reads (findSessionFile/getSessionMetadata/projectHashToPath) keep the real hash.
 export function normalizeProjectHash(hash) {
   return hash.replace(/--claude-worktrees-.*$/, '');
@@ -584,18 +590,15 @@ export function agentDetailFor(a) {
   } catch { return a.waitingFor || ''; }
 }
 
-// Resolve the claude binary once. systemd user services run with a bare PATH
-// where `claude` isn't found, so try known install paths, then a login shell.
-let _claudeBin;
+// Resolved once: systemd/launchd services run with a bare PATH where `claude` isn't found.
 export function resolveClaudeBin() {
-  if (_claudeBin !== undefined) return _claudeBin;
-  _claudeBin = resolveClaudeBinForCapability();
-  return _claudeBin;
+  return cachedRuntimeBin('claude', () => resolveClaudeBinForCapability());
 }
 
 export function requireClaudeBin() {
   const binary = resolveClaudeBin();
   if (binary) return binary;
+  forgetRuntimeBin('claude'); // the next send looks again
   throw claudeLauncherError();
 }
 
@@ -659,6 +662,11 @@ export function getAgentsJson(force) {
 
 export function getDaemonSessions() {
   return getAgentsJson();
+}
+
+// Last agent catalog without spawning the CLI; the agent poll keeps it fresh.
+export function cachedDaemonSessions() {
+  return _agentsCache.map;
 }
 
 export function getDaemonRunningSessionIds() {

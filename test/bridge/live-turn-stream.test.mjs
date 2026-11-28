@@ -54,7 +54,7 @@ test('every shared turn event receives one contiguous seq', () => {
     event.sessionId === 'session-1' && event.turnId === 'turn-1'));
 });
 
-test('a transient user message is realtime-only and keeps end authority canonical', () => {
+test('a transient user message stays out of the turn end authority', () => {
   const sent = [];
   const turnId = 'sent-12345678-1234-4234-8234-123456789abc';
   const turn = new LiveTurnStream({
@@ -77,7 +77,6 @@ test('a transient user message is realtime-only and keeps end authority canonica
     'messages',
     'stream_end',
   ]);
-  assert.equal(sent[1].noCache, true);
   assert.deepEqual(sent.at(-1).messages.map((message) => message.uuid), [
     'assistant-1',
   ]);
@@ -485,7 +484,6 @@ test('every active turn action requires one valid sequence envelope', () => {
 test('connection-only and standalone events do not require turn sequence', () => {
   for (const action of [
     'send_message_result',
-    'messages_ack',
     'heartbeat',
     'messages',
     'permission_request',

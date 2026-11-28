@@ -16,7 +16,7 @@ export function codexSessionIdFromPath(filePath) {
   return UUID_AT_END.exec(path.basename(filePath))?.[1] || '';
 }
 
-function walkJsonl(dir, files, errors) {
+export function walkJsonl(dir, files, errors = []) {
   let entries;
   try {
     entries = fs.readdirSync(dir, { withFileTypes: true });
@@ -57,6 +57,7 @@ export async function discoverCodexHistory(options = {}) {
       const row = JSON.parse(Buffer.concat(chunks).toString('utf8'));
       if (row.type === 'session_meta' && (!row.payload?.id || row.payload.id === result.id)) {
         result.cwd = row.payload?.cwd;
+        result.repositoryUrl = row.payload?.git?.repository_url;
         result.parentId = row.payload?.parent_thread_id;
       }
     } catch {} // Still allow an explicit session deletion by its filename ID.
@@ -69,7 +70,7 @@ export async function discoverCodexHistory(options = {}) {
   return history;
 }
 
-function previewText(value) {
+export function previewText(value) {
   const text = attachmentPreviewText(String(value || '')).replace(/\s+/g, ' ').trim();
   if (!text) return '';
   return text.length > 200 ? `${text.slice(0, 200).trim()}...` : text;

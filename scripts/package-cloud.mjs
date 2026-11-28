@@ -9,7 +9,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const repo = process.env.PACKAGE_GITHUB_REPO || 'zhu-xiaowei/Baton';
+const repo = process.env.PACKAGE_GITHUB_REPO || 'agentbaton/baton';
 const workflow = 'package.yml';
 const releaseTargets = [
   { platform: 'android', label: 'Android', artifact: 'Baton-Android', file: 'Baton.apk', job: 'Android APK' },
@@ -83,6 +83,8 @@ if (sha !== remoteSha) {
 const version = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')).version;
 const tauriVersion = JSON.parse(fs.readFileSync(path.join(root, 'src-tauri/tauri.conf.json'), 'utf8')).version;
 if (version !== tauriVersion) die(`package.json version ${version} differs from Tauri version ${tauriVersion}`);
+const installer = fs.readFileSync(path.join(root, 'server/install.sh'), 'utf8');
+if (!devMode && installer.split('\nDEFAULT_REF=""\n').length !== 2) die('server/install.sh needs exactly one DEFAULT_REF="" line');
 const destination = devMode
   ? path.join(root, 'release', 'dev', sha.slice(0, 12))
   : path.join(root, 'release', version);
@@ -147,6 +149,11 @@ if (detail.status !== 'completed') die(`Timed out waiting for ${detail.url}; ins
 fs.mkdirSync(destination, { recursive: true });
 const stage = fs.mkdtempSync(path.join(os.tmpdir(), 'baton-package-'));
 const results = [];
+if (!devMode) {
+  const output = path.join(destination, 'install.sh');
+  fs.writeFileSync(output, installer.replace('\nDEFAULT_REF=""\n', `\nDEFAULT_REF="v${version}"\n`), { mode: 0o755 });
+  results.push(`Server installer: ${path.relative(root, output)} (clones v${version})`);
+}
 try {
   for (const target of targets) {
     const output = path.join(destination, target.file);

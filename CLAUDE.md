@@ -19,33 +19,32 @@ your phone or desktop. Claude Code supports viewing and interaction; Codex suppo
 real-time monitoring, and interaction with existing Sessions. Three components:
 
 1. **bridge/** — Node.js script running on macOS/Linux/Windows (always-on, auto-start), normalizes Claude Code and Codex JSONL
-2. **server/** — AWS Lambda (FastAPI) + DynamoDB + WebSocket API GW, relays between bridge and app
+2. **server/** — AWS Lambda (plain JavaScript, Node 22: `server/core` platform-free rules + `server/aws` adapter) + WebSocket API GW, relays between bridge and app (DynamoDB holds only connection, device, token and notification rows)
 3. **web/ + src-tauri/** — Static HTML/CSS/JS frontend, packaged as native app via Tauri v2 (Android/iOS/Desktop)
 
 Brand name "Baton" is only in user-facing places. Internal code uses generic names so renaming is easy.
 
 ## Core Design Principle
 
-**DynamoDB is the durable browsing cache; WebSocket is the real-time path:**
-- DDB: device/project/session metadata plus normalized message history
-- WS: real-time messages, streaming previews, permissions, and control actions
-- App localStorage: local auth/nav state cache
+**The Bridge's local JSONL is the only source; reads and pushes go over the direct channel:**
+- The App asks each Bridge for lists, history, threads and tool details over the direct RPC channel;
+  the Bridge pushes real-time rows, streaming previews and permissions to subscribers.
+- Nothing about Sessions or messages is stored server-side.
+- The App caches what it has shown in IndexedDB / localStorage (plus local auth/nav state).
 
 ## Current Status
 
 ### Phase 1: COMPLETE ✅
-- bridge.mjs syncs session metadata to DDB via HTTP POST
 - bridge.mjs watches .jsonl files, detects new messages in real-time
 - Deployed to ap-northeast-1 (Baton), verified 300+ sessions
 
 ### Codex Phase 1 + Phase 2: COMPLETE
 - Runtime adapters discover Claude Code and Codex into one Device → Project → Session catalog.
-- Codex metadata and recent/running history sync on Bridge startup; older empty DDB partitions
-  use REST `needSync` → WS `sync_session` → adapter → DDB → `sync_complete`.
+- Codex history is read on demand from the local rollout files.
 - Codex uses `codex:<nativeSessionId>` storage IDs and the existing Claude-compatible project hash.
 - Runtime icons and normalized message/tool rendering are complete.
 - Codex watcher monitors every configured `CODEX_HOME/sessions` root and pushes append-only
-  updates through the same WS ack, HTTP fallback, frame-limit, and watermark semantics as Claude.
+  updates to subscribers with the same watermark semantics as Claude.
 - Codex rollout-only status updates support `running`/`completed`; interaction resume recovers
   daemon-owned approval waits even though the startup catalog cannot infer them from JSONL alone.
 - Codex Phase 3 interaction prefers the managed app-server Unix WebSocket when present and falls
@@ -56,14 +55,13 @@ Brand name "Baton" is only in user-facing places. Internal code uses generic nam
   batch window, while `LiveTurnStream` assigns the turn-level `seq`. The frontend uses
   `TurnEventQueue → StreamCoordinator → StreamingDomRenderer` for ordered consumption,
   authority reconciliation, and progressive reveal.
-- Codex user/assistant live rows are broadcast immediately; the rollout watcher persists matching
-  rows without rebroadcast and remains the fallback when no live row was observed.
+- Codex user/assistant live rows are pushed immediately; the rollout watcher does not push matching
+  rows again and remains the fallback when no live row was observed.
 - Codex command/file/permissions/MCP approval variants are implemented. Automatic pending-request
   recovery immediately after a Bridge restart, before any send resumes the thread, remains Phase 3 work.
 - Detailed status and validation: `docs/codex.md`.
 
 ### Phase 2A: COMPLETE ✅ — Backend + API Verification
-- Server REST read endpoints (devices, projects, sessions, messages)
 - WebSocket API Gateway + relay (subscribe, broadcast, heartbeat)
 - Bridge WS connection + real-time push
 - Web viewer (web/) with dark theme, diff2html, markdown, file badges, Agent stats
@@ -110,12 +108,165 @@ Done:
   every shared event and `send_message_result`; the renderer locates the exact anchor without
   `clientId/streamId` binding, text matching, timestamp ownership, or nearest-pending heuristics.
   Authority uses UUID/native ID to confirm or patch nodes inside that same turn.
-- **Permission bridge DONE** — `onControlRequest` → app `permission_request {kind:tool|ask|plan}`; `handlePermissionReply {requestId, decision, answerText}` → `_pool.replyControl`. Ordinary tools allow/deny; AskUserQuestion/ExitPlanMode answer via **deny + answerText in `message`** (CC's only answer channel on `--permission-prompt-tool stdio`, verified CC 2.1.211 — a structured `control_response` answer is force-converted to deny); cancel = deny + `interrupt:true`. Answer renders in the tool-card OUT (green), cancel shows warning (yellow). A still-pending control_request is re-pushed on (re)subscribe (`reveal_permission`). Frontend `web/js/components/permission.js` fully rewritten (old `arrow:`/`type:`/`escape` protocol + client-side heuristic detection deleted).
+- **Permission bridge DONE** — `onControlRequest` → app `permission_request {kind:tool|ask|plan}`; `handlePermissionReply {requestId, decision, answerText}` → `_pool.replyControl`. Ordinary tools allow/deny; AskUserQuestion/ExitPlanMode answer via **deny + answerText in `message`**, which every CC version understands (2.1.211 force-converted a structured answer to deny; 2.1.322 accepts `allow + updatedInput.answers`, not used); cancel = deny + `interrupt:true`. Answer renders in the tool-card OUT (green), cancel shows warning (yellow). A still-pending control_request is pushed again on every Bridge subscription (direct `subscribe`). Frontend `web/js/components/permission.js` fully rewritten (old `arrow:`/`type:`/`escape` protocol + client-side heuristic detection deleted).
 - **New Session / new agent / create project DONE** — regular sessions mint a UUID, acknowledge
   it before spawning headless with `--session-id`, and then stream the first turn. Background
-  agents launch through `claude --bg`. Creating a project seeds an empty PROJ row and enters the
+  agents launch through `claude --bg`. Creating a project creates its directory and enters the
   new-Session input view.
 - **Stall Rescue + `stall.mjs` fully deleted**; `command_output` (tmux capture) path deleted (bridge/server/frontend); `streamMode` flag deleted; `permissions.mjs` + `needsPermission` + per-directory permission reads deleted.
+
+### Multi-harness H0: registration points (no new runtime yet)
+- `runtime-registry.registerRuntime(adapter)` adds a runtime beyond claude/codex; `session-identity` keeps
+  the descriptors (storage id `<rt>:<native>`, claude unprefixed, unknown runtimes are `null`/`unknown_runtime`,
+  never claude). A descriptor may carry `module` (its own URL; the index, history and tool-details workers
+  import it), `catalog` (`kind:'file'`: files/match/newState/advance/summarize/view/status/running?;
+  `kind:'rows'`: watchPaths/refresh(cursor)/view/status), `history(target)` (a reader), `messages(file, id)`
+  (tool_details), `watcher`, and `interaction.listCommands/heldElsewhere`. `SessionIndex.touch()` dispatches by
+  source; rows sources refresh at once and a change seen mid-refresh triggers one more pass (no debounce).
+- Shared modules for H1–H5: `rpc-stdio.mjs`, `turn-process.mjs` (exit on Done: close step → EOF; SIGKILL of the
+  process group only after 30 s; pid + start-time ledger), `runtime-bin.mjs`, `sqlite-ro.mjs` (+ `RowIndex`).
+- App: `web/js/runtimes.js` (labels, icons, resume commands), the new-session runtime picker (from `ping.runtimes`,
+  the runtimes that can create), generic tool card (source badge + name + key argument, key/value body),
+  `system_event.icon` rows, generic `<rt>_active_writer` takeover dialog. History rows may carry `noAlert`
+  (no Done alert for a turn a takeover, exit or parent ended).
+- Bridge needs Node ≥ 22.15 (`node:sqlite`, zstd); install scripts refuse older Node, auto-update skips a package
+  whose `engines` the running Node does not meet.
+- Optional runtimes are listed in `runtime-registry.mjs` `OPTIONAL_RUNTIMES` ([installed?, import]); `bridge.mjs`
+  awaits `registerInstalledRuntimes()` before the index warms, so an absent harness loads no code. Their modules
+  sit at the Bridge root (`<rt>-*.mjs`), because the package and updater ship only root `*.mjs` + `project/`.
+
+### Hermes (≥ 0.23, gateway `hermes-gateway-v1`) — H3
+- `hermes-catalog.mjs` (worker-safe): read-only `$HERMES_HOME/state.db` (default profile). Rows catalog: every
+  `data_version` change re-reads the `sessions` signatures (finds renames and deletions) plus messages past the
+  last id. Local sources with a real cwd join that project; messaging/automation Sessions go to the virtual
+  project `hermes:assistant` ("Hermes 助理", preview prefixed by source, read-only via `threads.canSend:false`; the
+  App hides Files/Git/Terminal for any hash containing `:`). oneshot/tool/batch/… are hidden, subagents are
+  children (running until `ended_at`), empty untitled Sessions (a bare TUI start) are hidden. History =
+  Hermes' display projection (active or compaction-archived rows, one per `display_order`) behind `RowIndex`;
+  a rewind/compaction/revision change rebuilds under a new epoch. A user row's `submission_id` is the Baton
+  turn id: uuid = turnId, `nativeId: live:user:<turnId>`.
+- `hermes-convert.mjs`: tools → Bash/Read/Write/Edit/Grep/Glob/TodoWrite (also inside `tool_call`)/Agent
+  (+ async completion row)/WebSearch/WebFetch/AskUserQuestion/ViewImage/Skill, others `mcp__hermes__*`; vision
+  rows → image from Hermes' cache file; steer wrapper and expanded Skill bodies (`/name instruction`) are undone;
+  `process_complete` → `system_event`; hidden interrupted row → `[Request interrupted by user]`; a trailing
+  `EXIT=<n>` marks a failed command whose wrapper shell exited 0.
+- `hermes-gateway.mjs` + `hermes-runtime.mjs`: one WS to the user's gateway; each connection gets a fresh
+  single-use ticket from `$HERMES_HOME/gateway.sock` (never logged). Browsing/subscribing never starts the
+  gateway; typing (prewarm, 60 s pause after a failed start) or sending starts it once
+  (`hermes gateway attach --json --start`) and lets its own idle-exit stop it;
+  Baton disconnects after 120 s without turns or waiting prompts. Send = `prompt.submit{submission_id: turnId}`
+  (a send during a turn is queued by Hermes and becomes the next turn; no takeover needed), new =
+  `session.create{source:'tui', cwd}` (no cwd → `$HOME`), interrupt = `session.interrupt{execution_generation}`.
+  Deltas/tool starts stream through `StreamFramer`; rows Hermes stores during the turn are its authority.
+  `approval.request` → tool prompt with "Yes, for this session" (`choice:session`, also kept in
+  `~/.baton-bridge/hermes-grants.json` and answered by the Bridge after a gateway restart); `clarify.request` →
+  ask (multi-select answers as a JSON array, cancel = skip). Subscribing resumes the Session, re-shows waiting
+  prompts and routes other clients' prompts there. Images are staged with `image.attach_bytes`.
+- Watcher: `fs.watch($HERMES_HOME)` for `state.db`/`-wal`, plus one pass 50 ms later (a WAL write is seen just
+  before its commit is visible). Status from the gateway's lease/admission tables; needs_input only while a page
+  or a Baton turn is attached. Rows other clients store are pushed to open pages. Rename/delete use the
+  `hermes sessions rename|delete` CLI (Hermes refuses deleting a Session with an active turn).
+
+### H2: DeepSeek Harness (dsh 0.2.2, log v4) — `bridge/dsh-*.mjs`
+- Registered by `bridge.mjs` only when `DSH_HOME` (default `~/.dsh`) exists. Storage id `dsh:<native id>`.
+- Logs are concatenated zstd frames; `dsh-frames.mjs` splits them by header (Node decodes one frame per call)
+  and `FrameIndex` is the LineIndex of frames. The warm-up workers GC every 16 frames (zstd contexts are
+  freed only on GC). Title = last `session/title`, else DSH's 5-word / 40-byte fallback, else the folder.
+- Status: a held `session.lock` (Linux `/proc/locks`, macOS `lsof`, read off the request path) plus the
+  log: open asks/approvals → needs_input, open turn → running, a child holding its lock keeps the root running.
+- Rows: one per event, assistant messages one row per block (so live blocks meet their own row). Attachment
+  images are uploaded on the main thread (`withImages`, called by `history-service` and the watcher). Live turns
+  get no rows of their own: the log watcher hands the new rows to the running turn (`deliver`), tagging the
+  first prompt row after a send `live:user:<turnId>`; other Sessions' rows go to subscribers.
+- Interaction: one `dsh --profile acp --patch ~/.baton-bridge/dsh-baton.patch.yml` per Session; sends queue in
+  it (ACP admits one prompt), and when the queue empties: `session/close` → EOF → the log is read to its end →
+  `stream_end`. The overlay pins approval to ask and adds ask_user_question with `dsh-ask.mjs`, which asks
+  the Bridge over fd 3 (multi-select answers keep each question id). Approvals are allow-once/reject-once;
+  "for this session" is kept in `~/.baton-bridge/dsh-grants.json` and answered by the Bridge.
+- "For this session" never covers a command with shell operators (`&;|<>`, backtick, `$(`, newline): it asks.
+  A failed prompt does not fail the ones queued behind it; the turn ends once, after the last.
+- A lock held by another process → `dsh_active_writer` takeover (SIGTERM; a `dsh web` closes all its sessions).
+  Delete (Session or project) refuses Sessions Baton or another process holds, then removes the Session folders
+  (children too) and DSH's projcache entry. Rename appends dsh's own user `session/title` frame under the Session lock and updates its list cache (refused while in use; not on Windows).
+
+### Multi-harness H4: Pi (≥ 1.0)
+- Files: `pi-catalog.mjs` (catalog, current-branch history, row mapping; worker-safe), `pi-runtime.mjs` (detect,
+  adapter, watcher), `pi-interaction.mjs` (`pi --mode rpc`), `pi-approval-ext.mjs` (passed with `-e`),
+  `pi-status-ext.mjs` (installed). Listed in `OPTIONAL_RUNTIMES` when the agent dir exists; `pi` ≥ 1.0 is found on
+  first use; a JS entry (`.js` or a node shebang) runs as `<node ≥ 22.19> <realpath>` (`pickNode`), a wrapper
+  script runs as it is. An exception in the RPC event handler ends the turn, not the Bridge.
+- Catalog: `$PI_CODING_AGENT_DIR/sessions/**.jsonl` (default `~/.pi/agent`); project from the header `cwd`; title
+  `session_info.name` > first user text. History follows `parentId` from the last entry; an entry that does not
+  continue the previous one bumps the epoch (`historyReset`). Entry ids are read from the line head, or by
+  parsing the line when the id is not the second key (`custom`, `custom_message`). One `edit` call with N edits = N Edit cards (`<id>#i`).
+- Status: the Bridge installs `<agent dir>/extensions/baton-bridge-status.js` when its watcher starts (content
+  compared, atomic rename; removed on device removal). Every pi process writes
+  `~/.baton-bridge/pi-status/<sid>.<pid>.json` (`idle/running/waiting`; `waiting` = `ui_prompt_start` →
+  needs_input); a dead pid or another start time is stale. The same file holds the fork guard: a terminal whose
+  loaded leaf is not the file's last entry refuses input until `/baton-reload`.
+- Interaction: one process per Session, ended on `agent_settled` (never `agent_end`) by EOF. Sends during a turn are
+  `prompt{streamingBehavior:'steer'}`; interrupt = `clear_queue` + `abort` (the extension passes `ctx.signal`, so a
+  waiting dialog ends too). Each prompt starts with `<!--baton:<turnId>-->`; the approval extension strips it and
+  stores `batonTurnId` on the user message, so live and stored prompts are both `live:user:<turnId>`. Other rows:
+  uuid = nativeId (`pi:assistant:<ts>`, `pi:tool:<callId>`). Images go in the RPC `images` field. Tool calls are
+  streamed whole at `toolcall_end`, already mapped.
+- Dialogs: `baton:permission` confirm → `kind:'tool'`. A session grant is offered only for `<program> <plain
+  lowercase subcommand>` (`bash:git status`, applied to that pair only) or a non-bash tool name; any other bash
+  command (shell syntax, a bare program, a flag/path/file second, a wrapper like `sudo`) is asked every time.
+  Grants live in `~/.baton-bridge/pi-grants.json`, read by the extension on every call. `ask_user` (Baton's
+  tool; `multiple:true` rides on `input('baton:multiselect')` and answers a JSON array) and user-extension
+  select/confirm/input → `ask`. One edit call with several edits is approved on one joined diff.
+- Writer conflict: a status record of another live pid on the Session → `pi_active_writer` (only `mode:'tui'` may
+  be terminated). Delete and rename refuse while busy or held; rename appends a `session_info` entry on the last entry
+  (the catalog keeps its id, so nothing is re-read).
+
+### Multi-harness H1: OpenCode ≥ 2.2 (`bridge/opencode-*.mjs`)
+- Loaded whenever `~/.local/share/opencode/opencode.db` exists (one `OPTIONAL_RUNTIMES` line). A 1.x DB without
+  `session_v2` stays registered but lists nothing, starts no watcher and offers no create/send (delete is a no-op).
+  Catalog (`kind:'rows'`) and history read that DB read-only: `PRAGMA data_version`, then rows whose
+  max(time_updated, busy, idle, suspended, archived) moved; history lines are `RowIndex` positions; rows of the
+  turn after the last `idle` row (and running `!cmd` rows) are unstable. One row per block, like Claude's JSONL
+  (`<msgId>#b:<toolId|t0|r0>`, results `<msgId>#r:<toolId>`), live and in history; a tool row goes out at `tool.called`. Baton prompts carry
+  `metadata.baton.turnId` → nativeId `live:user:<turnId>`; files Baton attached are not shown twice.
+- The watcher (`fs.watch` on db/-wal, busy + pending) reports root status changes (external turns get
+  `localIdleSec`) and pushes rows other clients wrote; rows of a Baton turn come from the service events.
+  Busy that neither Baton, the service (`/api/session/active`) nor a non-service opencode process on that
+  session runs is an orphaned claim → Done.
+- Interaction goes through the user's own background service (`~/.local/state/opencode/service.json`); Baton
+  runs `opencode service start` only to send (it resumes suspended sessions), never to read. One `/api/event` SSE
+  per Baton turn, closed 120 s after the last ends. Sends never set `delivery` (OpenCode steers them into a running
+  turn). New sessions get `shell`/`edit: ask` rules and no title. Allow → `once`; "for this session" adds the
+  request's `save` patterns to the session's own rules; deny always carries a message (a bare reject cancels the
+  turn); forms map per field key (multiselect → array). A subagent's request joins its root's Baton turn and is
+  answered on the subagent's session (subscribe also fetches busy subagents' requests); one record per open request; every way it goes away (reply, reconcile with the service on subscribe / commit) settles it and tells the page. `heldElsewhere`: busy in the DB but not active in the service
+  → a live non-service opencode process with the id in its argv or the session cwd. Rename/delete use the service,
+  else `opencode api … --standalone`. `/name` is posted as a command first (404 → sent as text; its user row gets
+  the turnId live only); the command list is `/api/command`, asked again once if a cold directory lists nothing; without the service a
+  private unregistered `opencode serve` (resumes nothing) lists it once per directory and exits, cached by file signature for 5 min.
+
+### Kiro (H5, kiro-cli 3.x v3 engine): `bridge/kiro.mjs`, `bridge/kiro-runtime.mjs`
+- `kiro.mjs` (also loaded by the workers; top-level files because the Bridge package and its updater carry only
+  root `*.mjs` and `project/`): catalog of `$KIRO_HOME/sessions/<hash16>/<id>/messages.jsonl`
+  (+ `session.json`, `sub-executions/*.jsonl` as children; the v2 engine's `sessions/cli` is not read), titles as the
+  `/sessions` dashboard shows them (dashboard renames, placeholder → first prompt line). Status: a lease whose pid
+  is alive and started before the lease was taken + open turn → running, open approval → needs_input. History is
+  one row per line, by line number; the turn id Baton sends as `userMessageTag` (and `steer-<id>`) becomes
+  `nativeId: live:user:<turnId>` / `live:interrupt:<turnId>`; Kiro's steering injections and `[STEERING …]` notes hide.
+- `kiro-runtime.mjs` (in `OPTIONAL_RUNTIMES` when kiro-cli 3.x has unpacked its engine, `<data dir>/kiro-cli/kas` (`$XDG_DATA_HOME` honoured); the binary is located at first use and kept while the file exists; a miss is looked up again): a Baton turn runs `kiro-cli acp --agent-engine=v3` (`session/load` with `noReplay`, or
+  `session/new` + the user's `chat.defaultModel`); it exits when Done (`session/close` → EOF). A send during a turn
+  waits until that turn's prompt is stored (`turn_start`), then uses `_session/steer`, so the order holds; sends that
+  arrive while a turn ends wait for it, then the first opens the next connection and the rest steer into it (one connection per Session); interrupt sends `session/cancel` once the turn started (≤ 2 s). Text streams from ACP
+  (`replayId` = stored Say id); every row, including tool cards (a stream block, then the row), comes from the
+  jsonl drain, so live and history match. Approvals map by option kind; "for this session" is `allow_always`
+  plus a session grant (`capability(resource)`, ws.mjs `_grants`) answered again in later processes;
+  Skill loads are allowed. `heldElsewhere`: another client's live lease (takeover SIGTERMs that pid). Commands: the
+  ACP `available_commands_update` of the last turn in that cwd. `fs.watch`: `sessions/` recursive and `session-leases/`
+  (inotify cost is the sessions tree only); their parent (`$KIRO_HOME`, or its parent while it is missing), not recursive, only until both exist. Deleting
+  and recreating `sessions/` or `session-leases/` while the Bridge runs is not followed (restart). Delete runs `kiro-cli chat --delete-session`.
+  Rename: `_kiro/session/rename` from a short ACP process (writes session.json, ≤ 80 characters), then the
+  `/sessions` dashboard title in `dashboard-meta.json` as kiro-cli's TUI writes it (its `.lock` dir protocol); refused
+  while Baton's turn or another client holds the Session; returns the title the catalog then shows (re-read at once:
+  Node's recursive watch misses a file replaced twice).
 
 ### Git Graph + Commit/Push: COMPLETE
 - Git page header shows `project › branch ↑N ↓M` from the existing porcelain status; the branch text is display-only.
@@ -134,13 +285,17 @@ Done:
   One Settings switch (default on). Local `tauri-plugin-push`: iOS registers with APNs;
   Android runs a foreground service ("Baton is running in the background") polling the event
   feed natively (5s foreground / 15s background; WebView timers are throttled in background).
-- Source is only the `BridgeSessions` stream (Bridge writes each approval as `needs_input` +
-  `agentDetail`) → `NotificationWorker`. Devices are one `PUSH_DEVICE` row per
-  `<environment>:<token>`. Before alerting it skips interrupted turns and sessions a visible,
-  focused app is viewing (`notify_check` → `notify_seen` within 2 s on the `ROOT#` subscription).
+- Bridge decides and words every alert (`bridge/notify.mjs`, from the rows `reportSessions` sees;
+  each approval is `needs_input` + `agentDetail`) and posts it to
+  `POST /api/notifications/events`, which stores the feed row and calls the push relay; while the
+  server is unreachable it keeps the newest alert per Session (at most 10, 10 minutes). Devices are
+  one `PUSH_DEVICE` row per `<environment>:<token>`. Before alerting it skips interrupted turns
+  and alerts a visible, focused page has shown: `notify_check` goes to every App of the account,
+  which shows an in-app banner (or nothing, when it shows that Session) and answers `notify_seen`
+  within 2 s. Hosted Android gets unanswered alerts on its own `role=notify` relay socket.
   A turn started outside Baton also skips while the user is at that computer: Bridge attaches
   `localIdleSec` (`presence.mjs`: own pty atime, macOS `HIDIdleTime`, Windows Interactive helper
-  task) and the worker drops it under 120 s. Sessions Baton has driven (`batonSessions`), daemon
+  task) and Bridge drops it under 120 s. Sessions Baton has driven (`batonSessions`), daemon
   agents and Baton's own terminals never set it, so their alerts are unchanged.
 - iOS pushes carry only the event's feed key and a placeholder; the `NotificationService`
   extension fetches the text from the user's own server (`/api/notifications/event`, credentials
@@ -149,9 +304,6 @@ Done:
   URL (`PushRelayUrl`, `PUSH_RELAY_URL` for install.sh). The release script keeps the extension's
   CFBundleVersion in step with the app's. Device Farm public iOS devices strip the push entitlement. Details:
   `docs/mobile-notifications.md`.
-
-### Phase 3: LATER — Production polish
-- Harden the existing persisted `~/.baton-bridge/synced.json` recovery path
 
 ## Deployed Environment
 
@@ -163,7 +315,7 @@ template. S3 bucket / ECR repo / AWS account id are derived automatically by
 
 - **Region**: ap-northeast-1
 - **Stack**: Baton
-- **DDB Tables**: `Baton-bridge-sessions`, `Baton-bridge-messages`
+- **DDB Tables**: `Baton-connections`, `Baton-system`
 - **Deploy**: `cd server && ./install.sh --region ap-northeast-1 --stack Baton`
 
 ## Key Technical Decisions
@@ -179,12 +331,12 @@ template. S3 bucket / ECR repo / AWS account id are derived automatically by
 - Session `status`: **three-state** (`running`/`needs_input`/`completed`), one field, no
   parallel `agentState`. Displayed as Running (green) / Needs input (amber) / Done (grey).
   Three sources map into this single enum:
-  - **busy pool-owned (headless)**: pool lifecycle events push status via the sync-sessions HTTP
-    path — `_pool.send` → `running`; `control_request` → `needs_input`; turn `result` →
+  - **busy pool-owned (headless)**: pool lifecycle events report status through `reportSessions`
+    — `_pool.send` → `running`; `control_request` → `needs_input`; turn `result` →
     `completed` (or `needs_input` if a control_request is still pending). `ws.mjs` `syncPoolStatus`.
     Every turn end is `completed`, background tasks or not. A `completed` write also carries
     `backgroundAgents` while background agents still run (the pool's `local_agent` tasks, else
-    CC's own `~/.claude/sessions` record reading `busy`, re-read after 1 s); the worker skips
+    CC's own `~/.claude/sessions` record reading `busy`, re-read after 1 s); Bridge's notifier skips
     that Done, so only the report-back turn after the last agent alerts, and a hold released
     without a running write in between (`heldForAgents`) alerts the last reply. Background Bash
     and Monitor never hold it: CC does not mark long-running ones (servers, persistent Monitors),
@@ -211,7 +363,8 @@ template. S3 bucket / ECR repo / AWS account id are derived automatically by
     non-terminal forever, so unless `.meta.json` says `finished:true` (CC never writes `false`) a
     child trusts its tail only while its parent's own status is running, CC's record for the root reads
     `busy`/`waiting` (it stays so while foreground or background subagents run, also at a prompt), the pool
-    still lists a background agent, or it was written in the last 15s. A stopped agent never
+    still lists a background agent, or it was written in the last 15s (`claudeParentLive()`, shared by discovery,
+    the session index and the thread list). A stopped agent never
     gets `finished:true`, so a child is also completed when its spawner's transcript last reports
     it in a `<task-notification>` rather than a later `resumedAgentId`. A child last written before the earliest
     live CC process of its root Session started (its `~/.claude/sessions/<pid>.json`, pool processes
@@ -221,12 +374,10 @@ template. S3 bucket / ECR repo / AWS account id are derived automatically by
     tool output quoting them; `claudeSubagentEnded()` scans incrementally; the watcher rechecks active children when that notification is appended, after the root's own
     write. CC (2.1.322+) also writes a notification it already reported through a hand-back, or one replayed at
     resume, and never answers it: while CC's record reads `idle` that row means `completed`, not `running`. `inspectActiveSession()`
-    re-derives the counts on every `checkStopped` pass and sends them, because `sync-sessions`
+    re-derives the counts on every `checkStopped` pass and reports them, because the notifier
     treats missing counts as "unchanged".
   - `getRunningInfo()`: `ps aux` + `--resume` arg extraction → exact session ID + project cwd
     (used by external detection). VS Code CC (no `--resume`) → project-level + mtime>5min → completed.
-  - Legacy `idle`/`stopped` values in old DDB rows are normalized to `completed`/Done by the
-    frontend's `statusLabel`/`statusClass` fallback (no migration script; re-derived on next sync).
 - `projectHashToPath()` (in `session.mjs`): reverse hash to real directory path (validates each segment exists)
 - Claude Agents support:
   - Agent identity source is **`claude agents --json --all`**. Its working/blocked/done state
@@ -237,12 +388,12 @@ template. S3 bucket / ECR repo / AWS account id are derived automatically by
     `kind === 'background'`; `kind:"interactive"` entries are not agents.
   - `agentDetail` (the blocked question shown on the card) is the ONE field still read from `jobs/<sid[:8]>/state.json`'s `needs` — `--json`'s `waitingFor` is almost always null.
   - `getDaemonRunningSessionIds()`: reads `~/.claude/daemon/roster.json` → active worker sessionIds (still used to detect a done-agent resumed as a normal CC session).
-  - Agent status poll (`watcher.pollAgentStates`, every `AGENTS_POLL_INTERVAL_MS`): diffs `getAgentsJson()` vs `_jobsState`, pushes changed agents. Empty `_jobsState` on startup → first poll full-pushes every agent (heals DDB + covers every version-update restart). Replaced the old `fs.watch(state.json)` (missed transitions since state.json lags).
+  - Agent status poll (`watcher.pollAgentStates`, every `AGENTS_POLL_INTERVAL_MS`): diffs `getAgentsJson()` vs `_jobsState`, pushes changed agents. Empty `_jobsState` on startup → first poll reports every agent (covers every version-update restart). Replaced the old `fs.watch(state.json)` (missed transitions since state.json lags).
   - Status paths that key off live CC processes (`checkStopped`) skip roster-active daemon
     agents and busy pool-owned sessions. Precedence: busy pool-owned > roster-active daemon >
     external/jsonl.
-  - Worktree project-hash normalization: a session that `cd`s into `<proj>/.claude/worktrees/<name>` has its jsonl moved to a new project dir, producing a 2nd DDB row for one sessionId. `normalizeProjectHash()` strips `--claude-worktrees-*` at every POST site (keeps real hash for on-disk reads) → one session, one row, under the parent project. See `docs/claude-code-bridge.md`.
-  - Send to agent / new agent / reveal pending input: existing agents resume through headless `claude -p --resume <agentSessionId>`; new agents launch through `claude --bg`; pending `control_request` state is re-pushed on `reveal_permission`.
+  - Worktree project-hash normalization: a session that `cd`s into `<proj>/.claude/worktrees/<name>` has its jsonl moved to a new project dir, which would list one sessionId twice. `normalizeProjectHash()` strips `--claude-worktrees-*` wherever a Session row is built (keeps real hash for on-disk reads) → one session, one row, under the parent project. See `docs/claude-code-bridge.md`.
+  - Send to agent / new agent / reveal pending input: existing agents resume through headless `claude -p --resume <agentSessionId>`; new agents launch through `claude --bg`; pending `control_request` state is pushed again on every Bridge subscription.
   - Permissions are enforced by CC itself (bypass mode → no prompt); the bridge no longer reads settings — see the Permission Detection section.
 - Slash commands are runtime-aware. Claude's primary catalog comes from the current CLI's
   no-persistence `initialize` control response, including environment-filtered commands, descriptions,
@@ -257,31 +408,45 @@ template. S3 bucket / ECR repo / AWS account id are derived automatically by
   Codex Skills come from app-server `skills/list`; selecting one composes `$name`, and
   `turn/start.input` carries the matching structured Skill item. The app preserves Bridge order
   and caches by device + runtime + project. Details: `docs/api.md` + `docs/codex.md`.
-- Config: `~/.baton-bridge/config.json`, auto-created from CLI args
+- Config: `~/.baton-bridge/config.json`, auto-created from CLI args. Without a `wsUrl` the Bridge
+  asks `/devices` for it at start (every 10 s until it answers) and keeps it there.
   - Tool previews are always enabled; historical `toolPreviews` settings have no
     effect. Clients use `tool_details` to load full content from the original JSONL.
 - Always-on: launchd (macOS), systemd user service + `loginctl enable-linger` (Linux), Task Scheduler (Windows)
+- Private Node: the install scripts download the pinned official Node.js 24 LTS (`NODE_VERSION` + embedded `NODE_SHA256` in `server/core/install.mjs`; after a bump `node scripts/node-checksums.mjs` regenerates the table) from nodejs.org and cdn.npmmirror.com at once, keep the first archive whose SHA-256 matches and stop the other download, extract it atomically into `~/.baton-bridge/node/<version>/` and pin the service to it; any failure falls back to the user's Node.js ≥ 22.15. Temp files are removed on every path (Ctrl-C included); older private versions are deleted once the service has started on the new one. Auto-update runs the npm next to `process.execPath`; processes started through `executableOptions` (version probes, the Codex app-server, npm) and harness turns (`sessionProcess`: Pi, dsh, Kiro) get the Bridge's own node directory first on PATH, so `#!/usr/bin/env node` CLIs run on it; the service PATH, carrying the user's Node, follows.
 - Deployed bridge runs from `~/.baton-bridge/` (copied), NOT the workspace `bridge/`. Local dev: `cp bridge/*.mjs ~/.baton-bridge/` + restart service.
 - Auto-update: startup and WebSocket reconnect check `/api/version` once. Existing four-minute heartbeat replies include `bridgeVersion`; only a different non-dev version triggers another check, so normal heartbeats add no REST requests and there is no dedicated update timer. On change, Bridge resolves the S3 package through `/api/install`, stages and validates it, then restarts even with active terminal sessions. Existing terminal/agent processes may be interrupted; they do not defer updates. Checks never overlap and network requests have timeouts. `install.sh` uploads the Bridge package before exposing its version through CloudFormation; both API and WS Lambdas receive `AppVersion`. Bridge WS connections report `bridgeVersion` for fleet verification.
 - `/api/version` reads `APP_VERSION` env (= semantic + git hash, set per build). Managed by CFN (`AppVersion` param in template, passed by install.sh). Lambda env overrides image ENV, so the CFN param MUST stay wired or the version freezes and auto-update silently stops.
-- Initial sync: merge all runtime catalogs, upload full Session metadata, then sync active + recent 24h messages with concurrency 2. `await syncSessions()` then `await reconcile()` (recount aggregates at that definite completion point).
-- Periodic check (5min): `checkStopped()` — detects disappeared CC processes via `ps aux` → `completed` (skips roster-active daemon agents + busy pool-owned sessions)
-- Watcher: fs.watch detects jsonl changes → sync metadata only on status change, new session, or ai-title
-- Status cache: `lastKnownStatus` Map prevents redundant sync POSTs (only sends on change)
+- v2 lists (home, projects, sessions) are answered by `session-index.mjs` from memory, warmed at startup:
+  2 workers read each JSONL's head and tail only (Codex back to its last turn
+  start; Claude's last 1 MB, where CC re-stamps titles) (`session-summary.mjs`,
+  `docs/v2-step2-lists-plan.md`). Watchers call `touch()`; appends read
+  only the new bytes.
+- Startup: merge all runtime catalogs, report every Session row (`reportSessions` in `sync.mjs`:
+  status cache + notifier, nothing is sent to the server) and set each Session's in-memory cursor
+  to the end of its file; history is read from the files on demand.
+- Periodic check: `checkStopped()` runs once after the session index warms up, then every
+  `CHECK_STOPPED_INTERVAL` (10 min). Candidates are running/needs_input entries in
+  `lastKnownStatus`, matched to session-index roots; disappeared CC processes (`ps aux`) →
+  `completed` (skips roster-active daemon agents + busy pool-owned sessions)
+- Watcher: fs.watch detects jsonl changes → pushes new rows to subscribers; reports metadata only on status change, new session, or ai-title
+- Status cache: `lastKnownStatus` holds the last reported status per Session (`checkStopped` candidates; changes invalidate list answers)
 - Debounce: busy Map per session dedup fs.watch duplicate events
 - Line-number tracking per session (not UUID set), lightweight
-- Images: sharp compress 1280px JPEG (quality=90) → upload S3 via Lambda → store key in message
-- Batching: by byte size (≤4MB/POST), with 200ms delay between batches
-- WS ack: `wsSendWithAck` waits for server `messages_ack` reply (5s timeout), falls back to HTTP POST to DDB if no ack
+- Images: sharp compress 1280px JPEG (quality=90) → HEAD, then signed PUT to the transfer area
+  (remembered per process for a day) → store key in message
 
 ### Server
-- FastAPI in Docker Lambda, API Key auth. API Gateway checks `x-api-key` on `/api/*`; WS
+- JavaScript server (no dependencies: `node:https` + SigV4 for DynamoDB/STS/API Gateway) in a Node 22 Docker Lambda, API Key auth.
+  `server/core` holds the routes and rules on a `ports` object (store, sockets, credentials, push);
+  `server/aws` is the Lambda adapter. It ports the earlier Python/FastAPI server: same routes, rules, DynamoDB
+  rows and the responses clients see; `npm run test:contract` checks any deployment by URL. API Gateway checks `x-api-key` on `/api/*`; WS
   `$connect` compares `?apiKey=` with the deployment key, which both Lambdas read from API Gateway
-  by name (`server/src/api_key.py`, cached 5 min; a failed lookup keeps the last value, and with no
+  by name (`server/aws/api-key.mjs`, cached 5 min; a failed lookup keeps the last value, and with no
   value REST/WS answer 503 rather than guess an account) — the key is
   never stored in a table. Their IAM `apigateway:GET /apikeys` can read every key in the region:
   the API key depends on the stage and so on the API Lambda, so the Lambdas cannot `Ref` its ID.
-- DDB `accountId` = SHA256(apiKey)[:16] — raw key never stored. `install.sh` pins it as the
+- `accountId` = SHA256(apiKey)[:16] — raw key never stored. `install.sh` pins it as the
   `AccountId` stack parameter (deploy stops if the key cannot be read), and only the current key
   maps to it; any other key still gets its own empty account. `install.sh --rotate-key` skips the
   build and keeps the deployed template and every other parameter, passing only a new
@@ -290,44 +455,56 @@ template. S3 bucket / ECR repo / AWS account id are derived automatically by
   in with the new Start URL. WebSockets opened with the old key are not closed (API Gateway ends
   them within 2h).
 - Sign-in / install tokens: Setup's Start URL, QR code and install command
-  (`/auth/install?t=…`) share one token from `/api/auth/start-token`, valid 10 minutes (deploy
+  (`/auth/install?t=…`) share one token from `/api/auth/start-token`, valid 15 minutes (deploy
   output: 12h) and reusable until then. Token rows name the key instead of holding it, so a rotated
   key retires them; `/auth/exchange-token` returns the current key.
 - The key lives only in the Bridge's `~/.baton-bridge/config.json` (0600); service definitions no
   longer pass `--key`, and older ones are rewritten at startup.
 - Removing a device (home long-press → `/api/bridge/delete-device`) sends `device_removed` and
-  closes its Bridge sockets, then deletes its DEV#/PROJ#/SESS# rows. The Bridge removes its
+  closes its Bridge sockets, then deletes its device row. The Bridge removes its
   launchd/systemd/Task Scheduler entry and `config.json`, then exits 0 (no restart). A Bridge that is
   offline at the time comes back and re-adds the device; remove it again.
 - `install.sh`: ECR → S3 → CodeBuild (arm64) → CloudFormation
 - Bridge install script (`/api/install`): exports `XDG_RUNTIME_DIR` for Ubuntu SSH compatibility (tmux auto-install removed in Phase 2E)
+- File transfer area: files between App and Bridges travel through `t/<accountId>/<key>` in the
+  attachment bucket, emptied by a 7-day lifecycle rule (Cloudflare: 1 hour, reused for 30 min; both also
+  abort unfinished multipart uploads after 1 day) (`install.sh`; the pre-v2 prefixes
+  `images/`, `files/`, `videos/`, `attachments/` expire after 1 day). It is a transfer channel, not
+  storage: the Bridge can upload any object again from its own disk. App and Bridge sign their own
+  S3 requests (SigV4 presigned URLs, `bridge/transfer-store.mjs`, imported by the App too) with the
+  direct-channel STS credentials (1 h, reused while > 10 min left), whose session policy adds
+  `s3:GetObject`/`s3:PutObject` on `t/<accountId>/*` only. `storage {bucket, region, accountId,
+  accelerate}` comes with them: the App from `/devices` (always, with `wsUrl`), the Bridge from its
+  control-socket `direct_rpc` `credentials` message; both renew on demand, and no URL outlives its
+  credentials. The API Lambda only reads `install/*`. Attachment uploads use S3 transfer
+  acceleration when enabled (accelerated URL + standard fallback).
 
-### Message Flow (WS single path + DDB cache)
-- Claude watcher normally pushes new messages through WS; startup, fallback, oversized authoritative copies, and on-demand history use HTTP
-- Lambda broadcasts ordinary watcher messages and writes their final fields to DDB. Runtime-owned
-  `messages{noCache:true}` are broadcast only; the later JSONL watcher copy owns persistence.
+### Message Flow (Bridge JSONL + direct channel)
+- Watchers push new rows to the Session's subscribers over the direct channel; rows a live turn
+  already pushed are not pushed again when the JSONL copy is written. History is read on demand.
 - Bridge extracts: uuid, parentUuid, type, content, timestamp, toolUseResult
   (drops model/usage/cwd/version). Tool IN/OUT always keeps
   the first 500 Unicode characters per text field, Edit keeps paths and status,
   thinking signatures are omitted, and `toolUseResult` keeps only numeric Agent
   duration/tool-count statistics. Failed Edit results retain their error preview.
-  This same prepared representation is reused for HTTP, WS and live authority;
+  This same prepared representation is reused for history, watcher pushes and live authority;
   a module-local WeakSet skips repeated processing of the same message object.
 - Block-level `truncated` means on-demand tool content, independently of transport
   truncation/recovery. A final structured input event replaces any incomplete
   streamed JSON preview when its block stops. `tool_details` reads original JSONL
-  in a worker with a single-file, file-version-keyed tool index, then replies only
-  to the requesting client using the existing text-frame protocol. The frontend
+  in a worker with a single-file, file-version-keyed tool index and answers over the
+  v2 direct RPC (`preview: true` returns the 500-character previews history pages omit). The frontend
   caches complete details per device/session/tool; missing expected output is
   retryable. Failed detail loads expand the available local preview. See
   `docs/tool-preview.md` for the rendering and rollout contract.
 - Content blocks preserved: text, image (compressed), document, thinking, tool_use, tool_result
-- App opens session → REST from DDB (instant, <100ms) + WS subscribe for real-time
-- WS subscribe + buffer during REST load → merge/dedup → resolve running state from newer applied
-  WS lifecycle or `/messages.status` → render → subsequent WS direct append
-- A REST snapshot replaces the local tail, except live prompts (`live:user:` Claude,
+- App opens session → `history` from the Bridge (IndexedDB cache first) + a direct `subscribe`;
+  `history {subscribe: true}` registers the caller before the file is read
+- Pushes buffer during the history load → merge/dedup → resolve running state from newer applied
+  lifecycle events or the history `status` → render → subsequent pushes append directly
+- A history snapshot replaces the local tail, except live prompts (`live:user:` Claude,
   `codex:user:` Codex) newer than the snapshot's last non-metadata message and absent from it:
-  those `noCache` rows reach DDB only after the JSONL/rollout watcher persists them under the same
+  those rows reach history only once the JSONL/rollout has them under the same
   identity, so dropping them made the sent message vanish mid-turn. Other live rows are not kept —
   e.g. `live_interrupt_*` persists under its native UUID after a Bridge restart and would
   duplicate (`history-snapshot.js` `replaceHistoryTail`). When a snapshot still drops live rows
@@ -337,80 +514,70 @@ template. S3 bucket / ECR repo / AWS account id are derived automatically by
 - Claude's live interrupt is sent on ESC, but CC flushes the partial reply after acking it. A
   still-revealing block has no identity yet (`elementOrder` = newest), so an interrupt restored
   into a stream row is always appended last (`message-dom.js`), matching `createBlock`.
-- Server broadcasts to ALL app connections subscribed to a sessionId (multi-device)
+- The Bridge pushes to ALL app connections subscribed to a sessionId (multi-device)
 - See `docs/claude-code-bridge.md` for full protocol and flow diagrams
 
-## DynamoDB Schema
+## DynamoDB Tables
 
-**Single-table design** — `BridgeSessions` holds three entity types keyed by SK prefix:
+No Session or message data is stored server-side. DynamoDB holds only routing and account rows:
 
 ```
-BridgeSessions   PK: accountId (SHA256(apiKey)[:16])
-  SK: DEV#<device>                          entityType=device   — one row per device
-      → sessionCount, projectCount, os, lastActive, runtimeCapabilities
-  SK: PROJ#<device>#<projectHash>           entityType=project  — one row per project
-      → sessionCount, projectName, lastActive         (aggregates)
-  SK: SESS#<device>#<projectHash>#<sid>     entityType=session  — the real session row
-      → status (running/needs_input/completed), preview, model, size, lastActive,
-        runtime, nativeSessionId, modelProvider, clientSource, cliVersion,
-        isAgent, agentName, agentDetail
-  GSI accountId-activeStatus-index (sparse, ProjectionType ALL):
-      activeStatus = "running" | "needs_input"      (active sessions)
-                   | "done#<lastActive>"            (every completed session)
-      → homepage Active Sessions = between("needs_input","running"); c<n<r so
-        completed/done# are excluded. Completed Sessions = begins_with("done#") desc limit 20.
-
-BridgeMessages   PK: sessionId    SK: timestamp#uuid
-  Attributes: uuid, type, content (JSON), timestamp, optional stopReason/toolUseResult
-  TTL: 90 days
+<stack>-connections  PK: connectionId — one row per WebSocket connection (role, accountId,
+                     deviceName, …; GSI accountId-role-index) plus per-device Bridge owner rows
+<stack>-system       PK: pk  SK: sk  (TTL: ttl)
+  DEVICE#<accountId> / <deviceName>  — deviceName, deviceDisplayName, os, lastConnected
+                                       (written by WS $connect once a Bridge claims its name;
+                                       nothing is migrated: after the first v2 deploy a device
+                                       is listed again once its Bridge reconnects, which the
+                                       version update triggers within minutes for online ones)
+  TOKEN / <token>                    — start/install tokens (name the key, never hold it)
+  PUSH_DEVICE / <environment>:<token>, NOTIFICATIONS#<accountId> / <eventId> — notifications
 ```
-
-**Count consistency (aggregates drift; DDB-self-consistent, not disk-truth):**
-- Bridge calls reconcile right after `await syncSessions()` (a definite completion point — all
-  SESS# writes are awaited-done; no timer guessing) and again when a brand-new project first
-  appears in the watcher. NOT periodic.
-- The incremental `statusDelta` ADD path still maintains `sessionCount` (+1 on `from:'new'`);
-  aggregate status deltas are now unread (reconcile owns those numbers).
 
 ## API Summary
 
 ### REST
 ```
-POST /api/bridge/sync-sessions              — bridge uploads session metadata
-POST /api/bridge/sync-messages              — startup/fallback/on-demand message history
-POST /api/bridge/reconcile                  — recount DEV#/PROJ# from SESS# + prune orphan PROJ# (device row == list length)
-POST /api/bridge/create-project             — seed an empty project row
-POST /api/bridge/delete                     — delete Session/Project metadata and reconcile
-GET  /api/bridge/devices                    — device list (projectCount/sessionCount from aggregates; running/needsInput live)
-GET  /api/bridge/projects?device=X          — project list
-GET  /api/bridge/sessions?device=X&project=Y — session list
-GET  /api/bridge/active-sessions            — homepage: active (running+needs_input) + 20 most-recent completed (recentSessions)
-GET  /api/bridge/messages?session=X&after=ts&device=D&project=P — messages + current Session status
-POST /api/bridge/command-catalog            — bridge stores the full project command catalog in S3
-GET  /api/bridge/command-catalog/{ref}      — app reads the account-scoped command catalog
-POST /api/bridge/video-prepare              — video preview: HEAD dedup + presigned PUT URL (bridge streams to S3)
-GET  /api/bridge/video-url/{key}            — video preview: presigned GET URL (no-store; browser streams from S3)
+GET  /api/bridge/devices                    — names, online, wsUrl, rpc routes + credentials + storage (counts come from each Bridge)
+GET  /api/bridge/device-name/validate       — install-time device name check
 GET  /api/install                           — bridge install script (sets up always-on service)
-POST /api/auth/start-token                  — 10-minute token for Setup's Start URL / QR / install command
+POST /api/auth/start-token                  — 15-minute token for Setup's Start URL / QR / install command
 GET  /auth/install?t=…                      — install script for a token (public; the token stands in for the key)
 POST /api/bridge/delete-device              — remove a device and make its Bridge uninstall itself
 GET  /api/version                           — app and Bridge release versions
 ```
 
-### WebSocket (real-time)
+### Direct channel (v2, App ⇄ Bridge over the `app_data` / `bridge_data` sockets, no Lambda per frame)
 ```
-App → Server:           { action: "subscribe", sessionId }
-App → Server:           { action: "unsubscribe", sessionId }
-App → Server → Bridge:  { action: "send_message", sessionId, text, device }
-                        { action: "send_message", projectHash, runtime, text, device }  — new session
-App → Server → Bridge:  { action: "permission_reply", sessionId, requestId, decision, answerText?, device }
-App → Server → Bridge:  { action: "list_commands", projectHash, runtime, sessionId?, device, requestId }
-Bridge → Server → App:  { action: "send_message_result", ok, sessionId? }
-Bridge → Server → App:  { action: "command_catalog_ready", requestId, runtime, device, projectHash, revision, catalogRef? }
-Server → App:           { action: "messages", sessionId, messages }
-Server → Bridge:        { action: "sync_session", sessionId, runtime, nativeSessionId }
-Bridge → Server → App:  { action: "sync_complete", sessionId, status, count }
+home {revision?}              — devices' counts, active Sessions, 15 recent projects × 5 Sessions
+projects {limit?, cursor?}    — project list page
+sessions {project, limit?, cursor?} — session list page
+history / threads / tool_details — Session view (`docs/v2-step3-session-plan.md`)
+subscribe {sessionId, rootSessionId?, renew?} / unsubscribe — who receives a Session's pushes (150 s lease)
+send_message {…}              — reply = send_message_result; `rpc_ack` on arrival is the receipt
+interrupt, permission_reply   — reply {ok}
+list_commands {projectHash, runtime, knownRevision} / list_command_options — catalog in the reply
+project_files / git_status / delete_files — reply {frames} (the handlers' frames, collected)
+rename_session, create_project — reply = the result
+push: stream_*, messages, permission_request, permission_resolved, turn_replay,
+      session_threads_changed (root subscribers), session_title_changed — to subscribers only
 ```
+Shared request rules (`bridge/direct-rpc.mjs`): a request still running after 5 s sends
+`rpc_progress` every 15 s (the App's deadline is 60 s after the last ack/progress); only
+machine-heavy reads (`limitedRequest` in `ws.mjs`) count against 6 at once; a request carrying
+`known` gets `fingerprint` (SHA-256 of the result, 16 hex) or `{notModified, fingerprint}`
+(projects, sessions, threads, file list/browse, Git status/refs/history; `api.js` `requestFresh`,
+`ws-rpc.js`). Tool details are kept in IndexedDB (`cache/tool-details-cache.js`, 20 MB LRU).
+`api.js` calls them as `bridgeHome` / `bridgeDevices` / `bridgeList` / `bridgeHistory`; `direct-transport.js` owns the socket,
+routes (`/devices`), retries, subscriptions and credentials. Frames are `action: rpc | push` with a
+readable `method` / `event`. Full protocol: `docs/api.md`; design: `docs/v2-step3b-realtime-plan.md`.
+
+### WebSocket (Bridge ⇄ server; the App opens no control socket since v2 stage 2a)
+The Bridge's control socket carries only `heartbeat` and `direct_rpc` (data-socket binding); the
+URL carries `device`, `name` (display) and `os`. Terminals and port previews are `stream` frames
+on the App's one direct socket (`docs/terminal-direct-integration.md`), so opening one creates no
+socket and calls no Lambda.
+`device_removed` / `bridge_replaced` are pushed to it. No Session data passes through it.
 
 Full protocol: `docs/api.md`
 
@@ -422,35 +589,39 @@ session, fed over a kept-open stdin. Single-writer per session → no jsonl doub
 Replaced the old tmux send-keys approach (deleted in Phase 2E). Full design: `docs/headless-streaming.md`.
 
 ### Message Sending
-- Viewer → WS → Server → Bridge → `handleHeadlessSend` → `_pool.send` → CC stdin
+- Viewer → direct `send_message` request → Bridge → `handleHeadlessSend` → `_pool.send` → CC stdin
 - Streaming back: `stream_delta` (typewriter preview) + `stream_end`; full assistant/user
   lines arrive as authoritative `messages` (uuid-deduped against the jsonl copy)
 - Optimistic rendering + dedup + timestamp update
 
 ### Reliable WS Delivery (app side, `web/js/ws.js`)
-- **Sends must survive a dead socket.** User actions (`send_message`/`interrupt`/`create_project`) use `wsSendReliable`, not bare `wsSend` (which drops frames when not OPEN): queues to `_wsSendQueue` (array, ordered) + reconnects, flushed on `onopen` after re-subscribe. iOS suspends the socket in background into a zombie (reads OPEN, frames vanish, no `close`). On foreground (`app.js` `refreshForegroundView` → `resumeSessionForeground`) a non-OPEN socket reconnects; an OPEN one gets a `heartbeat` probe (the server answers app heartbeats) and is rebuilt if no frame arrives within 5s. The foreground history refresh is `fresh`: it replaces a still-open `/messages` barrier instead of reusing it, carrying its captured WS events over, because a request started before suspension may never settle and an open barrier swallows live frames. `/messages` also times out after 20s and takes the existing REST-failure path.
-- **Bridge turn frames must survive reconnect too.** `LiveTurnStream` sends through
-  `wsSendWhenConnected`, which queues frames while the Bridge socket is not OPEN and flushes them
-  in order after reconnect. A frame may not consume a turn `seq` and then disappear.
-- **Lost app frames are recovered, not waited on.** API Gateway closes a WS after 10 minutes with
-  no client→server traffic, and the realtime data socket never sends; frames posted around such
-  closes, or via a gone Lambda target, vanish silently. While a Session is open and visible the app
-  pings both sockets every 25s and rebuilds one with no frame for 15s. The ping is
-  `{action:"realtime_ping"}`, answered `{action:"realtime_pong"}` by a MOCK route on both
-  WebSocket APIs (no Lambda, no DDB); `heartbeat` stays Lambda-routed for the Bridge (TTL,
-  `bridgeVersion`) and `ping` belongs to the preview keepalive. Against a stack without the route,
-  the control socket keeps probing with `heartbeat` and the data socket never times out, so an
-  older stack is never mistaken for a dead socket. A turn seq gap triggers a ping on both sockets;
-  once both pongs have arrived (each socket alive and drained over the client link) and ≥3s
-  passed, the frame is treated as lost and
+- **Sends must survive a dead socket.** A send is a direct request with a receipt (`sendToBridge`
+  in `ws.js`): the Bridge's `rpc_ack` shows the bubble, the reply is the result. The transport
+  (`direct-transport.js`) resends an unreceipted request every 3s, pings a socket that stayed
+  silent for 3s after a request and rebuilds it after 3s more (iOS leaves suspended sockets OPEN
+  but dead), and resends everything pending after the new `whoami`; the Bridge ignores a repeated
+  `turnId`. A request that failed before its receipt is sent again on resync (socket or device
+  back). The foreground history refresh is `fresh`:
+  it replaces a still-open history barrier instead of reusing it, carrying its captured events
+  over, because a request started before suspension may never settle.
+- **Pushes are best effort; history is the truth.** The Bridge pushes Session events only to
+  subscribed connections and neither queues nor confirms them. After a reconnect, a returning
+  device or a restarted Bridge (`epoch` in the `subscribe` reply) the transport fires `onResync`
+  and the Session reloads `history {after}`. A hidden page unsubscribes at once.
+- **Lost app frames are recovered, not waited on.** One 60s tick while visible: the subscription
+  renewal when a Session is open, else `{action:"realtime_ping"}` (answered by a MOCK route, no
+  Lambda). A turn seq gap pings the direct socket; once its pong has arrived (socket alive and
+  drained over the client link) and ≥3s passed, the frame is treated as lost and
   `refreshSessionMessages()` resumes the turn at the next checkpoint. A held `stream_end` keeps the
   gapped-end path. A running turn with no frame for 60s (no permission prompt) is checked against
-  REST; `completed` settles it, covering a lost tail or `stream_end`.
-- **History rows rejoin their stream row by message order.** REST/DDB rows carry no `turnId`, so
+  the history status; `completed` settles it and reloads the history as a snapshot, covering a lost
+  tail or `stream_end` (the streamed blocks stopped where the frames were lost).
+- **History rows rejoin their stream row by message order.** History rows carry no `turnId`, so
   untagged assistant rows between a turn's prompt and the next prompt belong to that turn's stream
   row; recovered children are inserted by message order, and class-only matching may reuse only a
-  stream block without identity (`message-dom.js`).
-- **No duplicate/stuck bubbles.** Each optimistic bubble carries a monotonic send `seq`. `reconcileEchoedPending()` (end of `updateLastTurn`) retires a pending when (1) its echo is present (covers echoes that arrived via `bufferAndFetch`, which `tryDedup` skips), or (2) `seq < lastDeliveredSeq` — a later send was already confirmed, so this earlier one was swallowed by a busy-CC send and never reached jsonl (echo never comes). `lastDeliveredSeq` is a persistent watermark bumped in `tryDedup`/`resolvePending(ok)`/echo-match, so orphan detection survives the confirmed pending being removed; reset with `pendingSentMessages` on every session switch. `isImage` bubbles are never auto-orphaned (attachments, no matchable text). Without this an orphan has no `data-ts` and sticks to the bottom forever. New-session banner: `body.new-session #content` is flex-centered, so `.ws-banner` is pinned `position:absolute; top:0` instead of being pulled to the middle.
+  stream block without identity — in a turn that has not ended, only one whose text the history row
+  continues, which the history then completes (`message-dom.js`).
+- **No duplicate/stuck bubbles.** Each optimistic bubble carries a monotonic send `seq`. `reconcileEchoedPending()` (end of `updateLastTurn`) retires a pending when (1) its echo is present (covers echoes that arrived inside a history load, which `tryDedup` skips), or (2) `seq < lastDeliveredSeq` — a later send was already confirmed, so this earlier one was swallowed by a busy-CC send and never reached jsonl (echo never comes). `lastDeliveredSeq` is a persistent watermark bumped in `tryDedup`/`resolvePending(ok)`/echo-match, so orphan detection survives the confirmed pending being removed; reset with `pendingSentMessages` on every session switch. `isImage` bubbles are never auto-orphaned (attachments, no matchable text). Without this an orphan has no `data-ts` and sticks to the bottom forever. New-session banner: `body.new-session #content` is flex-centered, so `.ws-banner` is pinned `position:absolute; top:0` instead of being pulled to the middle.
 
 ### Scroll-to-bottom on session open (no flash / no "stopping short of the bottom")
 - **Order matters: clamp BEFORE scroll.** `clampOverflow` collapses long messages (adds `.clamped` → max-height 4.5em), shrinking total height. Initial render clamps before scrolling. `state.stickBottom` is follow intent, not a near-bottom measurement: a real drag/wheel sequence clears it when the sequence starts. After the bottom button has been visible, its first visible→hidden transition immediately restores follow and scrolls to the physical bottom; later movement in that same gesture keeps following unless it leaves the hidden-button range again. Detect the transition inside the shared button updater because touch `pointermove` may observe the new `scrollTop` before `scroll`. A `ResizeObserver` on the current `.messages` container keeps real OUT/markdown/diff/image height changes pinned only while follow intent remains active, so deliberate upward scrolling is not overridden. Streaming never uses smooth scrolling because continuously arriving frames would compete with the animation.
@@ -459,30 +630,43 @@ Replaced the old tmux send-keys approach (deleted in Phase 2E). Full design: `do
 ### Permission Detection + User Interaction (headless, bridge-driven)
 - Bridge `onControlRequest` (CC's `control_request`, precise — no client-side heuristic) → app `permission_request {kind, requestId, questions?/plan?/input}`. App replies `permission_reply {requestId, decision:allow|deny|answer, answerText?}`.
 - Ordinary tools (Bash/Edit/Write/MCP): allow → `control_response{allow, updatedInput}`; deny → `{deny, message}`. (`defaultMode:bypassPermissions` → CC never asks, no prompt.)
-- AskUserQuestion/ExitPlanMode (`requires_user_interaction`): answer via **`{deny, message: answerText}`** — CC's only answer channel on `--permission-prompt-tool stdio` (a structured `control_response` answer is force-converted to deny, verified CC 2.1.211). Multi-question wizard sends `question → answer` per line. Cancel = `{deny, interrupt:true}` → `[Interrupted]`.
-- Answer renders in the tool-card OUT (`toolState` treats it as non-error → green; cancel → yellow), not a separate bubble. A still-pending prompt is re-shown on refresh/reconnect (`reveal_permission` → bridge re-push).
+- AskUserQuestion/ExitPlanMode (`requires_user_interaction`): answer via **`{deny, message: answerText}`**, which every CC version understands (2.1.211 force-converted a structured answer to deny; 2.1.322 accepts `allow + updatedInput.answers`, not used yet). Multi-question wizard sends `question → answer` per line; a `multiSelect` question shows checkboxes + Submit and joins labels with `, ` (CC's own format). Every ask reply also carries structured `answers {questionId|question: [labels]}` (Codex `request_user_input` maps them per question). Cancel = `{deny, interrupt:true}` → `[Interrupted]`.
+- "Yes, for this session": a Claude tool request with CC `permission_suggestions` (`addRules` allow) carries `sessionScope {label}`; the reply `{decision:'allow', scope:'session'}` answers with `updatedPermissions` destination `session` and stores the rules in `~/.baton-bridge/session-grants.json` (`session-grants.mjs`, dropped when the Session is deleted). CC keeps session rules only in memory, so every spawn passes them back as `--allowedTools`.
+- Takeover (`writerConflict` in ws.mjs, Claude's from #205) also serves any adapter with `interaction.heldElsewhere`: `<rt>_active_writer {writer}` → confirm → SIGTERM only that pid; such adapters also refuse deleting a Session in use.
+- Answer renders in the tool-card OUT (`toolState` treats it as non-error → green; cancel → yellow), not a separate bubble. A still-pending prompt is re-shown on refresh/reconnect (direct `subscribe` → bridge re-push; a prompt already on screen keeps its state).
 - `web/js/components/permission.js` fully rewritten; old `arrow:`/`type:`/`escape` protocol + `checkPendingPrompts` client detection deleted.
 
 ### Image Sending
-- S3 upload + `![](baton-bridge:key)` protocol
-- Bridge downloads → replaces with absolute path → CC Read tool reads it
+- Signed PUT to the transfer area + `![](baton-bridge:key)` protocol; attachments `[name](baton-file:key)`
+- Bridge downloads with a signed GET → replaces with absolute path → CC Read tool reads it
 - Multi-image staging + gallery + paste support
 
 ### File / Video Preview (click a file link in a message)
-- Click file link → `openFile()` → WS `request_file` → bridge `handleRequestFile` (`ws.mjs`) reads from disk.
-- Text/image: bridge base64s + POSTs to Lambda (`/upload-file` → `files/{key}`, `/upload-image` → `images/{key}`), replies `file_ready {key}`; frontend GETs `/api/bridge/file|image/{key}` (served base64-as-text from S3). Binary text files (NUL byte in first 8KB) → `binary file` error.
-- **Video** (`.mp4/.m4v/.mov/.webm/.mkv/.avi`, ≤5GB): base64-through-Lambda is impossible (API GW 6MB limit), so the bridge **streams the file straight to S3** via a presigned PUT. `POST /video-prepare {key}` → server HEADs `videos/{key}`: exists → `{exists:true}` (skip upload, dedup by content-hash key so it survives bridge restarts), else returns presigned PUT URL → bridge `fs.createReadStream` piped to `fetch(PUT, {duplex:'half'})` (flat memory regardless of size). Bridge replies `file_ready {video:true, key}`; frontend calls `GET /api/bridge/video-url/{key}` for a short-lived presigned GET URL and plays it in a `<video>` element streaming directly from S3 (Range/seek supported). No CloudFront/IAM change — Lambda already has S3 Get/Put; presigning uses those creds.
+- Click file link → `openFile()` → direct `project_files {operation:'read'}` → Bridge reads from disk.
+- Text ≤ 300 KB comes back inside the reply's frames; larger text (first 1 MB) is PUT to the transfer area and read with `transfer.text(key)`. Images go through `transfer.prepareUpload` (content-hash key) and are read with `transfer.fileInfo(key)`. Binary text files (NUL byte in first 8KB) → `binary file` error.
+- **Every transfer is sealed** (64 KiB AES-GCM records, `x-amz-meta-sealed`; no size or type exception, no plaintext file name in object metadata). Bridge uploads (`download`, video and image reads, ≤ 5 GB) stream `fs.createReadStream` → content-hash check → `sealStream` → one signed PUT; the last record waits for the hash, so a file changed mid-upload leaves no object. Phone attachments (≤ 512 MB) over 32 MB go up as 16 MiB multipart parts, each sealed on its own; all uploads share three slots (two on phones; files ≤ 8 MB take none), a failed part is retried after 1/2/5/10/20 s. Requests without `files: 2` (older Apps) get "Update Baton" for video, audio and files over 50 MB.
+- **Everything but images and Office ≤ 256 MB** (video, audio, PDFs, text, large files): read by range and decrypted in the page (`web/js/media/`, `docs/media-streaming.md`). `<video>` / `<audio>` (and downloads) get a local URL: native shells answer it on a `preview_proxy` loopback port (raw `media_write` invokes, 256 KiB × 3 in flight; Android POSTs to `media_sink` instead), browsers in `media-sw.js`; otherwise a Blob ≤ 256 MB. Chromium ≥ 126 reads one GET per player request; WebKit and older WebViews (no fetch backpressure) read 1 + 4 + 4 + 8 MiB at once after an open or seek, then 16 MiB blocks two ahead, each record once; decrypted 16 MiB blocks stay in the attachment cache (≤ min(2 GB, quota / 4)). A missing stored copy makes the App ask the Bridge again (project files) or for its local copy (attachments).
 - **Markdown documents** render like GitHub (`web/js/components/markdown-document.js`, lazy-loaded): raw HTML is kept and cleaned by bundled DOMPurify with GitHub's allowlist plus `picture/source`; `breaks:false`; `user-content-` heading anchors; `> [!NOTE]` alerts; `#gh-light-mode-only` images hidden and `prefers-color-scheme` fixed to dark. Baton's own markup (code, Mermaid, KaTeX, image placeholders) bypasses the sanitizer as nonce slots. Relative `img src` / `source srcset` / links resolve against the document directory; `/x` resolves like GitHub from the repository root: the nearest folder from the document upward (within the project) whose `.git` Bridge can read, probed only when the document uses `/` paths and cached per folder only on a definite answer; otherwise the project root (derived from the path + project hash). Real absolute paths (under the project/repository root, a common filesystem root such as `/Users/` or `/home/`, or any `/x` in a document outside the project) stay absolute, since agent-written documents use them. Links follow chat semantics: `file.ext:12` / `#L12` open at a line (DOMPurify's URI rule is extended to keep them), other schemes such as `tel:` are left to the browser, and `#user-content-x` and `#x` both reach the heading. SVGs whose own CSS uses `prefers-color-scheme` are fetched (`cache: 'no-store'`, since the `<img>` preload's cached copy lacks CORS headers) and rewritten to dark, because WebKit evaluates it against the OS appearance. Image URLs are kept for the open file, so Code/Preview toggles send no requests; pending images draw nothing until loaded. Markdown/HTML files open in Preview unless a line or tool location is targeted. ```` ```math ```` fences render through the shared KaTeX loader; Mermaid uses the chat component (blocks outside `#content` are observed against the viewport). `:shortcode:` emoji come from `emoji-shortcodes.js`, generated from gemoji by `scripts/generate-emoji-shortcodes.mjs` and loaded only when a document contains one. Folder links (`docs/`, or a link Bridge reports as a directory) open the project file browser when the path is inside the current project. Chat messages still escape raw HTML.
 - **HTML documents**: relative CSS/JS/images are inlined, then rendered in a sandboxed opaque-origin iframe. In the iOS app they instead load into the native preview WKWebView through `navigate {url, html}` → `loadHTMLString(html, baseURL:)` (like SwiftChat's generated apps): the base URL is a virtual `https://<sha256(device, project, path)[:32]>.baton.local/<name>`, never fetched, so each file gets its own origin whose site storage persists across reopening. Native failure falls back to the iframe.
-- **Office** (`.docx/.pptx/.xlsx`, plus legacy `.doc/.ppt/.xls`): rendered in the browser by `@silurus/ooxml` 0.89.0 (Rust/WASM, canvas), loaded on demand from jsDelivr like PDF.js/Mermaid (`web/js/components/office-preview.js`); no server conversion. The viewer module, the `file-url` request and the download start together. Word uses the progressive scroll viewer, decks the scroll viewer, both with the shared two-finger zoom (`pdf-pinch.js`); Excel keeps the library's tabs and zoom bar. Legacy `.doc/.ppt/.xls` open in the same viewers through the experimental `@silurus/ooxml-legacy-office` readers (same version, loaded via jsDelivr `+esm` because its entry imports the viewer package by name; worker module + WASM URLs passed explicitly); unsupported content rejects and offers the download. Project files are uploaded through the existing `download` operation first, so Bridge is unchanged. The viewer is destroyed on close, including mid-load. Details: `docs/api.md`.
-- **Attachment cache** (`web/js/components/attachment-cache.js`): Office files, images and PDFs fetched in one request (≤ 8 MB) are kept in IndexedDB by attachment key (account-scoped), so reopening one sends no request at all. Files uploaded from this device are stored at upload time. A key never changes content (see content IDs below), so entries never go stale. Images and other files have separate 500 MB budgets (kind by extension), so one large PDF cannot evict the images; oldest-opened evicted first within each. Every image shown through `getImageUrl` (chat, Markdown/file previews, the image viewer; `images/<key>` for message images, the attachment key otherwise) is read from here as a Blob URL and stored after its single `fetch` download, so reopening or restarting sends neither the `image-url` request nor an S3 download; if fetching or IndexedDB fails it falls back to the presigned URL. Blob URLs are released when evicted from the 200-entry memory map unless still shown; HTML previews (opaque-origin iframe) get `data:` URLs instead; text previews uploaded to S3 (over 300 KB; their key is derived from path + content) count toward the file budget, while inline text, files over 100 MB, larger range-loaded PDFs, videos and audio are not cached. Any cache failure is a plain miss.
-- **Content IDs / upload dedup** (`web/js/components/content-hash.js`, `bridge/content-hash.mjs`): like Git LFS and Docker registries, an upload's ID is the SHA-256 of the whole file and the storage verifies it. Key = first 32 hex digits + extension. `file-prepare {contentHash}` (64 hex) HEADs `attachments/<account>/<key>` with `ChecksumMode=ENABLED`: only an object whose S3-verified `ChecksumSHA256` equals the hash (base64 vs hex) and whose size matches is reused → `{key, exists:true}`, nothing uploaded, the card simply reaches 100%. A missing object gets a presigned PUT signed with `ChecksumSHA256` (both the accelerated URL and `fallbackUrl`; the client must send exactly the returned headers), so S3 answers `400 BadDigest` to any other bytes and a content key always holds its content. Any other object at that key (prefix collision, no checksum) keeps a random key and is never overwritten. Requests without `contentHash` (older clients, hashing unavailable) keep random keys, so deploy order does not matter. The app hashes in 4 MB slices with hash-wasm, bundled as a 7 KB gzip SHA-256-only chunk (`web/js/components/sha256.js`) loaded on the first upload; WebCrypto has no streaming digest. Bridge streams the file and persists path + size + mtime + ctime + inode → hash in `~/.baton-bridge/file-hashes.json` (1000 entries; like Git's index, ctime catches copies that keep mtime, and files changed < 2 s ago are not remembered), so unchanged project files are neither re-read nor re-uploaded after a restart. On `BadDigest` (file edited while preparing) Bridge forgets that hash, skips the fallback URL and reports the file as changed. Shared content keeps the first uploader's S3 name, so `file-url?name=` passes the attachment link name (project files: the name from their path). Videos keep their own `videos/` keys.
+- **Office** (`.docx/.pptx/.xlsx`, plus legacy `.doc/.ppt/.xls`): rendered in the browser by `@silurus/ooxml` 0.89.0 (Rust/WASM, canvas), loaded on demand from jsDelivr like PDF.js/Mermaid (`web/js/components/office-preview.js`); no server conversion. The viewer module, the `transfer.fileInfo` HEAD and the download start together. Word uses the progressive scroll viewer, decks the scroll viewer, both with the shared two-finger zoom (`pdf-pinch.js`); Excel keeps the library's tabs and zoom bar. Legacy `.doc/.ppt/.xls` open in the same viewers through the experimental `@silurus/ooxml-legacy-office` readers (same version, loaded via jsDelivr `+esm` because its entry imports the viewer package by name; worker module + WASM URLs passed explicitly); unsupported content rejects and offers the download. Project files are uploaded through the existing `download` operation first, so Bridge is unchanged. The viewer is destroyed on close, including mid-load. Details: `docs/api.md`.
+- **Attachment cache** (`web/js/components/attachment-cache.js`): Office files, images and PDFs fetched in one request (≤ 8 MB) are kept in IndexedDB by attachment key (account-scoped), so reopening one sends no request at all. Files uploaded from this device are stored at upload time. A key never changes content (see content IDs below), so entries never go stale. Images and other files have separate 500 MB budgets (kind by extension), so one large PDF cannot evict the images; oldest-opened evicted first within each. Every image shown through `getImageUrl` (chat, Markdown/file previews, the image viewer; cache key `images/<key>` for message images, the attachment key otherwise) is read from here as a Blob URL and stored after its single `fetch` download, so reopening or restarting sends no S3 request; if fetching or IndexedDB fails it falls back to the signed URL. Blob URLs are released when evicted from the 200-entry memory map unless still shown; HTML previews (opaque-origin iframe) get `data:` URLs instead; text previews uploaded to S3 (over 300 KB; their key is derived from path + content) count toward the file budget, while inline text, files over 100 MB, larger range-loaded PDFs, videos and audio are not cached. Any cache failure is a plain miss.
+- **Content IDs / upload dedup** (`web/js/components/content-hash.js`, `bridge/content-hash.mjs`): like Git LFS and Docker registries, an upload's ID is the SHA-256 of the whole file and the storage verifies it. Key = first 32 hex digits + extension. `transfer.prepareUpload {contentHash}` (64 hex) HEADs `t/<accountId>/<key>` with `x-amz-checksum-mode: ENABLED`: only an object whose S3-verified `ChecksumSHA256` equals the hash (base64 vs hex) and whose size matches is reused → `{key, exists:true}`, nothing uploaded, the card simply reaches 100%. A missing object gets a PUT URL signed with `x-amz-checksum-sha256` (both the accelerated URL and `fallbackUrl`; the client must send exactly the returned headers), so S3 answers `400 BadDigest` to any other bytes and a content key always holds its content. Any other object at that key (prefix collision, no checksum) keeps a random key and is never overwritten. Uploads without `contentHash` (hashing unavailable) get random keys. The app hashes in 4 MB slices with hash-wasm, bundled as a 7 KB gzip SHA-256-only chunk (`web/js/components/sha256.js`) loaded on the first upload; WebCrypto has no streaming digest. Bridge streams the file and persists path + size + mtime + ctime + inode → hash in `~/.baton-bridge/file-hashes.json` (1000 entries; like Git's index, ctime catches copies that keep mtime, and files changed < 2 s ago are not remembered), so unchanged project files are neither re-read nor re-uploaded after a restart. On `BadDigest` (file edited while preparing) Bridge forgets that hash, skips the fallback URL and reports the file as changed. Shared content keeps the first uploader's S3 name, so `transfer.fileInfo(key, name)` passes the attachment link name (project files: the name from their path).
 
 ### Session Launch (headless)
 - Existing session with no live CC process → `_pool.send` spawns a headless `claude -p --resume <id>`; the persistent process becomes the single writer. No tmux, no wait-for-ready, no trust-dialog handling (headless inherits the folder's trust state).
-- Idle reap (10min) + LRU cap (16) manage the pool; a reaped session re-spawns with `--resume` on the next message, context intact and configuration reloaded. A process with background tasks (`background_tasks_changed`, CC ≥ 2.1.203) is neither reaped nor evicted, and the task ending restarts its idle clock; in `-p` mode `~/.claude/sessions/<pid>.json` reads `idle` while background work runs, and CC keeps running after EOF until that work ends. Once CC reports `user_message_uuids`, a `result` without them (a turn CC started itself) consumes no input. (No more `cleanStaleSessions` / `apeek_*` tmux naming — all deleted in Phase 2E.)
+- A process exits once its Session is Done (design §6.6): after a `result` with no queued input, no background task and no unanswered `control_request`, the pool closes stdin (no signal) and the next message re-spawns with `--resume`, so settings and CLAUDE.md changes apply to it; session grants come back through `--allowedTools`, and `/model` / `/effort` through `--model` / `--effort` (CC's `get_settings` value after the command; `/model default` drops the flag). No idle reap, no LRU cap. Background tasks (`background_tasks_changed`, CC ≥ 2.1.203) keep the process until CC's report-back turn ends; in `-p` mode `~/.claude/sessions/<pid>.json` reads `idle` while background work runs, and CC keeps running after EOF until that work ends. Once CC reports `user_message_uuids`, a `result` without them (a turn CC started itself) consumes no input. (No more `cleanStaleSessions` / `apeek_*` tmux naming — all deleted in Phase 2E.)
 - New regular Session: Bridge mints a UUID, sends `send_message_result` first, then starts
   headless with `--session-id <id>` so the app subscribes before stream frames arrive.
+- Prewarm (`docs/api.md`): typing sends `prewarm` (first input, then ≤ every 10 s); Claude, Kiro and DSH
+  start the next turn's process early; unused 30 s after the last one it takes the Done exit. Claude keeps
+  it in the pool (`warm`; an exiting one is awaited, never reused), bound to the Session (`--resume` reads
+  the transcript at spawn, so a size change since means a fresh process) or to a minted new-Session ID
+  (`--session-id` writes nothing before input). Kiro/DSH keep one per Session folder, only `initialize`d
+  (no session or lock, so an old one may still be exiting), and skip a Session with a running turn.
+  Hermes starts a stopped gateway (and resumes the Session); a failed start pauses it for 60 s.
+  Prewarm errors are logged, never thrown.
+  An unused `--resume` still touches the jsonl mtime at spawn and appends `mode`/`cost-state` at exit
+  (CC does both on any start; SIGTERM/INT/HUP write the same, SIGKILL leaves `sessions/<pid>.json`).
 - New Codex Session: Bridge calls `thread/start`, returns the storage Session ID, then starts the
   first turn on the same cwd-scoped app-server client.
 - New background agent: Bridge launches `claude --bg`, resolves the full Session ID, and lets
@@ -495,7 +679,7 @@ Replaced the old tmux send-keys approach (deleted in Phase 2E). Full design: `do
 
 ## Web Deployment
 
-### Web Pages (served from FastAPI Lambda)
+### Web Pages (served from the API Lambda)
 - `web/landing.html` — API key input, URL `?key=` auto-login, localStorage (`_ak` btoa obfuscated)
 - `web/index.html` — Session viewer (auth guard redirects to landing if no key)
 - `web/setup.html` — Bridge install command + QR code + connected devices list
@@ -506,10 +690,10 @@ Replaced the old tmux send-keys approach (deleted in Phase 2E). Full design: `do
 - Key stored in localStorage (`_ak` = btoa, `_as` = server URL)
 - No cookies, no server middleware — static files publicly accessible
 - API calls use `x-api-key` header from localStorage
-- API Gateway `ApiKeyRequired: false` — auth handled by FastAPI layer
+- API Gateway `ApiKeyRequired: false` — auth handled by the server's middleware
 
 ### Deployment
-- Dockerfile: `COPY web/ web/` → FastAPI `StaticFiles` mount
+- `server/aws/Dockerfile`: Vite build → `web/`, served by `server/aws/web-files.mjs` (ETag revalidation, #191 cache headers)
 - `install.sh`: copies `web/` to Docker build context, deploys via CodeBuild
 - Deploy output: single setup URL with embedded token (12h TTL, reusable until then)
 
@@ -523,6 +707,24 @@ Replaced the old tmux send-keys approach (deleted in Phase 2E). Full design: `do
 - Homepage: Active Sessions = running + needs_input (regular + agent); Completed Sessions =
   20 most-recent completed of any type. Device/Project rows show `N running · N needs input`
   (`needsInputCount`). `completed` is not shown on the device rows.
+
+## Desktop Side Panel
+
+- On `(min-width: 768px) and (hover: hover) and (pointer: fine)` inside a device (project list, Session list,
+  Session; not New Session), Terminal / Files / Git / internal browser / file viewer dock to the right instead of
+  covering the page; a docked Terminal / Files stays open across every page of the same device until closed by hand
+  and keeps the folder it opened in (also across a refresh), while Git closes when the project changes because it
+  shows the page's project (`web/js/side-panel.js`, CSS only
+  re-positions the existing full-screen pages; narrow and touch layouts are unchanged). Default width 40% clamped
+  400–720px (panel ≥ 320, chat ≥ 380), drag handle persists a ratio, header toggle maximizes to full screen.
+- Files can leave the project: Bridge `list` resolves relative paths against the project folder and absolute paths
+  as-is and returns `root`; inside the root the browser keeps relative paths, outside it absolute ones. The
+  breadcrumb shows the full path from `/`, scrolled so the project item starts the row.
+- One tool at a time: a newly shown tool closes the others; the file viewer stacks over the tool that opened it,
+  except the browser (its native view would cover it). The matching top-bar button is highlighted via
+  `body[data-side-panel]`, and clicking it again closes the tool.
+- Esc belongs to a docked tool only when the key comes from inside it (or, with focus on body, the panel last
+  clicked); otherwise it keeps the chat's interrupt.
 
 ## Light / Dark Theme
 
@@ -545,6 +747,18 @@ Replaced the old tmux send-keys approach (deleted in Phase 2E). Full design: `do
   splash; `uiMode` is in `configChanges`, so no Activity restart), iOS `batonAppearance` message
   (window style, status bar, preview webviews), desktop `appearance_set` (`src-tauri/src/appearance.rs`:
   Tauri theme, window/webview backgrounds, macOS tab strip, saved to `appearance.json` for the next launch).
+- Android cold start mirrors iOS from the app's first frame: the 12+ system splash is only the canvas color (no
+  icon, removed at once); before 12 the starting window is the canvas of the system theme. `LaunchSkeletonView`
+  draws the home Web skeleton natively on the decor view (Wry replaces the content view later) in the saved
+  theme's colors and is removed without a fade when `window.__skelReady` (or a non-home page) is reached, polled
+  every 20 ms independently of each result (a navigation can drop it), 15 s cap. It matches the WebView pixel for
+  pixel: `env(safe-area-inset-top)` rounds up to whole CSS px, the stable scrollbar gutter is `floor(6 × dpr)`
+  device px, text is unhinted at subpixel positions with baselines rounded to device px, and active cards keep
+  their 135° gradient. Keep it in step with `renderSkeleton` in `index.html`. Only the phone portrait layout
+  (≤ 480 CSS px) is drawn; landscape and wide windows lay home out differently and keep a plain canvas cover. The
+  content view is padded by min(tappable element, navigation bars) so three-button navigation does not cover the
+  page (gesture navigation stays edge to edge), and before Android 11 also by the keyboard: an edge-to-edge window is
+  not resized there, and only `adjustResize` reports the keyboard (with the navigation bar) in the system window insets.
 - Cold-start launch screens follow the app's choice, not the system's: Android 12+ uses the app night mode;
   iOS renders the LaunchScreen skeleton into light and dark snapshots per orientation
   (`Library/SplashBoard/Snapshots/<bundle> - {DEFAULT GROUP}/*.ktx`, Apple's `AAPL` container with ASTC,
@@ -575,6 +789,14 @@ Tauri v2 wraps web/ static frontend as native app, zero web code changes.
   must take `Webview`, not `WebviewWindow` (that extractor fails once a window has children).
   Rust owns tab order/selection/titles and pushes `macos-tabs` to the strip; pages report titles
   from `updateBreadcrumb`. Preview tunnels and native preview views are owned per webview label.
+- Windows tabs share `macos_tabs.rs` and the same pages. The window is frameless
+  (`tauri.windows.conf.json`); the strip is the title bar row (`app-region: drag`). `windows_caption.rs`
+  draws the caption buttons (46px × strip height) in a column of the top-level window left free by the
+  strip and answers `WM_NCHITTEST`: only a top-level HTMAXBUTTON gives Windows 11 Snap Layouts (WebView2
+  is another process). The top resize edge is a `SM_CYFRAME` row above the strip (Tauri creates no resize-border child here); tabs are re-laid out
+  on every resize/DPI change. On `WM_SETFOCUS` it focuses the selected tab (wry only focuses `main`;
+  Tauri's `Focused(true)` also fires for child webviews and loops). Shortcuts live in `macos-tabs.js`;
+  `appearance.rs` sets per-webview backgrounds, as `webview_windows()` is empty once a window has children.
 
 ### Targets
 - Android: primary
@@ -599,7 +821,7 @@ The local macOS release script reads signing values from `.env.local`
 (gitignored). See `docs/package.md` for GitHub Actions secrets, the
 pushed-commit requirement, and platform-specific outputs.
 
-Xcode Cloud (iOS from Linux): product "Baton" is connected to `github.com/zhu-xiaowei/Baton`;
+Xcode Cloud (iOS from Linux): product "Baton" is connected to `github.com/agentbaton/baton`;
 workflow "Default" is manual-start only, pinned to Xcode 26.6 (Xcode 27 rejects the iOS 14.0
 deployment target), and archives `baton_iOS` for TestFlight. `src-tauri/gen/apple/ci_scripts/ci_post_clone.sh`
 installs Node + Rust, builds `dist/`, and patches the Rust build phase PATH in the CI checkout.
@@ -643,7 +865,6 @@ Under headless this can't happen: CC pushes the full `questions[]` up front via 
 ## Known Issues / TODO
 
 - **Real-time Edit diff hydration lifecycle**: fixed the intermittent mobile state where an expanded `Edited` card showed only its border until session reload. Diff data now survives DOM replacement under a stable content key, initialization is tracked per element, visible tool nodes hydrate after every timeline mutation, and the registry is cleared at session boundaries. Keep regression coverage for replacement during lazy import, streaming adoption, fallback rendering, and session cleanup.
-- **WS oversized messages**: API Gateway WS single-frame cap is **32768B** (exceeding it drops the connection with code 1009). `realtime-delivery.mjs` checks the envelope size and sends a transport-truncated copy over WS (`truncateToBytes()` in `extract.mjs`, byte-aware, with message-level `truncated: true` and `noCache: true`). HTTP persists the prepared authoritative message with compact tool previews. The server skips DDB writes for `noCache`, so the transport copy cannot overwrite the HTTP version. HTTP also caps each message to `DDB_ITEM_LIMIT` (360KB). These transport limits and `stream_end.recoveryRequired` remain separate from intentional tool previews.
 - **VS Code CC status precision**: VS Code extension launches CC without `--resume` flag. CC ≥ 2.1.269 is matched exactly through its `~/.claude/sessions/<pid>.json` record; older versions (and Windows) fall back to the mtime heuristic (5 min timeout → completed).
 - **Unstructured terminal questions**: external terminal turns that end with plain assistant text do not expose a reliable waiting-for-input signal. Structured `AskUserQuestion` and `ExitPlanMode` are detected as `needs_input`.
-- **Concurrent regular-session control**: Claude has no lock for a normal terminal or VS Code session. A send to a session another live CC process holds (its `~/.claude/sessions/<pid>.json`) returns `claude_active_writer`; the App's takeover modal SIGTERMs that pid and then resumes. An idle pooled process that missed another client's turn is resumed again first. A terminal that opens the session while a Baton turn runs still forks it (undetected). Daemon agents are safe because Web takeover stops the roster worker first.
+- **Concurrent regular-session control**: Claude has no lock for a normal terminal or VS Code session. A send to a session another live CC process holds (its `~/.claude/sessions/<pid>.json`) returns `claude_active_writer`; the App's takeover modal SIGTERMs that pid and then resumes. A terminal that opens the session while a Baton turn runs still forks it (undetected). Daemon agents are safe because Web takeover stops the roster worker first.

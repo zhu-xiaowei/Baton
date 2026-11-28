@@ -175,9 +175,37 @@ export async function makeHarness(options = {}) {
   let apiResponse = { messages: [], hasMore: false };
   let apiHandler = async () => apiResponse;
   G('api', (...args) => apiHandler(...args));
+  // Bridge reads answer through the same handler, under the paths the tests already know.
+  G('bridgeHistory', (params, opts) => apiHandler('/api/bridge/messages', params, opts));
+  G('bridgeList', (method, params) => apiHandler('/api/bridge/' + (method === 'threads' ? 'session-threads' : method), params));
+  G('bridgeHome', (params) => apiHandler('/api/bridge/active-sessions', params));
+  G('bridgeDevices', () => apiHandler('/api/bridge/devices'));
 
-  const ws = await import(path.join(ROOT, 'web/js/ws.js'));
+  // The direct App ⇄ Bridge transport: requests and subscriptions are recorded on the test's
+  // `state.ws` like any other frame ({ action: method, ...params }); tests answer through `bridge`.
+  const bridge = { requests: [], pings: [], push: null, resync: null, online: null };
+  const record = (frame) => w.__state?.ws?.send?.(JSON.stringify(frame));
+  w.__directTransport = {
+    request(device, method, params = {}, options = {}) {
+      const call = { device, method, params, options };
+      call.promise = new Promise((resolve, reject) => { call.resolve = resolve; call.reject = reject; });
+      bridge.requests.push(call);
+      record({ action: method, ...params, device });
+      return call.promise;
+    },
+    subscribe(device, sessionId) { record({ action: 'subscribe', sessionId, device }); },
+    unsubscribe(device, sessionId) { record({ action: 'unsubscribe', sessionId, device }); },
+    onPush(listener) { bridge.push = listener; },
+    onResync(listener) { bridge.resync = listener; },
+    onDeviceOnline(listener) { bridge.online = listener; },
+    ping() { return new Promise((resolve) => bridge.pings.push(resolve)); },
+  };
+  // The Bridge's receipt for a send (rpc_ack).
+  bridge.accept = (turnId) => bridge.requests.findLast((call) => call.method === 'send_message' && call.params.turnId === turnId)
+    ?.options.onAccepted?.();
   const { state } = await import(path.join(ROOT, 'web/js/state.js'));
+  w.__state = state;
+  const ws = await import(path.join(ROOT, 'web/js/ws.js'));
   const hooks = w.__wsTest;
   if (!hooks) throw new Error('__wsTest hooks missing — is the __APEEK_TEST__ block present in ws.js?');
 
@@ -188,6 +216,7 @@ export async function makeHarness(options = {}) {
   return {
     state,
     ws,
+    bridge,
     hooks,
     window: w,
     document: w.document,
@@ -203,7 +232,7 @@ export async function makeHarness(options = {}) {
 // or 'existing' (history already rendered / empty). Returns nothing; mutates state+DOM.
 export function resetSession(h, { sessionId = 's1', mode = 'existing', firstText = '' } = {}) {
   const { state, document } = h;
-  state.WS_URL = 'wss://test'; state.KEY = 'k';
+  state.KEY = 'k';
   state.appState = { session: mode === 'new' ? '__new__' : sessionId, device: 'D', project: { hash: '-h' } };
   state.wsSessionId = sessionId;
   state.wsRootSessionId = sessionId;
@@ -211,6 +240,10 @@ export function resetSession(h, { sessionId = 's1', mode = 'existing', firstText
   state.wsRunning = mode === 'new';
   state._syncedOnce = null;
   state._titleTier = 0;
+  state.wsHistoryPhase = '';
+  state.wsTitleRows = [];
+  // Opening a Session renders its container again (a failed load may have replaced it).
+  if (!document.querySelector('.messages')) document.getElementById('content').innerHTML = '<div class="messages"></div>';
   state.pendingSentMessages = mode === 'new' && firstText
     ? [{ id: 'sent-1', seq: 0, text: firstText, fullText: firstText, images: [], sentAt: Date.now() }] : [];
   document.querySelector('.messages').innerHTML = mode === 'new' && firstText

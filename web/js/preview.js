@@ -111,7 +111,7 @@ function getConnection(target, device) {
 }
 
 function portNotListening(entry, status = entry.status) {
-  const message = `Port ${entry.target.port} is not listening on ${entry.device}`;
+  const message = `Port ${entry.target.port} is not listening on ${globalThis.__deviceDisplayNames?.[entry.device] || entry.device}`;
   return status === message || status === `Preview failed: ${message}`;
 }
 
@@ -364,20 +364,11 @@ function goBack() {
   timer = setTimeout(finish, 320);
 }
 
-async function wsUrl() {
+function requirePreview() {
   if (!previewNativeAvailable()) {
     throw new Error('Port forwarding requires the Baton desktop or mobile app.');
   }
   if (!state.KEY || !state.SERVER) throw new Error('Sign in before opening a preview.');
-  const cached = state.WS_URL || localStorage.getItem('_wsurl');
-  if (cached?.startsWith('wss://')) return cached;
-  const response = await fetch(`${state.SERVER.replace(/\/$/, '')}/api/bridge/config`, {
-    headers: { 'x-api-key': state.KEY }, signal: AbortSignal.timeout(15000),
-  });
-  if (!response.ok) throw new Error(`Preview configuration failed: HTTP ${response.status}`);
-  const config = await response.json();
-  if (!config.wsUrl?.startsWith('wss://')) throw new Error('Server did not provide a WSS endpoint.');
-  return config.wsUrl;
 }
 
 async function connect(entry, { speculative = false, mode } = {}) {
@@ -398,10 +389,10 @@ async function connect(entry, { speculative = false, mode } = {}) {
   entry.status = 'Connecting…';
   entry.pending = (async () => {
     try {
-      const endpoint = await wsUrl();
+      requirePreview();
       if (entry.version !== version) return null;
       const tunnel = new PreviewTunnel({
-        device: entry.device, target: entry.target, wsUrl: endpoint, key: state.KEY, mode,
+        device: entry.device, target: entry.target, mode,
         onStatus(message) {
           if (entry.version !== version) return;
           entry.status = message;

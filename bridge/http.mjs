@@ -4,17 +4,9 @@ export function initHttp(config) {
   _config = config;
 }
 
-export async function get(endpoint) {
-  try {
-    const res = await fetch(`${_config.server}${endpoint}`, { headers: { 'x-api-key': _config.apiKey } });
-    if (!res.ok) return null;
-    return await res.json();
-  } catch { return null; }
-}
-
 export async function post(endpoint, data, options = {}) {
   try {
-    const res = await fetch(`${_config.server}${endpoint}`, {
+    const res = await fetch(`${_config.entry || _config.server}${endpoint}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-api-key': _config.apiKey },
       body: JSON.stringify(data),
@@ -29,10 +21,4 @@ export async function post(endpoint, data, options = {}) {
     console.error(`POST ${endpoint} failed: ${err.message}`);
     return null;
   }
-}
-
-export async function postRequired(endpoint, data, options) {
-  const response = await post(endpoint, data, options);
-  if (!response?.ok) throw new Error(`POST ${endpoint} failed`);
-  return response;
 }

@@ -110,7 +110,7 @@ test('keyboard opening and closing preserve physical bottom follow', async (t) =
   h.document.getElementById('msg-input').blur();
 });
 
-test('Git commit keyboard keeps the page in place without disabling chat chrome adaptation', async (t) => {
+test('Git commit keyboard keeps the page in place; the chat composer leaves the page to WebKit', async (t) => {
   await h.tick(10);
   resetSession(h, { sessionId: 'codex:git-keyboard' });
   const topBar = h.document.createElement('div');
@@ -153,8 +153,9 @@ test('Git commit keyboard keeps the page in place without disabling chat chrome 
   h.document.getElementById('msg-input').focus();
   h.visualViewport.height = 420;
   h.visualViewport.dispatch('resize');
-  assert.equal(h.document.body.style.height, '523px');
-  assert.equal(h.document.body.style.transform, 'translateY(-103px)');
+  assert.equal(h.document.body.style.height, '844px');
+  assert.equal(h.document.body.style.top, '0px');
+  assert.equal(h.document.body.style.transform, '');
   await h.tick(10);
 });
 
@@ -169,10 +170,7 @@ test('sending a user message restores bottom following without a competing anima
   h.state.stickBottom = false;
 
   h.window.doSend('hello', 'hello', []);
-  h.hooks.handleWsMessage({
-    action: 'send_message_received',
-    turnId: h.state.pendingSentMessages[0].id,
-  });
+  h.bridge.accept(h.state.pendingSentMessages[0].id);
 
   assert.equal(h.state.stickBottom, true);
   assert.equal(content.scrollTop, 1200);
@@ -210,10 +208,7 @@ for (const userScrollAfterSend of [false, true]) {
     input.value = 'hello';
     input.dispatchEvent(new h.window.Event('input'));
     h.window.doSend('hello', 'hello', []);
-    h.hooks.handleWsMessage({
-      action: 'send_message_received',
-      turnId: h.state.pendingSentMessages[0].id,
-    });
+    h.bridge.accept(h.state.pendingSentMessages[0].id);
     assert.equal(content.scrollTop, 900);
     assert.equal(h.state.stickBottom, true);
 

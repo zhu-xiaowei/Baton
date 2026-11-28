@@ -31,6 +31,15 @@ const vite = await createTestServer({
   server: { middlewareMode: true }, appType: 'custom',
 });
 await vite.ssrLoadModule('/js/project/file-viewer.js');
+// The transfer store signs S3 requests itself; here it answers through the mocked paths the cases know.
+const viaApi = (store) => Object.assign(store, {
+  prepareUpload: (body) => window.apiPost('/api/bridge/file-prepare', body),
+  fileInfo: (fileKey, name) => window.api('/api/bridge/file-url/' + fileKey + (name ? '?name=' + encodeURIComponent(name) : '')),
+  url: async (fileKey) => (await window.api('/api/bridge/image-url/' + fileKey)).url,
+  text: (fileKey) => window.apiText('/api/bridge/file/' + fileKey),
+});
+viaApi((await import('../../bridge/transfer-store.mjs')).transfer);
+viaApi((await vite.ssrLoadModule(new URL('../../bridge/transfer-store.mjs', import.meta.url).pathname)).transfer);
 
 class FakeUpload {
   static requests = [];
@@ -38,6 +47,7 @@ class FakeUpload {
   constructor() { this.upload = {}; this.headers = {}; }
   open(method, url) { this.method = method; this.url = url; }
   setRequestHeader(name, value) { this.headers[name] = value; }
+  getResponseHeader() { return '"etag"'; }
   send(body) {
     this.body = body;
     FakeUpload.requests.push(this);
@@ -429,13 +439,14 @@ test('legacy Office formats open in the matching viewer through the companion re
 });
 
 test('a project PDF is uploaded through the download operation, then previewed as an attachment', async () => {
-  const { handleProjectFilesMessage } = await vite.ssrLoadModule('/js/project/rpc.js');
+  const { configureWsRpc } = await vite.ssrLoadModule('/js/ws-rpc.js');
+  const { mockBridgeFrames } = await import('./bridge-frames-mock.mjs');
   const pdfKey = 'b'.repeat(32) + '.pdf';
   const sent = [];
-  window.wsSendReliable = payload => {
+  const bridge = mockBridgeFrames(configureWsRpc, [], payload => {
     sent.push(payload);
-    queueMicrotask(() => handleProjectFilesMessage({ action: 'project_files', requestId: payload.requestId, ok: true, key: pdfKey }));
-  };
+    queueMicrotask(() => bridge.answer({ action: 'project_files', requestId: payload.requestId, ok: true, key: pdfKey }));
+  });
   const metadata = [];
   window.api = async path => { metadata.push(path); return { name: 'spec.pdf', size: 20, previewType: 'application/pdf', previewUrl: 'https://bucket.test/spec.pdf' }; };
   try {
@@ -446,7 +457,7 @@ test('a project PDF is uploaded through the download operation, then previewed a
     assert.deepEqual(metadata, ['/api/bridge/file-url/' + pdfKey + '?name=spec.pdf']);
     assert.equal(document.querySelector('.attachment-pdf').src, 'https://bucket.test/spec.pdf');
   } finally {
-    delete window.wsSendReliable;
+    configureWsRpc();
     window.closeFileViewer();
   }
 });
@@ -638,7 +649,7 @@ test('the image viewer downloads the current stored image through the native plu
   showImageViewer([{ src: 'blob:https://app.test/2', key: 'b'.repeat(32) + '.png', attachment: true }]);
   document.querySelector('.img-overlay-download').click();
   await new Promise(resolve => setTimeout(resolve, 0));
-  assert.deepEqual(requested, [{ path: '/api/bridge/image-url/' + 'b'.repeat(32) + '.png', params: { attachment: 'true' } }]);
+  assert.deepEqual(requested, [{ path: '/api/bridge/image-url/' + 'b'.repeat(32) + '.png', params: undefined }]);
   assert.equal(calls[0].command, 'plugin:file-download|download');
   assert.deepEqual([calls[0].args.url, calls[0].args.name, calls[0].args.mime],
     ['https://bucket.test/photo', 'b'.repeat(32) + '.png', 'image/png']);

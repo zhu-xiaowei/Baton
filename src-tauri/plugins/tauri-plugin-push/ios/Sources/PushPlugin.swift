@@ -9,6 +9,7 @@ import WebKit
 private struct RegisterArgs: Decodable {
   let server: String
   let apiKey: String
+  let notifyKey: String?
   let prompt: Bool?
 }
 
@@ -22,10 +23,10 @@ enum SharedServer {
     kSecAttrAccessGroup as String: Bundle.main.object(forInfoDictionaryKey: "BatonKeychainGroup") as? String ?? "",
   ]
 
-  static func save(server: String, apiKey: String) {
+  static func save(server: String, apiKey: String, notifyKey: String) {
     clear()
     var add = item
-    add[kSecValueData as String] = try? JSONSerialization.data(withJSONObject: ["server": server, "apiKey": apiKey])
+    add[kSecValueData as String] = try? JSONSerialization.data(withJSONObject: ["server": server, "apiKey": apiKey, "notifyKey": notifyKey])
     add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
     SecItemAdd(add as CFDictionary, nil)
   }
@@ -189,7 +190,7 @@ class PushPlugin: Plugin {
 
   @objc public func register(_ invoke: Invoke) throws {
     let args = try invoke.parseArgs(RegisterArgs.self)
-    SharedServer.save(server: args.server, apiKey: args.apiKey)
+    SharedServer.save(server: args.server, apiKey: args.apiKey, notifyKey: args.notifyKey ?? "")
     PushCoordinator.shared.register(invoke, prompt: args.prompt ?? true)
   }
 

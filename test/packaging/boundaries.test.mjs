@@ -74,36 +74,23 @@ test('Bridge and Server packaging use explicit production-only inputs', () => {
   assert.ok(bridgeUpload > -1);
   assert.ok(bridgeUpload < install.indexOf('aws cloudformation create-stack'));
   assert.ok(bridgeUpload < install.indexOf('aws cloudformation update-stack'));
-  assert.match(install, /preview_tunnel_ws\.py/);
+  assert.match(install, /zip -qr "\$WS_ZIP" server\/core\/\*\.mjs server\/aws\/\*\.mjs bridge\/transfer-store\.mjs/);
   assert.match(install, /"\$ROOT_DIR\/bridge\/preview-protocol\.mjs"/);
-  assert.match(install, /"\$ROOT_DIR\/bridge\/tool-preview\.mjs"/);
-  const previewRoute = JSON.parse(read('server/template/Baton.template')).Resources.PreviewDataRoute;
-  assert.equal(previewRoute.Properties.ApiId.Ref, 'TerminalDirectApi');
-  assert.equal(previewRoute.Properties.RouteKey, 'preview_data');
+  assert.match(install, /"\$ROOT_DIR\/bridge\/direct-rpc-protocol\.mjs"/);
+  const resources = JSON.parse(read('server/template/Baton.template')).Resources;
+  // Direct frames reach their target through the data API's own integration, without Lambda.
+  for (const [name, key] of [['DirectRpcRoute', 'rpc'], ['DirectPushRoute', 'push']]) {
+    assert.equal(resources[name].Properties.ApiId.Ref, 'TerminalDirectApi');
+    assert.equal(resources[name].Properties.RouteKey, key);
+    assert.deepEqual(resources[name].Properties.Target, { 'Fn::Sub': 'integrations/${TerminalDirectIntegration}' });
+  }
 
-  const dockerfile = read('server/src/Dockerfile');
+  const dockerfile = read('server/aws/Dockerfile');
   assert.doesNotMatch(dockerfile, /^\s*COPY\s+\.\s/m);
   assert.match(dockerfile, /^COPY web\/ web\/$/m);
-  assert.match(dockerfile, /^COPY project\/ project\/$/m);
-  assert.match(dockerfile, /^COPY .*preview_tunnel_ws\.py .*\.\/$/m);
+  assert.doesNotMatch(dockerfile, /^COPY project\//m); // the WebSocket relays for files, Git and rename are gone
+  assert.match(dockerfile, /^COPY server\/core\/ server\/core\/$/m);
   assert.match(dockerfile, /^COPY --from=web-builder \/build\/dist web\/$/m);
-});
-
-test('Sessions table declares the root-thread lookup index', () => {
-  const template = JSON.parse(read('server/template/Baton.template'));
-  const table = template.Resources.BridgeSessionsTable.Properties;
-  const attributes = new Set(table.AttributeDefinitions.map((item) => item.AttributeName));
-  assert.equal(attributes.has('threadRootPk'), true);
-  assert.equal(attributes.has('threadRootSk'), true);
-
-  const index = table.GlobalSecondaryIndexes.find(
-    (item) => item.IndexName === 'threadRootPk-threadRootSk-index',
-  );
-  assert.deepEqual(index.KeySchema, [
-    { AttributeName: 'threadRootPk', KeyType: 'HASH' },
-    { AttributeName: 'threadRootSk', KeyType: 'RANGE' },
-  ]);
-  assert.equal(index.Projection.ProjectionType, 'ALL');
 });
 
 test('web and Tauri builds consume web sources and dist only', () => {
@@ -121,7 +108,7 @@ test('current production source sets contain no test files', () => {
     .filter((name) => name.endsWith('.mjs') || ['package.json', 'package-lock.json'].includes(name));
   assert.equal(bridgePackage.some((name) => isTestFile(path.join(ROOT, 'bridge', name))), false);
 
-  for (const sourceRoot of ['server/src', 'web', 'dist']) {
+  for (const sourceRoot of ['server/core', 'server/aws', 'web', 'dist']) {
     const absolute = path.join(ROOT, sourceRoot);
     if (!fs.existsSync(absolute)) continue;
     const packagedTests = repositoryFiles(absolute)

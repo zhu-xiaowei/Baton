@@ -7,9 +7,12 @@ import { IMAGE_MIME_TYPES } from './image-type.js';
 
 const DB_NAME = 'agentpeek-attachments-v1';
 const STORE = 'files';
-const MAX_KIND_BYTES = { image: 500 * 1024 * 1024, file: 500 * 1024 * 1024 };
+// Decrypted media blocks (web/js/media/source.js) get up to 2 GB, at most a quarter of the quota.
+const MAX_KIND_BYTES = { image: 500 * 1024 * 1024, file: 500 * 1024 * 1024, media: 2 * 1024 ** 3 };
+globalThis.navigator?.storage?.estimate?.().then(({ quota }) => { if (quota) MAX_KIND_BYTES.media = Math.min(MAX_KIND_BYTES.media, quota / 4); }, () => {});
 const MAX_FILE_BYTES = 100 * 1024 * 1024;
-const entryKind = key => Object.hasOwn(IMAGE_MIME_TYPES, (key || '').split('.').pop().toLowerCase()) ? 'image' : 'file';
+const entryKind = key => key.includes('|media:') ? 'media'
+  : Object.hasOwn(IMAGE_MIME_TYPES, (key || '').split('.').pop().toLowerCase()) ? 'image' : 'file';
 let dbPromise = null;
 
 function done(request) {
@@ -82,7 +85,7 @@ export function cacheAttachment(key, name, data) {
     const files = await store('readwrite');
     files.put({ key: scoped(key), name, size: blob.size, lastAccessAt: Date.now(), data: blob });
     // Newest first; everything past its kind's budget goes. The new entry is the newest, so it stays.
-    const totals = { image: 0, file: 0 };
+    const totals = { image: 0, file: 0, media: 0 };
     const cursor = files.index('byLastAccess').openCursor(null, 'prev');
     await new Promise((resolve, reject) => {
       cursor.onerror = () => reject(cursor.error);

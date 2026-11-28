@@ -1,0 +1,30 @@
+body.side-dock { width: calc(100% - var(--side-w)); }
+body.side-dock .scroll-bottom-btn { right: calc(var(--side-w) + 16px); }
+body.side-dock :is(#projectTerminalPage, #gitStatusPage, #projectFilesPage, #internalBrowserPage, #fileOverlay) {
+  left: auto; right: 0; width: var(--side-w);
+  border-left: 1px solid color-mix(in srgb, var(--border) 60%, var(--canvas)); box-sizing: border-box;
+}
+body.side-dock-max :is(#projectTerminalPage, #gitStatusPage, #projectFilesPage, #internalBrowserPage, #fileOverlay) {
+  left: 0; width: auto; border-left: 0;
+}
+.side-dock-handle {
+  position: fixed; top: 0; bottom: 0; right: var(--side-w);
+  width: 12px; transform: translateX(50%); cursor: col-resize; touch-action: none;
+}
+/* The 12px strip is only the hit area; hover just thickens and darkens the divider. */
+.side-dock-handle::after {
+  content: ''; position: absolute; top: 0; bottom: 0; left: 50%; width: 2px; transform: translateX(-50%);
+  background: var(--border); opacity: 0; transition: opacity 0.15s;
+}
+.side-dock-handle:hover::after, body.side-dock-resizing .side-dock-handle::after { opacity: 1; }
+body.side-dock-max .side-dock-handle,
+body:has(> #imgOverlay[style*="flex"]) .side-dock-handle { display: none; }
+body.side-dock-resizing { cursor: col-resize; user-select: none; }
+body.side-dock-resizing iframe { pointer-events: none; }
+body:not(.side-dock) .side-dock-toggle { display: none; }
+button.side-dock-toggle svg { width: 16px; height: 16px; }
+body[data-side-panel="projectTerminalPage"] #top-right .project-terminal-entry,
+body[data-side-panel="gitStatusPage"] #top-right .git-status-entry,
+body[data-side-panel="projectFilesPage"] #top-right .project-files-entry:is([aria-label="Project files"], [aria-label="Home files"]) {
+  color: var(--action-icon-hover-color); background: var(--surface-raised);
+}

@@ -33,6 +33,12 @@
       "Description": "Data account ID, pinned by install.sh so rotating the API key keeps the data",
       "Default": ""
     },
+    "OpenRegistration": {
+      "Type": "String",
+      "AllowedValues": ["false", "true"],
+      "Default": "false",
+      "Description": "Let anyone create an account by scanning a computer's QR code (hosted / multi-account stacks)"
+    },
     "ApiKeyName": {
       "Type": "String",
       "Description": "API key name; install.sh --rotate-key picks a new one, which replaces the key"
@@ -73,20 +79,18 @@
                     "dynamodb:BatchWriteItem"
                   ],
                   "Resource": [
-                    { "Fn::GetAtt": ["BridgeSessionsTable", "Arn"] },
-                    { "Fn::Sub": "${BridgeSessionsTable.Arn}/index/*" },
-                    { "Fn::GetAtt": ["BridgeMessagesTable", "Arn"] },
                     { "Fn::GetAtt": ["ConnectionsTable", "Arn"] },
                     { "Fn::Sub": "${ConnectionsTable.Arn}/index/*" },
-                    { "Fn::GetAtt": ["SubscriptionsTable", "Arn"] },
-                    { "Fn::Sub": "${SubscriptionsTable.Arn}/index/*" },
                     { "Fn::GetAtt": ["SystemTable", "Arn"] }
                   ]
                 },
                 {
                   "Effect": "Allow",
                   "Action": "execute-api:ManageConnections",
-                  "Resource": { "Fn::Sub": "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WsApi}/*" }
+                  "Resource": [
+                    { "Fn::Sub": "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WsApi}/*" },
+                    { "Fn::Sub": "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${TerminalDirectApi}/*" }
+                  ]
                 },
                 {
                   "Effect": "Allow",
@@ -95,11 +99,13 @@
                 },
                 {
                   "Effect": "Allow",
-                  "Action": [
-                    "s3:PutObject",
-                    "s3:GetObject"
-                  ],
-                  "Resource": { "Fn::Sub": "arn:aws:s3:::${ImagesBucketName}/*" }
+                  "Action": ["lambda:InvokeFunctionUrl", "lambda:InvokeFunction"],
+                  "Resource": { "Fn::Sub": "arn:${AWS::Partition}:lambda:*:*:function:*-apns" }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": "s3:GetObject",
+                  "Resource": { "Fn::Sub": "arn:aws:s3:::${ImagesBucketName}/install/*" }
                 }
               ]
             }
@@ -114,23 +120,24 @@
         "Code": { "ImageUri": { "Ref": "ContainerImageUri" } },
         "Environment": {
           "Variables": {
-            "BRIDGE_SESSIONS_TABLE": { "Ref": "BridgeSessionsTable" },
-            "BRIDGE_MESSAGES_TABLE": { "Ref": "BridgeMessagesTable" },
             "BRIDGE_IMAGES_BUCKET": { "Ref": "ImagesBucketName" },
             "S3_UPLOAD_ACCELERATE": { "Ref": "FileUploadAcceleration" },
             "WS_API_ENDPOINT": { "Fn::Sub": "https://${WsApi}.execute-api.${AWS::Region}.amazonaws.com/v1" },
+            "TERMINAL_DIRECT_ENDPOINT": { "Fn::Sub": "https://${TerminalDirectApi}.execute-api.${AWS::Region}.amazonaws.com/v1" },
+            "TERMINAL_DIRECT_ROLE_ARN": { "Fn::GetAtt": ["TerminalDirectRole", "Arn"] },
             "CONNECTIONS_TABLE": { "Ref": "ConnectionsTable" },
-            "SUBSCRIPTIONS_TABLE": { "Ref": "SubscriptionsTable" },
             "SYSTEM_TABLE": { "Ref": "SystemTable" },
             "PUSH_RELAY_URL": { "Ref": "PushRelayUrl" },
             "APP_VERSION": { "Ref": "AppVersion" },
             "API_KEY_NAME": { "Ref": "ApiKeyName" },
-            "ACCOUNT_ID": { "Ref": "AccountId" }
+            "ACCOUNT_ID": { "Ref": "AccountId" },
+            "OPEN_REGISTRATION": { "Ref": "OpenRegistration" },
+            "WEB_URL": { "Fn::Sub": "https://${CDN.DomainName}" },
+            "ORIGIN_SECRET": { "Fn::Select": [2, { "Fn::Split": ["/", { "Ref": "AWS::StackId" }]}] }
           }
         },
         "MemorySize": 1024,
         "PackageType": "Image",
-        "ReservedConcurrentExecutions": 10,
         "Role": { "Fn::GetAtt": ["LambdaExecutionRole", "Arn"] },
         "Timeout": 30
       },
@@ -175,7 +182,7 @@
         "ResourceId": { "Ref": "ApiProxyResource" },
         "HttpMethod": "ANY",
         "AuthorizationType": "NONE",
-        "ApiKeyRequired": true,
+        "ApiKeyRequired": false,
         "Integration": {
           "Type": "AWS_PROXY",
           "IntegrationHttpMethod": "POST",
@@ -312,7 +319,7 @@
         }]
       }
     },
-    "ApiDeploymentV3": {
+    "ApiDeploymentV4": {
       "Type": "AWS::ApiGateway::Deployment",
       "Metadata": {
         "Note": "Bump this id (V3 -> V4 ...) and the ApiStage Ref after any API/CORS change, else it won't reach the stage."
@@ -326,7 +333,7 @@
       "Type": "AWS::ApiGateway::Stage",
       "Properties": {
         "RestApiId": { "Ref": "RestApi" },
-        "DeploymentId": { "Ref": "ApiDeploymentV3" },
+        "DeploymentId": { "Ref": "ApiDeploymentV4" },
         "StageName": "v1"
       }
     },
@@ -466,46 +473,28 @@
         "RoleName": { "Fn::Sub": "${AWS::StackName}-terminal-direct-role" },
         "AssumeRolePolicyDocument": {
           "Version": "2012-10-17",
-          "Statement": [{ "Effect": "Allow", "Principal": { "AWS": { "Fn::GetAtt": ["WsLambdaRole", "Arn"] } }, "Action": "sts:AssumeRole" }]
+          "Statement": [{ "Effect": "Allow", "Principal": { "AWS": [{ "Fn::GetAtt": ["WsLambdaRole", "Arn"] }, { "Fn::GetAtt": ["LambdaExecutionRole", "Arn"] }] }, "Action": "sts:AssumeRole" }]
         },
         "Policies": [{
           "PolicyName": "TerminalCallbackOnly",
           "PolicyDocument": { "Version": "2012-10-17", "Statement": [{
             "Effect": "Allow", "Action": "execute-api:ManageConnections",
             "Resource": { "Fn::Sub": "arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${TerminalDirectApi}/v1/POST/@connections/*" }
+          }, {
+            "Effect": "Allow", "Action": ["s3:GetObject", "s3:PutObject", "s3:AbortMultipartUpload"],
+            "Resource": { "Fn::Sub": "arn:${AWS::Partition}:s3:::${ImagesBucketName}/t/*" }
           }] }
         }]
       }
     },
-    "RealtimeDirectIntegration": {
-      "Type": "AWS::ApiGatewayV2::Integration",
+    "RestRpcAssumePolicy": {
+      "Type": "AWS::IAM::Policy",
       "Properties": {
-        "ApiId": { "Ref": "WsApi" }, "IntegrationType": "HTTP", "IntegrationMethod": "POST",
-        "IntegrationUri": { "Fn::Sub": "https://${TerminalDirectApi}.execute-api.${AWS::Region}.amazonaws.com/v1/@connections/{connectionId}" },
-        "RequestParameters": {
-          "integration.request.path.connectionId": "route.request.body.target",
-          "integration.request.header.Authorization": "route.request.body.authorization",
-          "integration.request.header.X-Amz-Date": "route.request.body.date",
-          "integration.request.header.X-Amz-Security-Token": "route.request.body.token"
-        },
-        "RequestTemplates": { "application/json": "$input.path('$.body')" },
-        "TemplateSelectionExpression": "application/json", "PassthroughBehavior": "NEVER", "TimeoutInMillis": 5000
-      }
-    },
-    "RealtimeDirectIntegrationResponse": {
-      "Type": "AWS::ApiGatewayV2::IntegrationResponse",
-      "Properties": {
-        "ApiId": { "Ref": "WsApi" }, "IntegrationId": { "Ref": "RealtimeDirectIntegration" },
-        "IntegrationResponseKey": "$default", "TemplateSelectionExpression": "application/json",
-        "ResponseTemplates": { "application/json": "{}" }
-      }
-    },
-    "RealtimeDirectRoute": {
-      "Type": "AWS::ApiGatewayV2::Route",
-      "DependsOn": ["RealtimeDirectIntegrationResponse"],
-      "Properties": {
-        "ApiId": { "Ref": "WsApi" }, "RouteKey": "realtime_direct_data",
-        "Target": { "Fn::Sub": "integrations/${RealtimeDirectIntegration}" }
+        "PolicyName": "RestRpcAssumeSession",
+        "Roles": [{ "Ref": "LambdaExecutionRole" }],
+        "PolicyDocument": { "Version": "2012-10-17", "Statement": [{
+          "Effect": "Allow", "Action": "sts:AssumeRole", "Resource": { "Fn::GetAtt": ["TerminalDirectRole", "Arn"] }
+        }] }
       }
     },
     "TerminalDirectIntegration": {
@@ -531,48 +520,21 @@
         "ResponseTemplates": { "application/json": "{}" }
       }
     },
-    "TerminalDirectRoute": {
+    "DirectRpcRoute": {
       "Type": "AWS::ApiGatewayV2::Route",
       "DependsOn": ["TerminalDirectIntegrationResponse"],
       "Properties": {
-        "ApiId": { "Ref": "TerminalDirectApi" }, "RouteKey": "terminal_direct_data",
+        "ApiId": { "Ref": "TerminalDirectApi" }, "RouteKey": "rpc",
         "Target": { "Fn::Sub": "integrations/${TerminalDirectIntegration}" }
       }
     },
-    "PreviewDataRoute": {
+    "DirectPushRoute": {
       "Type": "AWS::ApiGatewayV2::Route",
       "DependsOn": ["TerminalDirectIntegrationResponse"],
       "Properties": {
-        "ApiId": { "Ref": "TerminalDirectApi" }, "RouteKey": "preview_data",
+        "ApiId": { "Ref": "TerminalDirectApi" }, "RouteKey": "push",
         "Target": { "Fn::Sub": "integrations/${TerminalDirectIntegration}" }
       }
-    },
-    "WsPingIntegration": {
-      "Type": "AWS::ApiGatewayV2::Integration",
-      "Properties": {
-        "ApiId": { "Ref": "WsApi" }, "IntegrationType": "MOCK",
-        "RequestTemplates": { "$default": "{\"statusCode\": 200}" }, "TemplateSelectionExpression": "\\$default"
-      }
-    },
-    "WsPingIntegrationResponse": {
-      "Type": "AWS::ApiGatewayV2::IntegrationResponse",
-      "Properties": {
-        "ApiId": { "Ref": "WsApi" }, "IntegrationId": { "Ref": "WsPingIntegration" },
-        "IntegrationResponseKey": "$default", "TemplateSelectionExpression": "\\$default",
-        "ResponseTemplates": { "$default": "{\"action\":\"realtime_pong\"}" }
-      }
-    },
-    "WsPingRoute": {
-      "Type": "AWS::ApiGatewayV2::Route",
-      "DependsOn": ["WsPingIntegrationResponse"],
-      "Properties": {
-        "ApiId": { "Ref": "WsApi" }, "RouteKey": "realtime_ping", "RouteResponseSelectionExpression": "$default",
-        "Target": { "Fn::Sub": "integrations/${WsPingIntegration}" }
-      }
-    },
-    "WsPingRouteResponse": {
-      "Type": "AWS::ApiGatewayV2::RouteResponse",
-      "Properties": { "ApiId": { "Ref": "WsApi" }, "RouteId": { "Ref": "WsPingRoute" }, "RouteResponseKey": "$default" }
     },
     "TerminalDirectPingIntegration": {
       "Type": "AWS::ApiGatewayV2::Integration",
@@ -601,12 +563,40 @@
       "Type": "AWS::ApiGatewayV2::RouteResponse",
       "Properties": { "ApiId": { "Ref": "TerminalDirectApi" }, "RouteId": { "Ref": "TerminalDirectPingRoute" }, "RouteResponseKey": "$default" }
     },
+    "DirectWhoamiIntegration": {
+      "Type": "AWS::ApiGatewayV2::Integration",
+      "Properties": {
+        "ApiId": { "Ref": "TerminalDirectApi" }, "IntegrationType": "MOCK",
+        "RequestTemplates": { "$default": "{\"statusCode\": 200}" }, "TemplateSelectionExpression": "\\$default"
+      }
+    },
+    "DirectWhoamiIntegrationResponse": {
+      "Type": "AWS::ApiGatewayV2::IntegrationResponse",
+      "Properties": {
+        "ApiId": { "Ref": "TerminalDirectApi" }, "IntegrationId": { "Ref": "DirectWhoamiIntegration" },
+        "IntegrationResponseKey": "$default", "TemplateSelectionExpression": "\\$default",
+        "ResponseTemplates": { "$default": "{\"action\":\"whoami\",\"connectionId\":\"$context.connectionId\"}" }
+      }
+    },
+    "DirectWhoamiRoute": {
+      "Type": "AWS::ApiGatewayV2::Route",
+      "DependsOn": ["DirectWhoamiIntegrationResponse"],
+      "Properties": {
+        "ApiId": { "Ref": "TerminalDirectApi" }, "RouteKey": "whoami", "RouteResponseSelectionExpression": "$default",
+        "Target": { "Fn::Sub": "integrations/${DirectWhoamiIntegration}" }
+      }
+    },
+    "DirectWhoamiRouteResponse": {
+      "Type": "AWS::ApiGatewayV2::RouteResponse",
+      "Properties": { "ApiId": { "Ref": "TerminalDirectApi" }, "RouteId": { "Ref": "DirectWhoamiRoute" }, "RouteResponseKey": "$default" }
+    },
     "WsStage": {
       "Type": "AWS::ApiGatewayV2::Stage",
       "Properties": {
         "ApiId": { "Ref": "WsApi" },
         "StageName": "v1",
-        "AutoDeploy": true
+        "AutoDeploy": true,
+        "DefaultRouteSettings": { "ThrottlingRateLimit": 200, "ThrottlingBurstLimit": 400 }
       }
     },
     "WsHandler": {
@@ -614,8 +604,8 @@
       "Properties": {
         "FunctionName": { "Fn::Sub": "${AWS::StackName}-ws-handler" },
         "Architectures": ["arm64"],
-        "Runtime": "python3.12",
-        "Handler": "bridge_ws.handler",
+        "Runtime": "nodejs22.x",
+        "Handler": "server/aws/ws-handler.handler",
         "Code": {
           "S3Bucket": { "Ref": "ImagesBucketName" },
           "S3Key": { "Ref": "WsCodeS3Key" }
@@ -623,18 +613,18 @@
         "Environment": {
           "Variables": {
             "CONNECTIONS_TABLE": { "Ref": "ConnectionsTable" },
-            "SUBSCRIPTIONS_TABLE": { "Ref": "SubscriptionsTable" },
-            "BRIDGE_MESSAGES_TABLE": { "Ref": "BridgeMessagesTable" },
+            "SYSTEM_TABLE": { "Ref": "SystemTable" },
+            "BRIDGE_IMAGES_BUCKET": { "Ref": "ImagesBucketName" },
+            "S3_UPLOAD_ACCELERATE": { "Ref": "FileUploadAcceleration" },
             "APP_VERSION": { "Ref": "AppVersion" },
             "API_KEY_NAME": { "Ref": "ApiKeyName" },
             "ACCOUNT_ID": { "Ref": "AccountId" },
             "WS_API_ENDPOINT": { "Fn::Sub": "https://${WsApi}.execute-api.${AWS::Region}.amazonaws.com/v1" },
             "TERMINAL_DIRECT_ROLE_ARN": { "Fn::GetAtt": ["TerminalDirectRole", "Arn"] },
-            "REALTIME_DIRECT_ENABLED": "1",
             "TERMINAL_DIRECT_ENDPOINT": { "Fn::Sub": "https://${TerminalDirectApi}.execute-api.${AWS::Region}.amazonaws.com/v1" }
           }
         },
-        "MemorySize": 128,
+        "MemorySize": 512,
         "Role": { "Fn::GetAtt": ["WsLambdaRole", "Arn"] },
         "Timeout": 30
       }
@@ -669,9 +659,7 @@
                 "Resource": [
                   { "Fn::GetAtt": ["ConnectionsTable", "Arn"] },
                   { "Fn::Sub": "${ConnectionsTable.Arn}/index/*" },
-                  { "Fn::GetAtt": ["SubscriptionsTable", "Arn"] },
-                  { "Fn::Sub": "${SubscriptionsTable.Arn}/index/*" },
-                  { "Fn::GetAtt": ["BridgeMessagesTable", "Arn"] }
+                  { "Fn::GetAtt": ["SystemTable", "Arn"] }
                 ]
               },
               {
@@ -727,188 +715,6 @@
         "TimeToLiveSpecification": { "AttributeName": "ttl", "Enabled": true }
       }
     },
-    "SubscriptionsTable": {
-      "Type": "AWS::DynamoDB::Table",
-      "Properties": {
-        "TableName": { "Fn::Sub": "${AWS::StackName}-subscriptions" },
-        "BillingMode": "PAY_PER_REQUEST",
-        "AttributeDefinitions": [
-          { "AttributeName": "sessionId", "AttributeType": "S" },
-          { "AttributeName": "connectionId", "AttributeType": "S" }
-        ],
-        "KeySchema": [
-          { "AttributeName": "sessionId", "KeyType": "HASH" },
-          { "AttributeName": "connectionId", "KeyType": "RANGE" }
-        ],
-        "GlobalSecondaryIndexes": [
-          {
-            "IndexName": "connectionId-index",
-            "KeySchema": [
-              { "AttributeName": "connectionId", "KeyType": "HASH" }
-            ],
-            "Projection": { "ProjectionType": "KEYS_ONLY" }
-          }
-        ],
-        "TimeToLiveSpecification": { "AttributeName": "ttl", "Enabled": true }
-      }
-    },
-    "BridgeSessionsTable": {
-      "Type": "AWS::DynamoDB::Table",
-      "Properties": {
-        "TableName": { "Fn::Sub": "${AWS::StackName}-bridge-sessions" },
-        "StreamSpecification": { "StreamViewType": "NEW_AND_OLD_IMAGES" },
-        "BillingMode": "PAY_PER_REQUEST",
-        "AttributeDefinitions": [
-          { "AttributeName": "accountId", "AttributeType": "S" },
-          { "AttributeName": "sk", "AttributeType": "S" },
-          { "AttributeName": "activeStatus", "AttributeType": "S" },
-          { "AttributeName": "listPk", "AttributeType": "S" },
-          { "AttributeName": "listSk", "AttributeType": "S" },
-          { "AttributeName": "threadRootPk", "AttributeType": "S" },
-          { "AttributeName": "threadRootSk", "AttributeType": "S" }
-        ],
-        "KeySchema": [
-          { "AttributeName": "accountId", "KeyType": "HASH" },
-          { "AttributeName": "sk", "KeyType": "RANGE" }
-        ],
-        "GlobalSecondaryIndexes": [
-          {
-            "IndexName": "accountId-activeStatus-index",
-            "KeySchema": [
-              { "AttributeName": "accountId", "KeyType": "HASH" },
-              { "AttributeName": "activeStatus", "KeyType": "RANGE" }
-            ],
-            "Projection": { "ProjectionType": "ALL" }
-          },
-          {
-            "IndexName": "listPk-listSk-index",
-            "KeySchema": [
-              { "AttributeName": "listPk", "KeyType": "HASH" },
-              { "AttributeName": "listSk", "KeyType": "RANGE" }
-            ],
-            "Projection": { "ProjectionType": "ALL" }
-          },
-          {
-            "IndexName": "threadRootPk-threadRootSk-index",
-            "KeySchema": [
-              { "AttributeName": "threadRootPk", "KeyType": "HASH" },
-              { "AttributeName": "threadRootSk", "KeyType": "RANGE" }
-            ],
-            "Projection": { "ProjectionType": "ALL" }
-          }
-        ],
-        "TimeToLiveSpecification": { "AttributeName": "ttl", "Enabled": true }
-      }
-    },
-    "BridgeMessagesTable": {
-      "Type": "AWS::DynamoDB::Table",
-      "Properties": {
-        "TableName": { "Fn::Sub": "${AWS::StackName}-bridge-messages" },
-        "BillingMode": "PAY_PER_REQUEST",
-        "AttributeDefinitions": [
-          { "AttributeName": "sessionId", "AttributeType": "S" },
-          { "AttributeName": "sk", "AttributeType": "S" }
-        ],
-        "KeySchema": [
-          { "AttributeName": "sessionId", "KeyType": "HASH" },
-          { "AttributeName": "sk", "KeyType": "RANGE" }
-        ],
-        "TimeToLiveSpecification": { "AttributeName": "ttl", "Enabled": true }
-      }
-    },
-    "NotificationRole": {
-      "Type": "AWS::IAM::Role",
-      "Properties": {
-        "AssumeRolePolicyDocument": {
-          "Version": "2012-10-17",
-          "Statement": [{ "Effect": "Allow", "Principal": { "Service": "lambda.amazonaws.com" }, "Action": "sts:AssumeRole" }]
-        },
-        "ManagedPolicyArns": [{ "Fn::Sub": "arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole" }],
-        "Policies": [{
-          "PolicyName": "NotificationDelivery",
-          "PolicyDocument": {
-            "Version": "2012-10-17",
-            "Statement": [
-              {
-                "Effect": "Allow",
-                "Action": ["dynamodb:PutItem", "dynamodb:DeleteItem", "dynamodb:Query"],
-                "Resource": { "Fn::GetAtt": ["SystemTable", "Arn"] }
-              },
-              {
-                "Effect": "Allow",
-                "Action": ["dynamodb:GetItem", "dynamodb:Query"],
-                "Resource": { "Fn::GetAtt": ["BridgeMessagesTable", "Arn"] }
-              },
-              {
-                "Effect": "Allow",
-                "Action": ["dynamodb:DescribeStream", "dynamodb:GetRecords", "dynamodb:GetShardIterator", "dynamodb:ListStreams"],
-                "Resource": { "Fn::GetAtt": ["BridgeSessionsTable", "StreamArn"] }
-              },
-              {
-                "Effect": "Allow",
-                "Action": "dynamodb:Query",
-                "Resource": { "Fn::GetAtt": ["SubscriptionsTable", "Arn"] }
-              },
-              {
-                "Effect": "Allow",
-                "Action": ["lambda:InvokeFunctionUrl", "lambda:InvokeFunction"],
-                "Resource": { "Fn::Sub": "arn:${AWS::Partition}:lambda:*:*:function:*-apns" }
-              },
-              {
-                "Effect": "Allow",
-                "Action": "execute-api:ManageConnections",
-                "Resource": { "Fn::Sub": "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WsApi}/*" }
-              }
-            ]
-          }
-        }]
-      }
-    },
-    "NotificationLogs": {
-      "Type": "AWS::Logs::LogGroup",
-      "Properties": {
-        "LogGroupName": { "Fn::Sub": "/aws/lambda/${AWS::StackName}-notifications" },
-        "RetentionInDays": 7
-      }
-    },
-    "NotificationWorker": {
-      "Type": "AWS::Lambda::Function",
-      "Properties": {
-        "Architectures": ["arm64"],
-        "Runtime": "python3.12",
-        "Handler": "notification_worker.handler",
-        "Code": { "S3Bucket": { "Ref": "ImagesBucketName" }, "S3Key": { "Ref": "WsCodeS3Key" } },
-        "Role": { "Fn::GetAtt": ["NotificationRole", "Arn"] },
-        "MemorySize": 128,
-        "Timeout": 120,
-        "LoggingConfig": {
-          "LogFormat": "JSON",
-          "LogGroup": { "Ref": "NotificationLogs" },
-          "ApplicationLogLevel": "WARN",
-          "SystemLogLevel": "WARN"
-        },
-        "Environment": { "Variables": {
-          "SYSTEM_TABLE": { "Ref": "SystemTable" },
-          "BRIDGE_MESSAGES_TABLE": { "Ref": "BridgeMessagesTable" },
-          "SUBSCRIPTIONS_TABLE": { "Ref": "SubscriptionsTable" },
-          "WS_API_ENDPOINT": { "Fn::Sub": "https://${WsApi}.execute-api.${AWS::Region}.amazonaws.com/v1" },
-          "PUSH_RELAY_URL": { "Ref": "PushRelayUrl" }
-        } }
-      }
-    },
-    "SessionNotificationEvents": {
-      "Type": "AWS::Lambda::EventSourceMapping",
-      "Properties": {
-        "EventSourceArn": { "Fn::GetAtt": ["BridgeSessionsTable", "StreamArn"] },
-        "FunctionName": { "Ref": "NotificationWorker" },
-        "StartingPosition": "LATEST",
-        "BatchSize": 10,
-        "MaximumRetryAttempts": 3,
-        "MaximumRecordAgeInSeconds": 900,
-        "FunctionResponseTypes": ["ReportBatchItemFailures"],
-        "FilterCriteria": { "Filters": [{ "Pattern": "{\"eventName\":[\"MODIFY\"],\"dynamodb\":{\"NewImage\":{\"entityType\":{\"S\":[\"session\"]},\"activeStatus\":{\"S\":[\"needs_input\",{\"prefix\":\"done#\"}]}}}}" }] }
-      }
-    },
     "SystemTable": {
       "Type": "AWS::DynamoDB::Table",
       "Properties": {
@@ -938,9 +744,42 @@
               "Id": "api",
               "DomainName": { "Fn::Sub": "${RestApi}.execute-api.${AWS::Region}.amazonaws.com" },
               "OriginPath": "/v1",
+              "OriginCustomHeaders": [{ "HeaderName": "X-Baton-Origin", "HeaderValue": { "Fn::Select": [2, { "Fn::Split": ["/", { "Ref": "AWS::StackId" }]}] } }],
               "CustomOriginConfig": {
-                "OriginProtocolPolicy": "https-only"
+                "OriginProtocolPolicy": "https-only",
+                "OriginKeepaliveTimeout": 60
               }
+            },
+            {
+              "Id": "ws",
+              "DomainName": { "Fn::Sub": "${WsApi}.execute-api.${AWS::Region}.amazonaws.com" },
+              "CustomOriginConfig": { "OriginProtocolPolicy": "https-only" }
+            },
+            {
+              "Id": "data",
+              "DomainName": { "Fn::Sub": "${TerminalDirectApi}.execute-api.${AWS::Region}.amazonaws.com" },
+              "CustomOriginConfig": { "OriginProtocolPolicy": "https-only" }
+            }
+          ],
+          "CacheBehaviors": [
+            {
+              "PathPattern": "/assets/*", "TargetOriginId": "api", "ViewerProtocolPolicy": "redirect-to-https",
+              "AllowedMethods": ["GET", "HEAD"], "CachedMethods": ["GET", "HEAD"], "Compress": true,
+              "CachePolicyId": { "Ref": "AssetCachePolicy" }
+            },
+            {
+              "PathPattern": "/ws", "TargetOriginId": "ws", "ViewerProtocolPolicy": "https-only",
+              "AllowedMethods": ["GET", "HEAD"], "CachedMethods": ["GET", "HEAD"], "Compress": false,
+              "CachePolicyId": "4135ea2d-6df8-44a3-9df3-4b5a84be39ad",
+              "OriginRequestPolicyId": "b689b0a8-53d0-40ab-baf2-68738e2966ac",
+              "FunctionAssociations": [{ "EventType": "viewer-request", "FunctionARN": { "Fn::GetAtt": ["CDNRequestFunction", "FunctionARN"] } }]
+            },
+            {
+              "PathPattern": "/data", "TargetOriginId": "data", "ViewerProtocolPolicy": "https-only",
+              "AllowedMethods": ["GET", "HEAD"], "CachedMethods": ["GET", "HEAD"], "Compress": false,
+              "CachePolicyId": "4135ea2d-6df8-44a3-9df3-4b5a84be39ad",
+              "OriginRequestPolicyId": "b689b0a8-53d0-40ab-baf2-68738e2966ac",
+              "FunctionAssociations": [{ "EventType": "viewer-request", "FunctionARN": { "Fn::GetAtt": ["CDNRequestFunction", "FunctionARN"] } }]
             }
           ],
           "DefaultCacheBehavior": {
@@ -953,6 +792,30 @@
             "OriginRequestPolicyId": "b689b0a8-53d0-40ab-baf2-68738e2966ac"
           }
         }
+      }
+    },
+    "AssetCachePolicy": {
+      "Type": "AWS::CloudFront::CachePolicy",
+      "Properties": {
+        "CachePolicyConfig": {
+          "Name": { "Fn::Sub": "${AWS::StackName}-assets" },
+          "Comment": "Hashed chunks are immutable; files without cache-control stay uncached",
+          "DefaultTTL": 0, "MinTTL": 0, "MaxTTL": 31536000,
+          "ParametersInCacheKeyAndForwardedToOrigin": {
+            "EnableAcceptEncodingGzip": true, "EnableAcceptEncodingBrotli": true,
+            "HeadersConfig": { "HeaderBehavior": "none" }, "CookiesConfig": { "CookieBehavior": "none" },
+            "QueryStringsConfig": { "QueryStringBehavior": "none" }
+          }
+        }
+      }
+    },
+    "CDNRequestFunction": {
+      "Type": "AWS::CloudFront::Function",
+      "Properties": {
+        "Name": { "Fn::Sub": "${AWS::StackName}-cdn-request" },
+        "AutoPublish": true,
+        "FunctionConfig": { "Comment": "Map the /ws and /data WebSocket paths to the API stage", "Runtime": "cloudfront-js-2.0" },
+        "FunctionCode": "function handler(event) { event.request.uri = '/v1'; return event.request; }"
       }
     }
   },

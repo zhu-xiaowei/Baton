@@ -49,20 +49,19 @@ export function executableOptions(binary, options = {}, runtime = {}) {
   };
 }
 
+// A `.cmd` run through the shell needs its path quoted when it contains spaces.
+function shellCommand(binary, options, platform) {
+  return platform === 'win32' && options.shell && /\.(?:cmd|bat)$/i.test(binary) && /\s/.test(binary) ? `"${binary}"` : binary;
+}
+
 export function runExecutable(binary, args, options = {}) {
-  return execFileSync(binary, args, executableOptions(binary, options));
+  const runOptions = executableOptions(binary, options);
+  return execFileSync(shellCommand(binary, runOptions, process.platform), args, runOptions);
 }
 
 export function spawnExecutable(binary, args, options = {}, spawnFn = spawn, runtime = {}) {
-  const platform = runtime.platform || process.platform;
   const spawnOptions = executableOptions(binary, options, runtime);
-  const command = platform === 'win32'
-    && spawnOptions.shell
-    && /\.(?:cmd|bat)$/i.test(binary)
-    && /\s/.test(binary)
-    ? `"${binary}"`
-    : binary;
-  return spawnFn(command, args, spawnOptions);
+  return spawnFn(shellCommand(binary, spawnOptions, runtime.platform || process.platform), args, spawnOptions);
 }
 
 export function validateProductionDependencies(cwd) {
@@ -78,7 +77,9 @@ export function validateProductionDependencies(cwd) {
 }
 
 export function installProductionDependencies(cwd) {
-  const npmCli = path.join(path.dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js');
+  // The npm next to this node (Windows: beside node.exe; Unix: <prefix>/lib), so native modules match it.
+  const npmCli = ['node_modules', '../lib/node_modules'].map((dir) => path.join(path.dirname(process.execPath), dir, 'npm', 'bin', 'npm-cli.js'))
+    .find((file) => fs.existsSync(file));
   const args = [
     'ci',
     '--omit=dev',
@@ -87,7 +88,7 @@ export function installProductionDependencies(cwd) {
     '--no-audit',
     '--no-fund',
   ];
-  const npm = fs.existsSync(npmCli)
+  const npm = npmCli
     ? [process.execPath, [npmCli, ...args]]
     : [findExecutable('npm', [path.join(path.dirname(process.execPath), 'npm')]), args];
   if (!npm[0]) throw new Error('npm not found');

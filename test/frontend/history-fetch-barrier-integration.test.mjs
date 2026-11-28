@@ -15,28 +15,7 @@ function deferred() {
   return { promise, resolve, reject };
 }
 
-test('initial and repeated history loads both request the latest 200 messages', async () => {
-  const sessionId = 'history-default-page-size';
-  resetSession(h, { sessionId });
-  const calls = [];
-  h.setApiHandler(async (endpoint, params) => {
-    calls.push({ endpoint, params });
-    return { messages: [], hasMore: false };
-  });
-
-  await h.window.loadLatestMessages(sessionId);
-  await h.window.loadLatestMessages(sessionId);
-
-  assert.deepEqual(calls, [{
-    endpoint: '/api/bridge/messages',
-    params: { session: sessionId, limit: 200, device: 'D', project: '-h' },
-  }, {
-    endpoint: '/api/bridge/messages',
-    params: { session: sessionId, limit: 200, device: 'D', project: '-h' },
-  }]);
-});
-
-test('REST failure still commits complete watcher history and releases the barrier', async () => {
+test('a failed history load drops buffered events and keeps dropping them until a load succeeds', async () => {
   const sessionId = 'history-rest-failure';
   resetSession(h, { sessionId });
   const request = deferred();
@@ -58,10 +37,9 @@ test('REST failure still commits complete watcher history and releases the barri
 
   const result = await loading;
   assert.equal(result.ok, false);
-  assert.deepEqual(
-    h.state.wsAllMessages.map((message) => message.uuid),
-    ['buffered'],
-  );
+  // They would follow a gap: the next successful load brings their rows from the transcript.
+  assert.deepEqual(h.state.wsAllMessages, []);
+  assert.equal(h.state.wsHistoryPhase, 'offline');
 
   h.hooks.handleWsMessage({
     action: 'messages',
@@ -73,10 +51,7 @@ test('REST failure still commits complete watcher history and releases the barri
       timestamp: '2026-08-27T00:00:01.000Z',
     }],
   });
-  assert.deepEqual(
-    h.state.wsAllMessages.map((message) => message.uuid),
-    ['buffered', 'after'],
-  );
+  assert.deepEqual(h.state.wsAllMessages, []);
 });
 
 test('identical overlapping history requests share one active barrier', async () => {
@@ -155,4 +130,19 @@ test('history recovery restores physical bottom only when follow intent remains 
   await h.window.loadLatestMessages(sessionId);
   await h.tick(10);
   assert.equal(content.scrollTop, 100);
+});
+
+test('a live refresh joining the opening load still replaces the skeleton', async () => {
+  const sessionId = 'history-skeleton-join';
+  resetSession(h, { sessionId });
+  h.document.getElementById('content').innerHTML = '<div class="messages skeleton-messages"></div>';
+  const request = deferred();
+  h.setApiHandler(() => request.promise);
+  const opening = h.window.loadLatestMessages(sessionId);
+  h.window.loadLatestMessages(sessionId, { preserveLive: true });
+  request.resolve({ messages: [{ uuid: 'one', type: 'user', content: 'one', timestamp: '2026-08-27T00:00:00.000Z' }],
+    status: 'needs_input', hasMore: false });
+  await opening;
+  assert.equal(h.document.querySelector('.skeleton-messages'), null);
+  assert.ok(h.document.querySelector('[data-message-id="one"]'));
 });

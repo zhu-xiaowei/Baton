@@ -110,5 +110,5 @@ snapshot above:
   chart plus the complete ranked model list; 7/30-day ranges use daily buckets and all-time adapts
   to month/quarter/year buckets.
 
-The panel is not persisted to Claude JSONL or DynamoDB. A bounded response is sent over WebSocket;
+The panel is not persisted to Claude JSONL or stored server-side. A bounded response is sent over WebSocket;
 very large settings catalogs are marked `truncated` instead of exceeding the transport frame limit.

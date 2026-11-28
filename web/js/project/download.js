@@ -1,4 +1,5 @@
 import { harmonyBridge, harmonyCall, harmonySend } from '../harmony.js';
+import { mediaUrl } from '../media/serve.js';
 
 export function nativeDownloads() {
   return !!window.__TAURI_INTERNALS__ || !!harmonyBridge();
@@ -39,6 +40,12 @@ async function harmonySave(method, args, onProgress) {
 
 // onProgress(fraction) only fires for native saves: a browser download reports progress in its own UI.
 export async function downloadFile(file, onProgress) {
+  // A sealed file streams through the media server: native saves never hold it whole in the page.
+  if (file.sealed && (!file.url || nativeDownloads())) file = { ...file, url: await mediaUrl(file, { download: true }) };
+  // A sealed file was opened into a Blob URL, which only the page itself can read.
+  if (file.url?.startsWith('blob:') && (nativeDownloads() || harmonyBridge())) {
+    return saveGeneratedFile(await (await fetch(file.url)).blob(), file.name);
+  }
   if (harmonyBridge()) return harmonySave('download', { url: file.url, name: file.name }, onProgress);
   if (nativeDownloads()) {
     const { invoke, Channel } = await import('@tauri-apps/api/core');

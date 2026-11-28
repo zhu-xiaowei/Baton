@@ -7,7 +7,7 @@ import { JSDOM } from 'jsdom';
 const indexHtml = readFileSync(new URL('../../web/index.html', import.meta.url), 'utf8');
 const styleSource = readFileSync(new URL('../../web/css/style.css', import.meta.url), 'utf8');
 const cacheSource = indexHtml.slice(indexHtml.indexOf('  var runtimeIconCacheKey ='), indexHtml.indexOf('  function runtimeIcon(s)'));
-const cacheKey = 'baton-runtime-icons-v1';
+const cacheKey = 'baton-runtime-icons-v4';
 const assets = {
   claude: readFileSync(new URL('../../web/public/assets/claude-code.svg', import.meta.url), 'utf8'),
   codex: readFileSync(new URL('../../web/public/assets/codex.svg', import.meta.url), 'utf8'),
@@ -15,7 +15,7 @@ const assets = {
 
 function harness({ storage = new Map(), storageBlocked = false, fetchAsset } = {}) {
   const dom = new JSDOM('<span class="runtime-mark"><img class="runtime-icon" src="./assets/claude-code.svg"></span>'
-    + '<span class="runtime-mark runtime-mark-codex"><img class="runtime-icon" src="./assets/codex.svg"></span>', { url: 'http://baton.test/index.html' });
+    + '<span class="runtime-mark runtime-mark-mono" data-runtime="codex"><img class="runtime-icon" src="./assets/codex.svg"></span>', { url: 'http://baton.test/index.html' });
   const requests = [];
   vm.runInNewContext(cacheSource, {
     window: dom.window,
@@ -40,7 +40,7 @@ function harness({ storage = new Map(), storageBlocked = false, fetchAsset } = {
     dom, requests, storage,
     source: dom.window.__runtimeIconSource,
     load(runtime) {
-      const selector = runtime === 'codex' ? '.runtime-mark-codex img' : '.runtime-mark:not(.runtime-mark-codex) img';
+      const selector = runtime === 'codex' ? '.runtime-mark-mono img' : '.runtime-mark:not(.runtime-mark-mono) img';
       dom.window.document.querySelector(selector).dispatchEvent(new dom.window.Event('load'));
     },
   };
@@ -80,10 +80,8 @@ test('a new document reuses both cached SVGs and the Codex mask without network 
         next.load(runtime);
       }
       assert.equal(next.requests.length, 0);
-      assert.equal(next.dom.window.document.documentElement.style.getPropertyValue('--runtime-codex-image'), 'url("' + next.source('codex') + '")');
-      assert.match(indexHtml, /-webkit-mask:var\(--runtime-codex-image,url\("assets\/codex\.svg"\)\)/);
-      assert.match(styleSource, /-webkit-mask: var\(--runtime-codex-image, url\("\.\.\/assets\/codex\.svg"\)\)/);
-      assert.match(styleSource, /\n  mask: var\(--runtime-codex-image, url\("\.\.\/assets\/codex\.svg"\)\)/);
+      assert.match(indexHtml, /-webkit-mask:var\(--runtime-mask\) center/);
+      assert.match(styleSource, /\n  mask: var\(--runtime-mask\) center/);
     } finally { next.dom.window.close(); }
   } finally { first.dom.window.close(); }
 });
@@ -98,7 +96,7 @@ test('restoring a saved home snapshot replaces old icon URLs before attaching it
       window.sessionStorage.setItem('baton-page-preview', JSON.stringify({
         topBarHtml: '<div id="top-right"><a class="top-gear"></a></div>',
         contentHtml: '<span class="runtime-mark"><img class="runtime-icon" src="./assets/claude-code.svg"></span>'
-          + '<span class="runtime-mark runtime-mark-codex"><img class="runtime-icon" src="./assets/codex.svg"></span>',
+          + '<span class="runtime-mark runtime-mark-mono" data-runtime="codex"><img class="runtime-icon" src="./assets/codex.svg"></span>',
       }));
       window.fetch = () => new Promise(() => {});
     },
@@ -107,7 +105,10 @@ test('restoring a saved home snapshot replaces old icon URLs before attaching it
     assert.equal(dom.window.__homePreviewRestored, true);
     const images = dom.window.document.querySelectorAll('#content .runtime-icon');
     assert.equal(images[0].src, 'data:image/svg+xml,' + encodeURIComponent(assets.claude));
-    assert.equal(images[1].src, 'data:image/svg+xml,' + encodeURIComponent(assets.codex));
+    assert.equal(images[1].tagName, 'svg');
+    assert.equal(images[1].getAttribute('fill'), 'currentColor');
+    assert.doesNotMatch(images[1].outerHTML, /#BABBBC/);
+    assert.equal(images[1].parentNode.className, 'runtime-mark runtime-mark-svg');
   } finally { dom.window.close(); }
 });
 

@@ -1,25 +1,69 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { claudeRuntime } from './claude-runtime.mjs';
 import { codexRuntime } from './codex-runtime.mjs';
-import { normalizeRuntime } from './session-identity.mjs';
+import { normalizeRuntime, registerRuntimeDescriptor } from './session-identity.mjs';
 
-export const runtimeAdapters = Object.freeze([
+export const runtimeAdapters = [
   claudeRuntime,
   codexRuntime,
-]);
+];
 
 const adaptersByRuntime = new Map(
   runtimeAdapters.map((adapter) => [adapter.runtime, adapter]),
 );
 
-export function getRuntimeAdapter(runtime) {
-  return adaptersByRuntime.get(normalizeRuntime(runtime)) || claudeRuntime;
+// A runtime beyond claude/codex: a defineRuntimeAdapter object that may also carry `module` (its
+// own import.meta.url, default-exporting it, for workers), `catalog`, `history`, `messages`, `watcher`.
+export function registerRuntime(adapter) {
+  registerRuntimeDescriptor(adapter);
+  runtimeAdapters.push(adapter);
+  adaptersByRuntime.set(adapter.runtime, adapter);
 }
 
-export function detectRegisteredRuntimeCapabilities(runtimeOptions = {}) {
-  return Object.fromEntries(
-    runtimeAdapters.map((adapter) => [
-      adapter.runtime,
-      adapter.detectCapability(runtimeOptions[adapter.runtime] || {}),
-    ]),
-  );
+// Runtimes beyond claude/codex, flat in bridge/: [module, installed]. `installed` must be a cheap
+// filesystem check; the module is imported (default-exporting its adapter) only when it passes.
+const OPTIONAL_RUNTIMES = [
+  ['./dsh-runtime.mjs', () => fs.existsSync(process.env.DSH_HOME || path.join(os.homedir(), '.dsh'))],
+  ['./hermes-runtime.mjs', () => fs.existsSync(path.join(process.env.HERMES_HOME || path.join(os.homedir(), '.hermes'), 'state.db'))],
+  ['./opencode-runtime.mjs', () => fs.existsSync(path.join(process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local/share'), 'opencode/opencode.db'))],
+  ['./pi-runtime.mjs', () => fs.existsSync(process.env.PI_CODING_AGENT_DIR || path.join(os.homedir(), '.pi', 'agent'))],
+  // kiro-cli 3.x unpacks its v3 engine (KAS) here on first run; Kiro IDE and 2.x do not.
+  ['./kiro-runtime.mjs', () => [process.env.XDG_DATA_HOME || `${os.homedir()}/.local/share`, `${os.homedir()}/Library/Application Support`]
+    .some((dir) => fs.existsSync(`${dir}/kiro-cli/kas`))],
+];
+
+const settled = new Set(); // modules registered or failed to load: never checked again
+
+// Returns the adapters registered by this call.
+export async function registerInstalledRuntimes(list = OPTIONAL_RUNTIMES) {
+  const added = [];
+  for (const [file, installed] of list) {
+    if (settled.has(file)) continue;
+    try {
+      if (!installed()) continue;
+      settled.add(file);
+      const adapter = (await import(new URL(file, import.meta.url))).default;
+      // A store this runtime cannot read must not stop Claude/Codex from syncing.
+      const discover = (options) => {
+        try { return adapter.discover(options); } catch (error) {
+          console.error(`[runtime] ${adapter.runtime} discovery failed: ${error.message}`);
+          return { sessions: [] };
+        }
+      };
+      const registered = Object.create(adapter, { discover: { value: discover } });
+      registerRuntime(registered);
+      added.push(registered);
+    } catch (error) {
+      console.error(`[runtime] ${file} not loaded: ${error.message}`);
+    }
+  }
+  return added;
+}
+
+export function getRuntimeAdapter(runtime) {
+  const adapter = adaptersByRuntime.get(normalizeRuntime(runtime));
+  if (!adapter) throw new Error('unknown_runtime');
+  return adapter;
 }

@@ -1,0 +1,64 @@
+.start-url-form {
+  width: 100%; max-width: 400px; padding: 40px 32px; text-align: center;
+  padding-top: 80px;
+}
+.start-url-form .logo { width: 56px; height: 56px; margin: 0 auto 8px; }
+.start-url-form .logo img { display: block; width: 100%; height: 100%; }
+.start-url-form h1 { font-size: 28px; font-weight: 700; margin-bottom: 6px; }
+.start-url-form .tagline { color: var(--text-secondary); font-size: 14px; margin-bottom: 32px; line-height: 1.5; }
+.start-url-form .input-group { margin-bottom: 16px; text-align: left; }
+.start-url-form .input-group label { display: flex; align-items: center; gap: 2px; font-size: 12px; color: var(--text-normal); margin-bottom: 6px; }
+.start-url-form .field-help { display: flex; padding: 12px; margin: -12px -12px -12px -8px; color: var(--text-muted); opacity: 0.55; }
+.start-url-form .field-help:hover, .start-url-form .field-help:active { opacity: 1; }
+.start-url-form .field-help svg { width: 15px; height: 15px; }
+html.native-mobile .start-url-form .input-group label {
+  font-size: 15px;
+  line-height: 20px;
+  font-weight: 500;
+  margin-bottom: 8px;
+}
+.start-url-form .input-group input {
+  width: 100%; padding: 10px 14px; background: var(--surface); border: 1px solid var(--border);
+  border-radius: 8px; color: var(--text-primary); font-size: 14px; outline: none;
+}
+.start-url-form .input-group input:focus { border-color: var(--accent); }
+html.native-mobile[data-page-zoom] .start-url-form .input-group input { font-size: 16px; }
+.start-url-form .input-group input::placeholder { color: var(--text-muted); }
+.start-url-row { position: relative; }
+.start-url-form .start-url-row input { padding-right: 44px; }
+.start-url-form .scan-btn {
+  position: absolute; top: 50%; right: 6px; transform: translateY(-50%);
+  width: 32px; height: 32px; padding: 0;
+  background: transparent; border: none; border-radius: 6px;
+  color: var(--text-secondary); cursor: pointer; display: flex; align-items: center; justify-content: center;
+}
+.start-url-form .scan-btn[hidden] { display: none; }
+.start-url-form .scan-btn:hover { color: var(--accent); background: rgba(var(--accent-rgb), 0.08); }
+.start-url-form .scan-btn:active { background: rgba(var(--accent-rgb), 0.16); }
+.start-url-form .scan-btn svg { width: 20px; height: 20px; display: block; }
+.start-url-form .scan-btn svg path { fill: currentColor; }
+.start-url-form .btn {
+  width: 100%; padding: 12px; background: var(--success-solid); border: none; border-radius: 8px;
+  color: var(--on-accent); font-size: 15px; font-weight: 600; cursor: pointer; margin-top: 8px;
+}
+.start-url-form .btn:hover { background: var(--success-hover); }
+.start-url-form .btn:active { background: var(--success-active); }
+.start-url-form .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.start-url-form .error { color: var(--danger); font-size: 12px; margin-top: 8px; display: none; }
+.start-url-form .spinner {
+  display: inline-block; width: 14px; height: 14px; vertical-align: -2px;
+  border: 2px solid rgba(var(--on-accent-rgb), 0.35); border-top-color: var(--on-accent);
+  border-radius: 50%; animation: spin 0.7s linear infinite; margin-right: 8px;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Add device: a full-screen page over the current one (add-device.js). */
+/* The swipe moves the page; only its inner box scrolls, so the back button stays put. */
+.add-device-page { position: fixed; inset: 0; z-index: 1000; background: var(--canvas); }
+.add-device-scroll {
+  height: 100%; display: flex; justify-content: center; align-items: flex-start;
+  overflow-y: auto; padding-top: var(--sat, env(safe-area-inset-top, 0px));
+}
+/* Where Settings' back button sits: centred in its 44px bar (top padding max(safe area, 6px), 6px + 1px border below). */
+.add-device-page .add-back { --bar-top: max(var(--sat, env(safe-area-inset-top, 0px)), 6px); position: fixed; top: calc(var(--bar-top) + max(0px, (9px - var(--bar-top)) / 2)); left: 8px; width: 28px; height: 28px; display: flex; }
+html.native-mobile .add-device-page .add-back { width: 44px; height: 44px; top: var(--sat, env(safe-area-inset-top, 0px)); left: var(--sal, env(safe-area-inset-left, 0px)); }

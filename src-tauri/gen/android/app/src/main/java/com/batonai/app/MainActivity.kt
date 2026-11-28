@@ -8,10 +8,16 @@ import androidx.activity.SystemBarStyle
 import android.app.UiModeManager
 import android.content.Context
 import android.content.res.Configuration
+import android.content.res.Resources
+import android.os.SystemClock
+import android.view.View
+import android.view.ViewGroup
 import android.graphics.Color
 import android.os.Build
 import androidx.appcompat.app.AppCompatDelegate
+import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.webkit.WebSettingsCompat
 import androidx.webkit.WebViewFeature
 import org.json.JSONObject
@@ -54,15 +60,56 @@ class MainActivity : TauriActivity() {
     }
   }
 
+  // The saved choice, not the resources: before 12 they follow the system, and the window must match the page.
+  private val launchLight get() = when (preference) {
+    "light" -> true
+    "system" -> (Resources.getSystem().configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) != Configuration.UI_MODE_NIGHT_YES
+    else -> false
+  }
+  private val launchCanvas get() = if (launchLight) Color.WHITE else Color.parseColor("#0d1117")
+  private var skeleton: View? = null
+
   override fun onCreate(savedInstanceState: Bundle?) {
     delegate.localNightMode = nightMode()
     super.onCreate(savedInstanceState)
-    applyAppearance()
+    applyAppearance(launchLight, launchCanvas)
+    if (Build.VERSION.SDK_INT >= 31) splashScreen.setOnExitAnimationListener { it.remove() }
+    // Three-button navigation draws over the page; gesture navigation has no tappable inset, so the page stays edge to edge.
+    ViewCompat.setOnApplyWindowInsetsListener(findViewById(android.R.id.content)) { view, insets ->
+      val bar = LaunchSkeletonView.navigationPadding(insets)
+      // Before Android 11 an edge-to-edge window is not resized for the keyboard: adjustResize only reports it, with the
+      // navigation bar below it, in the system window insets. Later WebViews shrink their own viewport.
+      @Suppress("DEPRECATION")
+      val keyboard = insets.toWindowInsets()?.systemWindowInsetBottom
+        ?.takeIf { Build.VERSION.SDK_INT < 30 && it > insets.getInsets(WindowInsetsCompat.Type.navigationBars()).bottom } ?: 0
+      view.setPadding(bar.left, 0, bar.right, maxOf(bar.bottom, keyboard))
+      insets
+    }
+    // Above the content view: Wry replaces the content view when its WebView is ready.
+    skeleton = LaunchSkeletonView(this, launchLight).also {
+      (window.decorView as ViewGroup).addView(it, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+    }
+  }
+
+  private fun removeSkeleton() { skeleton?.let { (it.parent as? ViewGroup)?.removeView(it) }; skeleton = null }
+
+  // Like iOS: removed without a fade once the Web skeleton (or any non-home page) has painted. The poll does not
+  // wait for each result: a script evaluated during a navigation (index.html → landing.html) may never call back.
+  private fun releaseSkeleton(webView: WebView) {
+    val started = SystemClock.uptimeMillis()
+    webView.post(object : Runnable {
+      override fun run() {
+        if (skeleton == null) return
+        if (SystemClock.uptimeMillis() - started > 15000) return removeSkeleton()
+        webView.evaluateJavascript(SKELETON_READY) { if (it == "1") removeSkeleton() }
+        webView.postDelayed(this, 20)
+      }
+    })
   }
 
   // System Back reaches JS through Tauri's onBackButtonPress; this lets the root page background the app.
   override fun onWebViewCreate(webView: WebView) {
-    webView.setBackgroundColor(getColor(R.color.baton_background))
+    releaseSkeleton(webView)
     if (WebViewFeature.isFeatureSupported(WebViewFeature.ALGORITHMIC_DARKENING)) {
       WebSettingsCompat.setAlgorithmicDarkeningAllowed(webView.settings, false)
     }
@@ -87,5 +134,11 @@ class MainActivity : TauriActivity() {
         }
       }
     }, "BatonAndroid")
+  }
+
+  companion object {
+    // index.html sets __skelReady after its skeleton or cached home completes two layouts; other pages only need to load.
+    // The WebView starts on about:blank, which is neither.
+    private const val SKELETON_READY = "(window.__skelReady||(/^https?:/.test(location.protocol)&&!/(^|\\/)(index\\.html)?\$/.test(location.pathname)&&document.readyState==='complete'))?1:0"
   }
 }

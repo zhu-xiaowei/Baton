@@ -1,11 +1,7 @@
 const REQUIRED_METHODS = [
   'discover',
-  'detectCapability',
   'findSessionFile',
-  'shouldSkipInitial',
   'baselineToEnd',
-  'syncInitialMessages',
-  'syncAllMessages',
 ];
 
 const DEFAULT_FEATURES = {

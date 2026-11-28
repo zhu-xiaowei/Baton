@@ -1,52 +1,13 @@
 import fs from 'fs';
-import path from 'path';
 import crypto from 'crypto';
 import sharp from 'sharp';
-import { post, postRequired } from './http.mjs';
-import { VALID_TYPES, MAX_POST_BYTES, DDB_ITEM_LIMIT, BRIDGE_HOME } from './config.mjs';
-import { stripToolResultBase64, toolPreview, toolPreviews } from './tool-preview.mjs';
+import { isMainThread } from 'node:worker_threads';
+import { reusable, transfer, transferKeys } from './transfer-store.mjs';
+import { VALID_TYPES } from './config.mjs';
 
-// Track sync position: sessionId → line number (the watcher's per-session read watermark).
+// sessionId → next line the watcher reads; startup sets it to the end of every known file.
 export const synced = new Map();
 
-// Persist `synced` to disk so a restart resumes each session's watermark instead of
-// reading from line 0 (which re-pushes whole histories). Runtime keeps the Map hot; we
-// only flush on exit + a low-frequency interval (crash fallback), never per-set.
-const SYNCED_PATH = path.join(BRIDGE_HOME, 'synced.json');
-export function decodeSyncedState(value) {
-  const version = value?.version;
-  const source = version === 2 && value?.watermarks && typeof value.watermarks === 'object'
-    ? value.watermarks
-    : value;
-  const result = new Map();
-  if (!source || typeof source !== 'object') return result;
-  for (const [key, raw] of Object.entries(source)) {
-    if (typeof raw !== 'number') continue;
-    // Replay one legacy Claude line to avoid the old trailing-newline offset.
-    const line = version === 2 || key.startsWith('codex:') ? raw : Math.max(0, raw - 1);
-    result.set(key, line);
-  }
-  return result;
-}
-
-export function loadSynced() {
-  try {
-    const saved = JSON.parse(fs.readFileSync(SYNCED_PATH, 'utf-8'));
-    if (saved.historyVersion !== 2) return;
-    const restored = decodeSyncedState(saved);
-    for (const [key, line] of restored) synced.set(key, line);
-    console.log(`[synced] restored ${synced.size} session watermarks`);
-  } catch {} // missing/corrupt → start empty (handleHeadlessSend baselines on demand)
-}
-export function saveSynced() {
-  try {
-    fs.writeFileSync(SYNCED_PATH, JSON.stringify({
-      version: 2,
-      historyVersion: 2,
-      watermarks: Object.fromEntries(synced),
-    }));
-  } catch {}
-}
 // jsonl line count matching the watcher's convention (drop a single trailing empty line).
 export function countJsonlLines(filePath) {
   const lines = fs.readFileSync(filePath, 'utf-8').split('\n');
@@ -54,56 +15,36 @@ export function countJsonlLines(filePath) {
   return lines.length;
 }
 
-const TRUNC_MARK = '\n…[truncated]';
-
-// Fixed timestamp for uuid/timestamp-less metadata rows — keeps their DDB sk deterministic.
+// Fixed timestamp for uuid/timestamp-less metadata rows — keeps them identical across reads.
 const META_EPOCH_TS = '1970-01-01T00:00:00.000Z';
 
-// Walk a message and collect every string field, with a setter to replace it.
-// Used to shrink oversized messages by trimming the longest strings first
-// (tool results, large text/diff blocks) while keeping JSON structure intact.
-function collectStrings(node, out) {
-  if (typeof node !== 'object' || node === null) return;
-  for (const k of Object.keys(node)) {
-    const v = node[k];
-    if (typeof v === 'string') {
-      out.push({ get: () => node[k], set: (s) => { node[k] = s; } });
-    } else if (typeof v === 'object' && v !== null) {
-      collectStrings(v, out);
-    }
+// History pages are read again and again: each image is compressed at most every 30 minutes.
+const imageKeys = transferKeys(500); // sha1(base64) → Promise<key>
+
+function processImage(base64Data) {
+  const id = crypto.createHash('sha1').update(base64Data).digest('hex');
+  let job = imageKeys.get(id);
+  if (!job) {
+    job = limited(() => compressAndUpload(base64Data)).then(({ key, ok }) => {
+      if (!ok) imageKeys.delete(id); // tried again next time
+      return key;
+    }, (error) => { imageKeys.delete(id); throw error; });
+    imageKeys.set(id, job);
   }
+  return job;
 }
 
-// Return a structural clone of `msg` whose JSON byte size is <= maxBytes,
-// preserving tool previews before applying the transport's hard limit.
-export function truncateToBytes(msg, maxBytes) {
-  if (Buffer.byteLength(JSON.stringify(msg)) <= maxBytes) return msg;
-  const clone = structuredClone(toolPreview(msg));
-  if (Buffer.byteLength(JSON.stringify(clone)) <= maxBytes) return clone;
-  const fields = [];
-  collectStrings(clone, fields);
-  // Trim longest-first; loop until it fits or no further reduction is possible.
-  // Guard scales with field count: a message with many large strings may need
-  // one pass per field to collapse them all.
-  const maxIters = fields.length + 16;
-  for (let guard = 0; guard < maxIters; guard++) {
-    const over = Buffer.byteLength(JSON.stringify(clone)) - maxBytes;
-    if (over <= 0) break;
-    fields.sort((a, b) => b.get().length - a.get().length);
-    const target = fields[0];
-    const cur = target.get();
-    if (!cur || cur.length <= TRUNC_MARK.length) break; // nothing left to trim
-    // `over` is in bytes; convert to a char count using this string's own
-    // bytes-per-char density so multibyte (CJK/emoji) text isn't over-trimmed.
-    const bpc = Buffer.byteLength(cur) / cur.length;
-    const dropChars = Math.ceil(over / bpc) + TRUNC_MARK.length + 16;
-    const keep = Math.max(0, cur.length - dropChars);
-    target.set(cur.slice(0, keep) + TRUNC_MARK);
-  }
-  return clone;
+// At most 4 images are compressed and uploaded at a time; a free slot passes to the next waiting one.
+let active = 0;
+const waiting = [];
+async function limited(job) {
+  if (active < 4) active++; else await new Promise((resolve) => waiting.push(resolve));
+  try { return await job(); } finally { if (waiting.length) waiting.shift()(); else active--; }
 }
 
-async function processImage(base64Data) {
+const UPLOAD_TIMEOUT_MS = 30_000; // a stalled upload fails, so the rows waiting for it go out
+
+async function compressAndUpload(base64Data) {
   const buffer = Buffer.from(base64Data, 'base64');
   const compressed = await sharp(buffer)
     .resize(1280, 1280, { fit: 'inside', withoutEnlargement: true })
@@ -112,17 +53,55 @@ async function processImage(base64Data) {
 
   const hashInput = Buffer.concat([compressed.subarray(0, 8192), Buffer.from(String(compressed.length))]);
   const hash = crypto.createHash('md5').update(hashInput).digest('hex');
-  const key = `${hash}.jpg`;
+  const key = await transfer.keyFor(hash, '.jpg');
 
-  await post('/api/bridge/upload-image', { key, data: compressed.toString('base64') });
-  return key;
+  try {
+    let timer;
+    const late = new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('timed out')), UPLOAD_TIMEOUT_MS); });
+    await Promise.race([(async () => {
+      if (!reusable(await transfer.head(key))) await transfer.put(key, compressed, { contentType: 'image/jpeg' });
+    })(), late]).finally(() => clearTimeout(timer));
+    return { key, ok: true };
+  } catch {
+    return { key, ok: false };
+  }
+}
+
+// An image's bytes: inline base64, a local file (Codex view_image, Hermes MEDIA:), or a data URI.
+function imageData(b) {
+  if (b.source?.data || b.source?.bytes) return b.source.data || b.source.bytes;
+  try { if (b.path && fs.statSync(b.path).size <= 20 << 20) return fs.readFileSync(b.path).toString('base64'); } catch {}
+  return /^data:image\/[\w.+-]+;base64,(.+)$/s.exec(b.image_url || '')?.[1] || '';
+}
+
+// Message and tool-result images become uploaded keys. Only the main thread reaches storage, so a
+// worker leaves the bytes for it (history-service, tool_details and the live exits convert them).
+export async function withImageKeys(content) {
+  if (!Array.isArray(content) || !isMainThread) return content;
+  return Promise.all(content.map(async (b) => {
+    if (b?.type === 'tool_result' && Array.isArray(b.content)) return { ...b, content: await withImageKeys(b.content) };
+    if (b?.type !== 'image') return b;
+    if (b.key) { const { path, ...rest } = b; return rest; } // never a local path to the App
+    const data = imageData(b);
+    try { if (data) return { type: 'image', key: await processImage(data) }; } catch (e) { console.error(`Image upload failed: ${e.message}`); }
+    return { type: 'image', placeholder: true };
+  }));
+}
+
+const pendingImage = (b) => (b?.type === 'image' ? !!(b.source || b.image_url || b.path)
+  : b?.type === 'tool_result' && Array.isArray(b.content) && b.content.some(pendingImage));
+export const hasPendingImages = (rows) => rows.some((row) => Array.isArray(row?.content) && row.content.some(pendingImage));
+
+export async function rowsWithImageKeys(rows) {
+  await Promise.all(rows.map(async (row) => { row.content = await withImageKeys(row.content); }));
+  return rows;
 }
 
 export async function extractForApp(msg) {
   msg = normalizeClaudeQueuedInput(msg);
   if (msg.type === 'ai-title' || msg.type === 'custom-title' || msg.type === 'last-prompt') {
     const content = msg.aiTitle || msg.customTitle || msg.lastPrompt || '';
-    // Content-addressed uuid so re-syncing overwrites one DDB item instead of accumulating (was Date.now()).
+    // Content-addressed uuid: every read of the same title yields the same row.
     const hash = crypto.createHash('sha1').update(`${msg.type}|${msg.sessionId || ''}|${content}`).digest('hex').slice(0, 16);
     return { uuid: `${msg.type}_${hash}`, type: msg.type, content, timestamp: META_EPOCH_TS };
   }
@@ -133,33 +112,8 @@ export async function extractForApp(msg) {
     content = content.replace(/\r\n?/g, '\n');
   }
   if (Array.isArray(content)) {
-    const imageJobs = [];
-    for (let i = 0; i < content.length; i++) {
-      if (content[i].type === 'image') {
-        const b64 = content[i].source?.data || content[i].source?.bytes || '';
-        if (b64) imageJobs.push({ index: i, promise: processImage(b64) });
-      }
-    }
-    const results = await Promise.allSettled(imageJobs.map(j => j.promise));
-
-    content = content.map((block, i) => {
-      if (block.type === 'image') {
-        const job = imageJobs.find(j => j.index === i);
-        if (job) {
-          const result = results[imageJobs.indexOf(job)];
-          if (result.status === 'fulfilled') return { type: 'image', key: result.value };
-          console.error(`Image upload failed: ${result.reason?.message}`);
-        }
-        return { type: 'image', placeholder: true };
-      }
-      // tool_result image base64 is unused by the app (it renders via S3 key) — strip it.
-      if (block.type === 'tool_result') return stripToolResultBase64(block);
-      // Normalize \r → \n in text blocks
-      if (block.type === 'text' && block.text && /\r/.test(block.text)) {
-        return { ...block, text: block.text.replace(/\r\n?/g, '\n') };
-      }
-      return block;
-    });
+    content = await withImageKeys(content.map((block) => (block.type === 'text' && block.text && /\r/.test(block.text)
+      ? { ...block, text: block.text.replace(/\r\n?/g, '\n') } : block)));
   }
   const extracted = {
     uuid: msg.uuid || msg.leafUuid || '',
@@ -178,6 +132,8 @@ export async function extractForApp(msg) {
 }
 
 export function normalizeClaudeQueuedInput(message) {
+  // A compaction summary renders like Codex's: one collapsed "Context compacted" row.
+  if (message?.type === 'user' && message.isCompactSummary) return { ...message, type: 'summary' };
   // Render system local_command output like the older <local-command-stdout> user row.
   if (message?.type === 'system' && message.subtype === 'local_command'
     && /^<local-command-stdout>/.test(message.content || '')) {
@@ -206,68 +162,19 @@ export function isClaudeLocalCommandCaveat(msg) {
     && content.trimStart().startsWith('<local-command-caveat>');
 }
 
-export async function extractClaudeMessages(filePath, sessionId, options = {}) {
-  const watermarks = options.watermarks || synced;
-  const startLine = options.startLine ?? watermarks.get(sessionId) ?? 0;
-  if (!fs.existsSync(filePath)) return { messages: [], nextLine: startLine };
-  const lines = fs.readFileSync(filePath, 'utf-8').split('\n');
-  if (lines.at(-1) === '') lines.pop();
-  const newMsgs = [];
-  const metaUuids = new Set();
-  const metaIdx = {}; // type → index in newMsgs (keep only latest per type)
-
-  for (let i = Math.min(startLine, lines.length); i < lines.length; i++) {
-    if (!lines[i].trim()) continue;
-    let msg;
-    try { msg = JSON.parse(lines[i]); } catch { continue; }
-    msg = normalizeClaudeQueuedInput(msg);
-    if (!VALID_TYPES.has(msg.type)) continue;
-    if ((msg.isMeta || msg.isCompactSummary) && msg.type === 'user') {
-      if (!isClaudeLocalCommandCaveat(msg)) metaUuids.add(msg.uuid);
-      continue;
-    }
-    if (msg.type === 'user' && msg.parentUuid && metaUuids.has(msg.parentUuid)) { metaUuids.delete(msg.parentUuid); continue; }
-    const extracted = await extractForApp(msg);
-    if (!extracted.uuid) continue;
-    extracted.orderKey = nativeOrderKey(i);
-    if (extracted.type === 'ai-title' || extracted.type === 'custom-title' || extracted.type === 'last-prompt') {
-      if (metaIdx[extracted.type] !== undefined) newMsgs[metaIdx[extracted.type]] = extracted;
-      else { metaIdx[extracted.type] = newMsgs.length; newMsgs.push(extracted); }
-      continue;
-    }
-    newMsgs.push(extracted);
+// One parsed JSONL line → the message to extract, or null. `metaUuids` carries the rule that a meta
+// prompt hides the prompt answering it; shared by full extraction and the history reader.
+export function claudeMessageLine(msg, metaUuids) {
+  msg = normalizeClaudeQueuedInput(msg);
+  if (!VALID_TYPES.has(msg.type)) return null;
+  if (msg.isMeta && msg.type === 'user') {
+    if (!isClaudeLocalCommandCaveat(msg)) metaUuids.add(msg.uuid);
+    return null;
   }
-
-  return { messages: newMsgs, nextLine: lines.length };
-}
-
-export async function uploadMessages(sessionId, messages, options = {}) {
-  if (messages.length === 0 && !options.historyComplete) return;
-  let batch = [];
-  let batchSize = 0;
-  const identity = {
-    ...(options.runtime ? { runtime: options.runtime } : {}),
-    ...(options.nativeSessionId ? { nativeSessionId: options.nativeSessionId } : {}),
-  };
-
-  for (const raw of toolPreviews(messages)) {
-    // Cap every message before WS fallback or initial sync reaches DDB.
-    const msg = truncateToBytes(raw, DDB_ITEM_LIMIT);
-    const msgJson = JSON.stringify(msg);
-    const msgBytes = Buffer.byteLength(msgJson);
-    if (batchSize + msgBytes > MAX_POST_BYTES && batch.length > 0) {
-      await postRequired('/api/bridge/sync-messages', { sessionId, messages: batch, ...identity });
-      await new Promise(r => setTimeout(r, 200));
-      batch = [];
-      batchSize = 0;
-    }
-    batch.push(msg);
-    batchSize += msgBytes;
+  if (msg.isCompactSummary) metaUuids.add(msg.uuid);
+  if (msg.type === 'user' && msg.parentUuid && metaUuids.has(msg.parentUuid)) {
+    metaUuids.delete(msg.parentUuid);
+    return null;
   }
-  if (batch.length > 0) {
-    await postRequired('/api/bridge/sync-messages', { sessionId, messages: batch, ...identity });
-  }
-  if (options.historyComplete) {
-    await postRequired('/api/bridge/sync-messages', { sessionId, messages: [], historyComplete: true, ...identity });
-  }
+  return msg;
 }

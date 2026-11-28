@@ -49,7 +49,7 @@ test('breadcrumb navigation shows cached parent contents before revalidation', (
   assert.match(source, /function rememberDirectoryScroll\(\)/);
   assert.match(
     source,
-    /rememberDirectoryScroll\(\);\s*currentPath = normalizeProjectPath\(path\);[\s\S]*?var cached = cachedDirectory\(projectHash, currentPath\)/,
+    /rememberDirectoryScroll\(\);\s*currentPath = canonicalFilesPath\(filesRoot\(\), path\);[\s\S]*?var cached = cachedDirectory\(projectHash, currentPath\)/,
   );
   assert.match(
     source,

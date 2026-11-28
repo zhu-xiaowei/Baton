@@ -1,0 +1,311 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex">
+<meta name="theme-color" content="#161b22">
+<title>Baton 监控</title>
+<style>
+  :root { --canvas: #0d1117; --surface: #161b22; --raised: #21262d; --border: #30363d; --text: #e6edf3; --muted: #8b949e;
+    --blue: #58a6ff; --green: #3fb950; --amber: #d29922; --red: #f85149; }
+  * { box-sizing: border-box; }
+  html, body { overflow-x: clip; }
+  body { margin: 0; background: var(--canvas); color: var(--text); -webkit-text-size-adjust: 100%;
+    font: 15px/1.45 -apple-system, BlinkMacSystemFont, "PingFang SC", "Segoe UI", "Microsoft YaHei", sans-serif;
+    padding-bottom: calc(env(safe-area-inset-bottom) + 80px); }
+  header { position: sticky; top: 0; z-index: 2; background: rgba(22, 27, 34, .94); backdrop-filter: blur(8px); border-bottom: 1px solid var(--border);
+    padding: calc(env(safe-area-inset-top) + 10px) calc(env(safe-area-inset-right) + 16px) 8px calc(env(safe-area-inset-left) + 16px); }
+  .bar { display: flex; align-items: center; gap: 10px; }
+  h1 { margin: 0; font-size: 17px; font-weight: 600; }
+  .meta { color: var(--muted); font-size: 12px; margin-top: 2px; }
+  .status { margin-left: auto; border: 0; font: inherit; font-size: 14px; color: var(--text); background: var(--raised); border-radius: 14px;
+    padding: 4px 12px; display: flex; align-items: center; gap: 6px; cursor: pointer; }
+  .probes { display: none; gap: 8px; flex-wrap: wrap; margin-top: 8px; font-size: 13px; color: var(--muted); }
+  header.open .probes { display: flex; }
+  main { max-width: 1240px; margin: 0 auto; padding: 16px calc(env(safe-area-inset-right) + 16px) 0 calc(env(safe-area-inset-left) + 16px); }
+  h2 { margin: 28px 0 12px; font-size: 18px; font-weight: 600; }
+  .kpis { display: grid; gap: 12px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .grid { display: grid; gap: 12px; grid-template-columns: minmax(0, 1fr); }
+  @media (min-width: 900px) { .kpis { grid-template-columns: repeat(4, minmax(0, 1fr)); } .grid { grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); } }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; min-width: 0;
+    box-shadow: 0 1px 0 rgba(255, 255, 255, .03) inset, 0 4px 14px rgba(0, 0, 0, .25); }
+  .card h3 { margin: 0 0 10px; font-size: 15px; font-weight: 600; display: flex; align-items: baseline; gap: 6px; }
+  .card h3 .r { margin-left: auto; font-size: 13px; font-weight: 400; color: var(--muted); }
+  .big { font-size: 30px; font-weight: 650; line-height: 1.15; font-variant-numeric: tabular-nums; letter-spacing: -.01em; }
+  .label { font-size: 14px; color: var(--muted); margin-top: 2px; }
+  .sub { font-size: 13px; color: var(--muted); margin-top: 6px; }
+  .na { font-size: 13px; color: var(--muted); padding: 6px 0; }
+  .trio { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 10px; }
+  .trio .big { font-size: 26px; }
+  .row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(60px, 38%) 64px; gap: 10px; align-items: center; margin: 7px 0; font-size: 14px; }
+  .row .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .row.account { grid-template-columns: minmax(0, 1fr) minmax(40px, 28%) 64px 56px; }
+  .row.account .mini { width: 100%; padding: 2px 0; }
+  .line { display: grid; gap: 8px; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 14px; white-space: nowrap; }
+  .line:last-child { border-bottom: 0; }
+  .line > * { overflow: hidden; text-overflow: ellipsis; }
+  .blocked { grid-template-columns: minmax(0, 1fr) auto auto auto; }
+  .alerts { grid-template-columns: 4.6em minmax(0, 1fr) auto; }
+  .alerts .when { white-space: normal; font-size: 13px; color: var(--muted); line-height: 1.3; }
+  .mini { border: 1px solid var(--border); background: var(--raised); color: var(--text); font: inherit; font-size: 13px; border-radius: 8px; padding: 2px 10px; cursor: pointer; }
+  .sub, .label, .status, .row .num { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .sub.flex { display: flex; gap: 6px; align-items: center; overflow: visible; }
+  .sub.flex span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .row .num { text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); font-size: 13px; }
+  .track { height: 8px; background: var(--raised); border-radius: 4px; overflow: hidden; }
+  .fill { height: 100%; border-radius: 4px; background: var(--blue); }
+  .meter { margin-top: 6px; } .meter .track { height: 6px; }
+  .ok { color: var(--green); } .warn { color: var(--amber); } .bad { color: var(--red); }
+  .fill.ok { background: var(--green); } .fill.warn { background: var(--amber); } .fill.bad { background: var(--red); }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; display: inline-block; }
+  .i { position: relative; display: inline-flex; width: 18px; height: 18px; align-items: center; justify-content: center; border-radius: 50%;
+    font-size: 12px; color: var(--muted); border: 1px solid var(--border); cursor: help; outline: none; }
+  .i:focus::after, .i:hover::after { content: attr(data-tip); position: fixed; left: 16px; right: 16px; bottom: calc(env(safe-area-inset-bottom) + 24px);
+    max-width: 420px; margin: 0 auto; white-space: normal; z-index: 3; padding: 8px 10px;
+    background: var(--raised); border: 1px solid var(--border); border-radius: 8px; color: var(--text); font-size: 13px; font-weight: 400; line-height: 1.4; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  td, th { padding: 7px 4px; border-bottom: 1px solid var(--border); text-align: left; font-weight: 400; }
+  th { color: var(--muted); font-size: 13px; } td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
+  tr:last-child td { border-bottom: 0; }
+  code { font: 13px ui-monospace, SFMono-Regular, Menlo, monospace; }
+  svg { display: block; width: 100%; height: auto; touch-action: pan-y; }
+  svg text { fill: var(--muted); font-size: 12px; }
+  .cap { min-height: 18px; font-size: 13px; color: var(--text); text-align: right; font-variant-numeric: tabular-nums; }
+  .err { color: var(--red); font-size: 13px; margin: 8px 0; }
+</style>
+</head>
+<body>
+<header id="top"><div class="bar"><h1>Baton 监控</h1><button class="status" id="status" type="button">加载中…</button></div>
+  <div class="meta" id="meta"></div><div class="probes" id="probes"></div></header>
+<main id="main"></main>
+<script>
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+const n = (v, d = 0) => (v == null || !Number.isFinite(Number(v)) ? '—' : Number(v).toLocaleString('zh-CN', { maximumFractionDigits: d }));
+const usd = (v) => (v == null ? '—' : v === 0 ? '$0' : v < 1e-4 ? '<$0.0001' : v < 0.01 ? `$${Number(v).toPrecision(2)}` : `$${Number(v).toFixed(2)}`);
+const pct = (v) => (v == null || !Number.isFinite(v) ? '—' : v >= 1 ? '100%' : `${(v * 100).toFixed(v < 0.01 ? 2 : 1)}%`);
+const dur = (s) => (s == null ? '—' : s < 60 ? `${Math.round(s)} 秒` : s < 3600 ? `${Math.round(s / 60)} 分钟` : `${(s / 3600).toFixed(1)} 小时`);
+const bytes = (b) => (b == null ? '—' : b < 1e6 ? `${n(b / 1e3, 1)} KB` : b < 1e9 ? `${n(b / 1e6, 1)} MB` : `${n(b / 1e9, 2)} GB`);
+const hm = (t) => new Date(t).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false });
+const md = (day) => day.slice(5).replace('-', '/');
+const kv = (label, value) => `<div class="sub flex"><span>${label}</span><b style="margin-left:auto;color:var(--text);font-weight:500">${value}</b></div>`;
+const NA = (why = '数据不足') => `<div class="na">— ${why}</div>`;
+const level = (v) => (v > 0.8 ? 'bad' : v > 0.6 ? 'warn' : 'ok');
+const info = (tip) => `<span class="i" tabindex="0" data-tip="${esc(tip)}">i</span>`;
+const card = (title, body, right = '') => `<div class="card"><h3>${title}${right ? `<span class="r">${right}</span>` : ''}</h3>${body}</div>`;
+const kpi = (label, value, sub = '', cls = '') => `<div class="card"><div class="big ${cls}">${value}</div><div class="label">${label}</div>${sub ? `<div class="sub">${sub}</div>` : ''}</div>`;
+const meter = (share, text, value) => `<div class="meter"><div class="sub flex" style="margin:0 0 4px">${text}<b style="margin-left:auto;color:var(--text);font-weight:500">${value}</b></div>`
+  + `<div class="track"><div class="fill ${level(share)}" style="width:${Math.max(2, Math.min(100, share * 100))}%"></div></div></div>`;
+
+// Bar lists: rows [[name, value]] → top 5 + 其他, as shares of the total (or own formatting against `max`).
+function bars(rows, { top = 5, fmt, max, cls } = {}) {
+  rows = (rows ?? []).filter((r) => Number(r[1]) > 0);
+  if (!rows.length) return NA();
+  const total = rows.reduce((s, r) => s + Number(r[1]), 0);
+  if (rows.length > top) rows = [...rows.slice(0, top), ['其他', rows.slice(top).reduce((s, r) => s + Number(r[1]), 0)]];
+  const scale = max ?? Math.max(...rows.map((r) => Number(r[1])));
+  return rows.map(([name, v]) => `<div class="row"><span class="name" title="${esc(name)}">${esc(name || '未知')}</span>`
+    + `<div class="track"><div class="fill ${cls ? cls(v) : ''}" style="width:${Math.max(2, (100 * v) / scale)}%"></div></div>`
+    + `<span class="num">${fmt ? fmt(v) : pct(v / total)}</span></div>`).join('');
+}
+
+// Charts: hand-drawn SVG on a fixed axis; tap or hover shows the nearest value in the caption.
+const charts = [];
+const W = 320, H = 130, L = 34, B = 20, T = 8;
+const short = (v) => (v >= 1e6 ? `${n(v / 1e6, 1)}M` : v >= 1e3 ? `${n(v / 1e3, 1)}k` : v < 0.01 ? Number(v.toPrecision(1)) : n(v, 2));
+function frame(ymax, ticks) {
+  const y = (v) => T + (H - T - B) * (1 - v / ymax);
+  return [y, [0, 0.5, 1].map((f) => `<line x1="${L}" x2="${W}" y1="${y(ymax * f)}" y2="${y(ymax * f)}" stroke="#30363d" stroke-dasharray="${f ? '3 4' : ''}"/>`
+    + (f ? `<text x="${L - 6}" y="${y(ymax * f) + 4}" text-anchor="end">${short(ymax * f)}</text>` : '')).join('')
+    + ticks.map(([x, t, a]) => `<text x="${x}" y="${H - 4}" text-anchor="${a}">${esc(t)}</text>`).join('')];
+}
+const nice = (v) => { const p = 10 ** Math.floor(Math.log10(v || 1)); return [1, 2, 5, 10].find((m) => m * p >= v) * p; };
+function chart(kind, pts, { fmt = n, from, to, color = '#58a6ff', label = (p) => p[2] } = {}) {
+  const real = pts.filter((p) => p[1] != null);
+  if (real.length < (kind === 'line' ? 2 : 1)) return NA();
+  const id = charts.push({ pts, fmt, label, kind, from, to }) - 1;
+  const ymax = nice(Math.max(...real.map((p) => p[1]), 1) * 1.1);
+  const x = (v) => L + ((W - L) * (v - from)) / Math.max(to - from, 1);
+  const ticks = kind === 'bar' ? [[x(pts[0][0]) + 3, label(pts[0]), 'start'], [x(pts[Math.floor(pts.length / 2)][0]) + 3, label(pts[Math.floor(pts.length / 2)]), 'middle'],
+    [W, '今天', 'end']] : [[L, hm(from), 'start'], [(L + W) / 2, hm((from + to) / 2), 'middle'], [W, '现在', 'end']];
+  const [y, axes] = frame(ymax, ticks);
+  const grad = `<defs><linearGradient id="g${id}" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="${color}" stop-opacity=".9"/><stop offset="1" stop-color="${color}" stop-opacity=".25"/></linearGradient>`
+    + `<linearGradient id="a${id}" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="${color}" stop-opacity=".35"/><stop offset="1" stop-color="${color}" stop-opacity="0"/></linearGradient></defs>`;
+  let body = '';
+  if (kind === 'bar') {
+    const bw = ((W - L) / pts.length) * 0.62;
+    body = pts.map((p) => p[1] ? `<rect x="${x(p[0])}" y="${y(p[1])}" width="${bw}" height="${y(0) - y(p[1])}" rx="${Math.min(3, bw / 2)}" fill="url(#g${id})"/>` : '').join('');
+    const last = real.at(-1);
+    body += `<text x="${x(last[0]) + bw / 2}" y="${y(last[1]) - 4}" text-anchor="middle" style="fill:#e6edf3">${fmt(last[1])}</text>`;
+  } else {
+    const d = real.map((p, i) => `${i ? 'L' : 'M'}${x(p[0]).toFixed(1)},${y(p[1]).toFixed(1)}`).join('');
+    body = `<path d="${d}L${x(real.at(-1)[0]).toFixed(1)},${y(0)}L${x(real[0][0]).toFixed(1)},${y(0)}Z" fill="url(#a${id})"/>`
+      + `<path d="${d}" fill="none" stroke="${color}" stroke-width="2" stroke-linejoin="round"/>`;
+  }
+  return `<svg viewBox="0 0 ${W} ${H}" data-chart="${id}">${grad}${axes}${body}<line class="hair" y1="${T}" y2="${y(0)}" stroke="#8b949e" visibility="hidden"/></svg><div class="cap" id="cap${id}"></div>`;
+}
+function pointAt(svg, clientX) {
+  const c = charts[svg.dataset.chart];
+  const box = svg.getBoundingClientRect();
+  const t = c.from + ((clientX - box.left) / box.width * W - L) / (W - L) * (c.to - c.from);
+  const p = c.pts.filter((q) => q[1] != null).reduce((a, b) => (Math.abs(b[0] - t) < Math.abs(a[0] - t) ? b : a));
+  const hair = svg.querySelector('.hair');
+  const px = L + ((W - L) * (p[0] - c.from)) / Math.max(c.to - c.from, 1) + (c.kind === 'bar' ? ((W - L) / c.pts.length) * 0.31 : 0);
+  hair.setAttribute('x1', px); hair.setAttribute('x2', px); hair.setAttribute('visibility', 'visible');
+  document.getElementById(`cap${svg.dataset.chart}`).textContent = `${c.kind === 'bar' ? c.label(p) : hm(p[0])}　${c.fmt(p[1])}`;
+}
+document.addEventListener('click', async (e) => {
+  const purge = e.target.dataset?.purge;
+  if (purge && confirm(`清除测试账户 ${purge}？\n它的设备、Session 路由和所有数据都会删除，不能恢复；统计里也不再计入它。`)) {
+    const res = await fetch('api/purge', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ account: purge }) }).catch(() => null);
+    if (!(await res?.json().catch(() => null))?.ok) alert(`清除失败（${res ? `HTTP ${res.status}` : '网络错误'}）`);
+    return load();
+  }
+  const name = e.target.dataset?.unblock;
+  if (!name || !confirm(`解除 ${name} 的封禁？`)) return;
+  await fetch('api/unblock', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ account: name }) });
+  load();
+});
+for (const type of ['pointermove', 'pointerdown']) document.addEventListener(type, (e) => { const svg = e.target.closest?.('svg[data-chart]'); if (svg) pointAt(svg, e.clientX); });
+
+const PROBE = ['/api/version', 'REST', 'WebSocket'];
+// Alert subjects (English in the email) for the log.
+const shortId = (id) => `${id.slice(0, 6)}…`;
+const alertText = (s) => [[/^account (\w+) blocked$/, (m) => `账户 ${shortId(m[1])} 已停用`], [/^(\S+) probe failing$/, (m) => `${m[1]} 探测失败`],
+  [/^(\S+) probe recovered$/, (m) => `${m[1]} 已恢复`], [/^error rate spike$/, () => '错误率突增'], [/^monthly cost alert$/, () => '本月费用超过阈值'],
+  [/^usage collection failing$/, () => '用量读取失败'], [/^(?:Free quota|Included usage) (\w+) at (\d+)%$/, (m) => `额度 ${QUOTA[m[1]]?.[0] ?? m[1]} 已达 ${m[2]}%`]]
+  .reduce((out, [re, f]) => out ?? (re.exec(s) && f(re.exec(s))), null) ?? s;
+const COST = { workerRequests: 'Worker 请求', workerCpuMs: 'Worker CPU', doRequests: 'DO 请求', doGbSec: 'DO 时长', rowsRead: 'SQLite 读', rowsWritten: 'SQLite 写',
+  sqlGbMonths: 'SQLite 存储', r2GbMonths: 'R2 存储', r2ClassA: 'R2 A 类操作', r2ClassB: 'R2 B 类操作' };
+// [label, counted per day on Free, format]; Paid counts everything per month, storage is the current size.
+const QUOTA = { workerRequests: ['Worker 请求', 1, n], workerCpuMs: ['Worker CPU 毫秒', 0, n], doRequests: ['DO 请求', 1, n], doGbSec: ['DO 时长 GB·s', 1, n],
+  rowsRead: ['SQLite 读', 1, n], rowsWritten: ['SQLite 写', 1, n], aePoints: ['统计数据点', 1, n], sqlBytes: ['DO 存储', -1, bytes], r2Bytes: ['R2 存储', -1, bytes],
+  r2ClassA: ['R2 A 类操作', 0, n], r2ClassB: ['R2 B 类操作', 0, n] };
+const quotaName = (k, paid) => { const [label, daily] = QUOTA[k] ?? [k, 0]; return daily < 0 ? label : `${label} / ${daily && !paid ? '天' : '月'}`; };
+
+function render(d) {
+  charts.length = 0;
+  const L0 = d.latest ?? {}, live = d.live ?? {}, u = live.users ?? { error: live.error }, series = d.series ?? [], now = d.now;
+  const probes = L0.probes ?? [];
+  const noToken = /ANALYTICS_TOKEN/.test(L0.error ?? '');
+  const relays = Object.values(d.relays ?? {}), age = (r) => (now - r.t) / 6e4, ru = u.relay ?? {};
+  const problems = [...probes.flatMap((p, i) => (p.ok ? [] : [`${PROBE[i]} 不通`])), ...(L0.error && !noToken ? ['用量读取失败'] : []),
+    ...relays.filter((r) => age(r) > 20).map((r) => `中转 ${r.name} 未上报`),
+    ...(live.error && !noToken ? ['实时数据失败'] : [])];
+  const healthy = probes.length && !problems.length;
+  const top = document.getElementById('top');
+  const status = document.getElementById('status');
+  status.innerHTML = `<span class="dot ${healthy ? 'ok' : 'bad'}"></span>${healthy ? '服务正常' : '异常'}`;
+  status.onclick = () => top.classList.toggle('open');
+  document.getElementById('probes').innerHTML = probes.map((p, i) => `<span><span class="dot ${p.ok ? 'ok' : 'bad'}"></span> ${PROBE[i]} ${p.ok ? `${p.ms} ms` : '不通'}</span>`).join('');
+  document.getElementById('meta').textContent = L0.t ? `快照 ${hm(L0.t)} · 每账户月上限 ${usd(d.cap)}` : '尚无快照';
+
+  // 30-day axis for the daily charts.
+  const days = [...Array(30)].map((_, i) => new Date(now - (29 - i) * 864e5).toISOString().slice(0, 10));
+  const byDay = Object.fromEntries((u.daily ?? []).map((r) => [r.day, r]));
+  const daily = (key) => days.map((day, i) => [i, Number(byDay[day]?.[key] ?? 0), md(day)]);
+  const dau = Number(byDay[days[29]]?.dau ?? 0), before = Number(byDay[days[28]]?.dau ?? 0);
+  const quotas = Object.entries(L0.quotas ?? {}).map(([k, [used, limit]]) => [k, used, limit, used / limit]).sort((a, b) => b[3] - a[3]);
+  const c = L0.cost ?? {}, paid = L0.plan === 'paid';
+  const online = L0.online ?? {};
+  const day0 = now - 864e5;
+  const line = (i, opts) => chart('line', series.map((r) => [r[0], r[i]]), { from: Math.max(day0, series[0]?.[0] ?? day0), to: now, ...opts });
+  const up = (w, i) => (d.uptime?.[w]?.n ? [d.uptime[w].v, d.uptime[w].r, d.uptime[w].w][i] / d.uptime[w].n : null);
+  const total = (rows, f) => (rows ?? []).reduce((s, r) => s + f(r), 0);
+  const svcErrors = total(live.service, (r) => r.sum.errors), svcReq = total(live.service, (r) => r.sum.requests);
+  // A WebSocket's client going away ends its upgrade request as an `error`; those are not failures.
+  const doErrors = total(live.objects, (r) => (/Disconnected$/.test(r.dimensions.status) ? 0 : r.sum.errors));
+  const sock = (kind, code) => total(u.conns, (r) => (r.kind === kind && Number(r.code) === code ? Number(r.n) : 0));
+  const pushAll = total(live.push, (r) => r.sum.subrequests), pushOk = total(live.push, (r) => (Number(r.dimensions.httpResponseStatus) === 200 ? r.sum.subrequests : 0));
+  const h = [];
+
+  h.push('<div class="kpis">',
+    kpi('服务状态', healthy ? '正常' : '异常', healthy ? `${probes.map((p) => p.ms).join(' / ')} ms` : `<span style="white-space:normal">${esc(problems.join('、') || '无快照')}</span>`, healthy ? 'ok' : 'bad'),
+    kpi('当前在线', n(online.awake), `账户 ${n(online.awake)} · 连接 ${n(online.sockets)}`),
+    `<div class="card"><div class="big">${n(dau)}</div><div class="label">今日日活 <span title="较昨日" style="color:var(--muted)">${u.error ? '—' : `${dau - before >= 0 ? '+' : ''}${dau - before}`}</span></div>`
+      + kv('今日 App', n(u.devices?.app ?? 0)) + kv('今日 Bridge', n(u.devices?.bridge ?? 0))
+      + kv('累计 App', n(d.devices?.app ?? 0)) + kv('累计 Bridge', n(d.devices?.bridge ?? 0)) + '</div>',
+    `<div class="card"><div class="big">${usd(paid ? c.bill : c.usage)}</div><div class="label">本月费用</div><div class="sub">月底预计 ${usd(paid ? c.projectedBill : c.projectedUsage)}</div>`
+      + (quotas[0] ? `<div class="sub flex"><span style="white-space:normal">${paid ? '最接近免费包含量的项目' : '最接近上限的额度'}</span>${info(paid
+        ? '付费版每月包含用量中，用量占比最高的一项；超出部分按量计费' : '免费套餐各项额度中（多数按天计），用量占比最高的一项')}</div>`
+        + meter(quotas[0][3], `<span>${QUOTA[quotas[0][0]]?.[0] ?? quotas[0][0]}</span>`, pct(quotas[0][3])) : '') + '</div>',
+    '</div>');
+
+  h.push('<div class="grid" style="margin-top:12px">', card(`大陆中转 ${info('流量为中转机入站加出站（Lightsail 的额度口径），达到上限即停止转发、客户端改为直连。账户数为经中转连接过的账户（按 App / Bridge）。日、月均按 UTC，北京时间 08:00 起算。')}`,
+      (relays.length ? relays.map((r) => meter(r.monthBytes / r.cap, `<span>${esc(r.name)} 本月${r.stopped ? ' · <span class="bad">已停止</span>' : ''}</span>`,
+        `${bytes(r.monthBytes)} / ${bytes(r.cap)}`) + kv('今日（UTC）', bytes(r.dayBytes)) + kv('近 24 小时地址', `${n(r.addrs)} 个`)
+        + kv('上次上报', `<span class="${age(r) > 15 ? 'warn' : ''}">${n(age(r))} 分钟前</span>`)).join('') : NA('尚无上报'))
+        + kv('经中转账户 · 今日（UTC）', `App ${n(ru.day?.app ?? 0)} · Bridge ${n(ru.day?.bridge ?? 0)}`)
+        + kv('经中转账户 · 本月', `App ${n(ru.month?.app ?? 0)} · Bridge ${n(ru.month?.bridge ?? 0)}`)), '</div>');
+
+  h.push('<h2>用户</h2><div class="grid">',
+    card('活跃用户', `<div class="trio"><div><div class="big">${n(u.dau)}</div><div class="label">日活</div></div><div><div class="big">${n(u.wau)}</div><div class="label">周活</div></div>`
+      + `<div><div class="big">${n(u.mau)}</div><div class="label">月活</div></div></div>${u.error ? NA(noToken ? '未设置分析令牌' : esc(u.error)) : chart('bar', daily('dau'), { from: 0, to: 30 })}`, '近 30 天'),
+    card(`当前在线 ${info('账户：5 分钟内有活动的账户（Bridge 每 4 分钟心跳）。连接数：App、Bridge 与 Android 通知的连接合计，分析数据分不出类型。趋势为在线账户。')}`,
+      `<div class="trio" style="grid-template-columns:1fr 1fr"><div><div class="big">${n(online.awake)}</div><div class="label">账户</div></div>`
+      + `<div><div class="big">${n(online.sockets)}</div><div class="label">连接数</div></div></div>${line(2, { color: '#3fb950' })}`, '近 24 小时'),
+    card(`使用时长 ${info('今日：今天已断开的 App 连接时长（抽样估算，断开时计入）。人均：近 7 天每个活跃账户每天的 App 连接时长。')}`,
+      `<div class="trio" style="grid-template-columns:1fr 1fr"><div><div class="big">${dur(u.todaySecs)}</div><div class="label">今日总计</div></div>`
+      + `<div><div class="big">${u.avgDailySecs == null ? '—' : dur(u.avgDailySecs)}</div><div class="label">人均每日</div></div></div>`
+      + chart('bar', daily('new'), { from: 0, to: 30, color: '#3fb950' }) + '<div class="sub">每日新账户</div>'),
+    card('国家/地区', bars(u.countries), '近 30 天'), card('运营商', bars(u.networks), '近 30 天'), card('平台', bars(u.platforms), '近 30 天'),
+    card('Bridge 版本', bars((u.bridges ?? []).map((r) => [`${r.version || '未知'} · ${r.os || '?'}`, Number(r.n)])), '今日'),
+    '</div>');
+
+  h.push('<h2>服务</h2><div class="grid">',
+    card('可用性', `<table><tr><th>探测</th><th class="n">今日</th><th class="n">7 天</th><th class="n">最新</th></tr>${PROBE.map((name, i) => {
+      const t = up('today', i);
+      return `<tr><td>${name}</td><td class="n ${t != null && t < 0.99 ? 'bad' : ''}">${pct(t)}</td><td class="n">${pct(up('week', i))}</td><td class="n">${probes[i] ? (probes[i].ok ? `${probes[i].ms} ms` : '<span class="bad">不通</span>') : '—'}</td></tr>`;
+    }).join('')}</table>`, '每 5 分钟'),
+    ...PROBE.map((name, i) => card(`延迟 · ${name}`, line(3 + i, { fmt: (v) => `${Math.round(v)} ms` }), probes[i]?.ok ? `${probes[i].ms} ms` : '')),
+    card(`错误 ${info('Worker 错误与请求为近 24 小时；趋势为每次快照的近 15 分钟 Worker 错误数。4401/4403 为抽样估算。')}`,
+      `<div class="trio"><div><div class="big ${svcErrors ? 'bad' : ''}">${n(svcErrors)}</div><div class="label">Worker 错误</div></div>`
+      + `<div><div class="big">${n(doErrors)}</div><div class="label">DO 错误</div></div><div><div class="big">${n(live.cpu?.exceededCpuErrors)}</div><div class="label">CPU 超限</div></div></div>`
+      + line(7, { color: '#f85149' }) + `<div class="sub">错误率 ${pct(svcReq ? svcErrors / svcReq : 0)} · 4401 ${n(sock('reject', 4401))} · 4403 ${n(sock('reject', 4403))}</div>`, '近 24 小时'),
+    card(`推送 ${info('iOS 推送：中转对 APNs 的每次请求，按 APNs 返回码计；失败含重试。')}`, pushAll ? `<div class="big ${pushOk / pushAll < 0.95 ? 'warn' : 'ok'}">${pct(pushOk / pushAll)}</div><div class="label">成功率</div><div class="sub">成功 ${n(pushOk)} · 失败 ${n(pushAll - pushOk)}</div>`
+      : NA('近 24 小时无推送'), '近 24 小时'),
+    card('请求来源', bars(live.countries) + `<div class="sub">${(live.devices ?? []).map(([k, v]) => `${{ desktop: '桌面', mobile: '手机', tablet: '平板' }[k] ?? k} ${n(v)}`).join(' · ')}</div>`, '近 24 小时'),
+'</div>');
+
+  h.push('<h2>费用与额度</h2>');
+  if (L0.error) h.push(`<div class="err">${noToken ? '未设置分析令牌 ANALYTICS_TOKEN：用量、费用和封禁上限暂停，探测照常。请在 Cloudflare 控制台添加。' : `用量读取失败：${esc(L0.error)}`}</div>`);
+  h.push('<div class="grid">',
+    card(`费用构成 ${info('按 Workers 付费版公开单价计算，未扣除免费/包含用量。')}`, `<div class="trio" style="grid-template-columns:1fr 1fr"><div><div class="big">${usd(c.usage)}</div><div class="label">本月至今</div></div>`
+      + `<div><div class="big">${usd(c.projectedUsage)}</div><div class="label">月底预计</div></div></div>`
+      + bars(Object.entries(c.items ?? {}).sort((a, b) => b[1] - a[1]).map(([k, v]) => [COST[k] ?? k, v]), { top: 10, fmt: usd })
+      + `<div class="sub">${paid ? '账单' : '付费版账单约'} ${usd(c.bill)}（$5 + 超出包含量部分）</div>`),
+    card(paid ? '付费版包含量' : '免费额度', quotas.length ? quotas.map(([k, used, limit, share]) => `<div class="row"><span class="name">${quotaName(k, paid)}</span>`
+      + `<div class="track"><div class="fill ${level(share)}" style="width:${Math.max(2, Math.min(100, share * 100))}%"></div></div><span class="num">${pct(share)}</span></div>`
+      + `<div class="sub" style="margin:-4px 0 8px">${(QUOTA[k]?.[2] ?? n)(used)} / ${(QUOTA[k]?.[2] ?? n)(limit)}</div>`).join('') : NA()),
+    card(`账户费用 Top 10 ${info('本月至今，按账户的 Durable Object 用量估算；超过上限的账户封禁到下月 1 日。')}`,
+      (L0.accounts ?? []).length ? L0.accounts.map((a, i) => `<div class="row account"><span class="name">${i + 1}. <code>${esc(a.name)}</code>${d.blocked?.[a.name] ? ' <span class="bad">已封禁</span>' : ''}</span>`
+        + `<div class="track"><div class="fill ${level(a.capCost / d.cap)}" style="width:${Math.max(2, Math.min(100, (100 * a.capCost) / d.cap))}%"></div></div><span class="num">${usd(a.cost)}</span>`
+        + `${a.name === d.probe ? '<span></span>' : `<button class="mini" data-purge="${esc(a.name)}" type="button" title="${esc(a.name)}">清除</button>`}</div>`).join('')
+        + `<div class="sub">条长 = 计入上限的费用 / ${usd(d.cap)}</div>` : NA(), '本月'),
+    card('已封禁账户', Object.keys(d.blocked ?? {}).length ? Object.entries(d.blocked).map(([k, b]) => `<div class="line blocked"><code title="${esc(k)}">${esc(k)}</code>`
+      + `<span>${usd(b.cost)}</span><span class="sub" style="margin:0">至 ${new Date(b.until).toISOString().slice(5, 10).replace('-', '/')}</span>`
+      + `<button class="mini" data-unblock="${esc(k)}" type="button">解除</button></div>`).join('') : NA('无')),
+    card('存储', bars([['R2 文件', L0.storage?.r2Bytes], ['DO SQLite', L0.storage?.sqlBytes]], { fmt: bytes }) + `<div class="sub">R2 对象 ${n(L0.storage?.r2Objects)} 个</div>`),
+    card('告警记录', (d.alerts ?? []).length ? d.alerts.slice(0, 10).map((a) => {
+      const sent = a.result === 'sent', skipped = /^(test|no email)/.test(a.result ?? '');
+      return `<div class="line alerts"><span class="when">${new Date(a.t).toISOString().slice(5, 16).replace('-', '/').replace('T', '<br>')}</span>`
+        + `<span title="${esc(a.subject)}">${esc(alertText(a.subject))}</span><span class="${sent ? 'ok' : skipped ? 'sub' : 'bad'}" style="margin:0">${sent ? '已发送' : skipped ? '未发送' : '失败'}</span></div>`;
+    }).join('') : NA('无')),
+    '</div>');
+  document.getElementById('main').innerHTML = h.join('');
+}
+
+async function load() {
+  try {
+    const res = await fetch('api/data', { cache: 'no-store' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    render(await res.json());
+  } catch (error) {
+    document.getElementById('meta').textContent = `加载失败：${error.message}`;
+  }
+}
+load();
+setInterval(() => document.visibilityState === 'visible' && load(), 60_000);
+</script>
+</body>
+</html>

@@ -1,8 +1,8 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "macos-tabs",
-  "description": "Tab strip in the macOS titlebar row: drag and double-click the window",
-  "platforms": ["macOS"],
+  "description": "Tab strip in the titlebar row (macOS, Windows): drag and double-click the window",
+  "platforms": ["macOS", "windows"],
   "windows": ["main", "peek-*"],
   "permissions": [
     "core:window:allow-start-dragging",

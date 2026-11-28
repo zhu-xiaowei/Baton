@@ -1,7 +1,7 @@
 import { state } from '../state.js';
 import { layoutPixels } from '../page-zoom.js';
 import { loadingSpinner } from './loading.js';
-import { observeToolDetails, loadToolDetails, toolDetailsSource } from '../tool-details.js';
+import { observeToolDetails, loadToolDetails, loadToolPreviews, toolDetailsSource } from '../tool-details.js';
 
 // Tool rendering: Bash, Read, Edit, Write, Grep, Glob, etc.
 (function () {
@@ -551,6 +551,7 @@ import { observeToolDetails, loadToolDetails, toolDetailsSource } from '../tool-
 
   window.initializeToolDetails = function (node) {
     if (!node) return Promise.resolve();
+    window.loadImages?.(node);
     return Promise.all(Array.from(node.querySelectorAll('.diff-container[data-diff-key]'))
       .map((element) => initializeDiffElement(element)));
   };
@@ -606,8 +607,10 @@ import { observeToolDetails, loadToolDetails, toolDetailsSource } from '../tool-
       const diffKey = registerDiffSpec(file, fullPath, oldStr, newStr);
       diffHtml = `<div class="diff-container" data-diff-key="${diffKey}"></div>`;
     }
+    // A deleted file has no text on either side: the result says what happened.
+    const outcome = !oldStr && !newStr && resultText(result).trim() ? grid([['OUT', esc(resultText(result))]]) : '';
 
-    return { name: 'Edit', desc: file, fileLink: fullPath, body: diffHtml,
+    return { name: 'Edit', desc: file, fileLink: fullPath, body: diffHtml || outcome,
       status: /^Created\b/i.test(resultText(result).trim()) ? 'Created' : '' };
   }
 
@@ -677,10 +680,10 @@ import { observeToolDetails, loadToolDetails, toolDetailsSource } from '../tool-
     let statsHtml = '';
     if (meta) {
       const secs = Math.round((meta.totalDurationMs || 0) / 1000);
-      const calls = meta.totalToolUseCount || 0;
-      // Background agent launches with 0/0 stats (meaningless) — only show real counts.
+      const calls = meta.totalToolUseCount;
+      // Background agent launches with 0/0 stats (meaningless) — only show real counts; Kiro/Hermes give no count.
       if (calls > 0 || secs > 0) {
-        statsHtml = `<span class="tool-status">${calls} tool calls, ${secs}s</span>`;
+        statsHtml = `<span class="tool-status">${Number.isFinite(calls) ? `${calls} tool calls, ` : ''}${secs}s</span>`;
       }
     } else if (!result) {
       // No result yet — show running timer with tool_use id for later update
@@ -707,17 +710,35 @@ import { observeToolDetails, loadToolDetails, toolDetailsSource } from '../tool-
     };
   }
 
-  // Generic fallback
+  const PLUG_SVG = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 2v3M10 2v3M4.5 5h7v2.5a3.5 3.5 0 01-7 0zM8 11v3"/></svg>';
+  const KEY_ARGS = ['title', 'name', 'path', 'query', 'url'];
+
+  function compactValue(value, nested) {
+    if (Array.isArray(value)) return value.map(item => compactValue(item, true)).join(', ');
+    if (value && typeof value === 'object') {
+      const text = Object.entries(value).map(([key, item]) => `${key}: ${compactValue(item, true)}`).join(', ');
+      return nested ? `{${text}}` : text;
+    }
+    return String(value);
+  }
+
+  // Generic fallback: source badge + name + one key argument; the input as key/value rows.
   function renderGeneric(name, input, result) {
+    const mcp = /^mcp__(.+?)__(.+)$/.exec(name);
+    const entries = Object.entries(input || {});
+    const key = KEY_ARGS.find(k => typeof input?.[k] === 'string' && input[k]);
+    const arg = key ? input[key] : entries.map(([, v]) => v).find(v => typeof v === 'string' && v.length <= 80);
     // Cancelled ask/plan: show a clean [Interrupted] instead of CC's long rejection text.
     var out = result != null ? resultText(result) : null;
     if (out != null && out.indexOf(CANCEL_MARK) !== -1) out = '[Interrupted]';
+    const kv = entries.map(([k, v]) => `<span>${esc(k)}</span><span>${esc(compactValue(v))}</span>`).join('');
     return {
-      name,
-      desc: truncate(JSON.stringify(input), 80),
+      name: mcp ? mcp[2] : name,
+      badge: mcp?.[1],
+      desc: truncate(arg, 80),
       body: grid([
-        ['IN', esc(JSON.stringify(input, null, 2))],
-        out != null ? ['OUT', ansiHtml(out)] : null,
+        kv ? ['IN', `<div class="tool-kv">${kv}</div>`] : null,
+        out != null && (out || !resultImages(result)) ? ['OUT', ansiHtml(out)] : null,
       ]),
     };
   }
@@ -728,20 +749,13 @@ import { observeToolDetails, loadToolDetails, toolDetailsSource } from '../tool-
     return server && tool ? { server, tool } : null;
   }
 
+  // Codex keeps its Called/Calling header (its run group folds different tools under it).
   function renderCodexMcp(input, result) {
     const invocation = codexMcpInfo(input, result);
     const visibleInput = Object.fromEntries(
       Object.entries(input || {}).filter(([key]) => !key.startsWith('codexMcp')),
     );
-    const out = result != null ? resultText(result) : null;
-    return {
-      name: result ? 'Called' : 'Calling',
-      desc: invocation ? `${invocation.server}.${invocation.tool}` : '',
-      body: grid([
-        ['IN', esc(JSON.stringify(visibleInput, null, 2))],
-        out != null ? ['OUT', ansiHtml(out)] : null,
-      ]),
-    };
+    return { ...renderGeneric(invocation.tool, visibleInput, result), desc: `${invocation.server}.${invocation.tool}` };
   }
 
   function renderWebSearch(input) {
@@ -771,10 +785,18 @@ import { observeToolDetails, loadToolDetails, toolDetailsSource } from '../tool-
     ).join('')}</div>`;
   }
 
+  // Images a tool returned (Read of a png, an MCP screenshot), shown like message images; one gallery per card.
+  function resultImages(result) {
+    const images = Array.isArray(result?.content) ? result.content.filter(b => b?.type === 'image' && b.key) : [];
+    return images.length ? `<div class="msg-attachments tool-images">${images.map(b => `<span class="img-placeholder markdown-image" data-key="${esc(b.key)}" data-alt="">`
+      + `${window.loadingSpinner?.({ label: 'Loading image' }) || ''}</span>`).join('')}</div>` : '';
+  }
+
   // Extract text from tool_result content
   function resultText(result) {
     if (!result) return '';
     const c = result.content;
+    if (c == null) return ''; // a history page leaves truncated bodies out
     if (typeof c === 'string') return c;
     if (Array.isArray(c)) return c.map(b => b.text || '').join('');
     return JSON.stringify(c);
@@ -868,23 +890,58 @@ import { observeToolDetails, loadToolDetails, toolDetailsSource } from '../tool-
     }
   };
 
-  window.toggleToolDetails = function (header) {
+  window.toggleToolDetails = async function (header) {
     const selection = window.getSelection?.();
     if (selection?.toString()) return;
     const node = header?.closest('.tool-node');
     if (!node) return;
-    if (header.hasAttribute('data-edit-details')
-      && !toolDetailsSource(node.dataset.toolId)?.full) {
-      return window.loadToolDetailsMore(header, true);
-    }
-    const collapsed = !node.classList.contains('tool-details-collapsed');
+    // A body the history page left out is loaded first; the member opens once it arrives.
+    const unloaded = (member) => member.querySelector(':scope > .tool-header')?.hasAttribute('data-edit-details')
+      && !toolDetailsSource(member.dataset.toolId)?.full;
+    const collapsed = !unloaded(node) && !node.classList.contains('tool-details-collapsed');
     const groupId = node.dataset.toolDetailsGroup;
     const root = node.closest('.messages') || document;
     const members = groupId
       ? Array.from(root.querySelectorAll('[data-tool-details-group]'))
         .filter((candidate) => candidate.dataset.toolDetailsGroup === groupId)
       : [node];
+    // Bodies the history page left out come first as previews, all in one request: only the clicked
+    // row shows the spinner, and the rows open once the previews are here. Edit loads its diff.
+    const previews = collapsed ? [] : members.filter((member) => unloaded(member)
+      && toolDetailsSource(member.dataset.toolId)?.toolUse?.name !== 'Edit');
+    if (previews.length) {
+      if (header.getAttribute('aria-busy') === 'true') return;
+      const requestedSession = state.wsSessionId;
+      const requestedDevice = state.appState.device;
+      const indicator = document.createElement('span');
+      indicator.className = 'tool-detail-loading';
+      indicator.innerHTML = loadingSpinner({ size: 'small' });
+      header.setAttribute('aria-busy', 'true');
+      header.append(indicator);
+      node.querySelector('.tool-detail-error')?.remove();
+      try {
+        await loadToolPreviews(previews.map((member) => member.dataset.toolId));
+      } catch (error) {
+        header.insertAdjacentHTML('afterend', '<div class="tool-detail-error">'
+          + esc(error.message || 'Unable to load details. Click to retry.') + '</div>');
+        return;
+      } finally {
+        header.removeAttribute('aria-busy');
+        indicator.remove();
+      }
+      if (requestedSession !== state.wsSessionId || requestedDevice !== state.appState.device || !node.isConnected) return;
+      for (const member of previews) {
+        const source = toolDetailsSource(member.dataset.toolId);
+        if (source?.preview) member.innerHTML = window.renderToolNode(source.toolUse, source.toolResult, state.appState.runtime, { collapsed: true });
+      }
+      window.markToolRunGroups?.(root);
+    }
+    const loads = [];
     for (const member of members) {
+      if (!collapsed && unloaded(member)) {
+        loads.push(window.loadToolDetailsMore(member.querySelector(':scope > .tool-header'), true));
+        continue;
+      }
       window.setToolDetailsCollapsed(member, collapsed);
       if (!collapsed) {
         Promise.resolve(window.initializeToolDetails?.(member))
@@ -894,6 +951,7 @@ import { observeToolDetails, loadToolDetails, toolDetailsSource } from '../tool-
     if (groupId) {
       window.setToolRunGroupCollapsed?.(groupId, collapsed, root);
     }
+    return Promise.all(loads);
   };
 
   window.loadToolDetailsMore = async function (button, edit = false) {
@@ -912,7 +970,11 @@ import { observeToolDetails, loadToolDetails, toolDetailsSource } from '../tool-
     else button.innerHTML = indicator.innerHTML;
     node.querySelector('.tool-detail-error')?.remove();
     try {
-      await loadToolDetails(toolId);
+      // An Edit draws its diff right after loading: fetching the viewer meanwhile takes the card from
+      // collapsed to its diff without frames in between (Safari painted one of them wrong).
+      const file = edit ? toolDetailsSource(toolId)?.toolUse?.input?.file_path : '';
+      await Promise.all([loadToolDetails(toolId), edit && window.loadDiffViewer?.()?.catch(() => {}),
+        file && window.loadHljsLanguage?.(detectLang(file))?.catch(() => {})]);
       if (requestedSession !== state.wsSessionId || requestedDevice !== state.appState.device) return;
       node = Array.from(document.querySelectorAll('.messages [data-tool-id]'))
         .find((member) => member.dataset.toolId === toolId);
@@ -934,10 +996,13 @@ import { observeToolDetails, loadToolDetails, toolDetailsSource } from '../tool-
       await window.initializeToolDetails?.(node);
       if (edit) window.setToolDetailsCollapsed(node, false);
       window.clampOverflow?.(node);
-      const body = node.querySelector('.tool-body-content');
-      const more = body?.querySelector('.clamp-btn');
-      if (more) window.toggleExpand?.(more.parentElement);
-      else body?.classList.add('open');
+      // Opening an Edit shows its diff at the collapsed height like any tool; Show more opens it fully.
+      if (!edit) {
+        const body = node.querySelector('.tool-body-content');
+        const more = body?.querySelector('.clamp-btn');
+        if (more) window.toggleExpand?.(more.parentElement);
+        else body?.classList.add('open');
+      }
     } catch (error) {
       if (node?.isConnected && requestedSession === state.wsSessionId
         && requestedDevice === state.appState.device) {
@@ -972,6 +1037,9 @@ import { observeToolDetails, loadToolDetails, toolDetailsSource } from '../tool-
     const editRemote = name === 'Edit' && !toolResult?.is_error
       && (source?.toolUse.truncated === true || source?.toolResult?.truncated === true);
     const editPending = editRemote && !source?.full;
+    // A history page carries no truncated tool body: expanding loads it first, as Edit does
+    // (data-edit-details marks every such header).
+    const remoteDetails = editRemote || (toolResult?.truncated === true && !Object.hasOwn(toolResult, 'content'));
     const codexMcp = runtime === 'codex' && codexMcpInfo(input, toolResult);
     const detailPolicy = window.getToolDetailPolicy(runtime);
     const requestedDetailsCollapsed = detailPolicy.enabled && !!options.collapsed;
@@ -997,6 +1065,7 @@ import { observeToolDetails, loadToolDetails, toolDetailsSource } from '../tool-
       ? renderCodexMcp(input, toolResult)
       : (dispatchers[name] || (() => renderGeneric(name, input, toolResult)))();
     if (runtime === 'codex') info.name = codexToolName(name, input, toolResult);
+    const imagesHtml = resultImages(toolResult);
     // Store state as data attr for CSS (render.js adds .error/.warning to tl-item)
     window._lastToolState = toolState(toolResult, name);
 
@@ -1022,7 +1091,7 @@ import { observeToolDetails, loadToolDetails, toolDetailsSource } from '../tool-
           <div class="tool-body-content${clampClass}" id="${id}"${truncated ? ' data-tool-preview="true"' : ''} ${noClamp ? '' : `onclick="toggleExpand(this)"`}>${info.body || ''}${previewMore}</div>
         </div>`
       : '';
-    const detailsEnabled = detailPolicy.enabled && (!!info.body || truncated || editPending);
+    const detailsEnabled = detailPolicy.enabled && (!!info.body || truncated || editPending || !!imagesHtml);
     const detailsCollapsed = detailsEnabled && (requestedDetailsCollapsed || editPending);
     window._lastToolHasDetails = detailsEnabled;
     const baseHeaderClass = detailsEnabled
@@ -1030,7 +1099,7 @@ import { observeToolDetails, loadToolDetails, toolDetailsSource } from '../tool-
       : (info.expandDesc ? 'tool-header expandable-desc' : 'tool-header');
     const headerAttrs = detailsEnabled
       ? ` role="button" tabindex="0" aria-expanded="${String(!detailsCollapsed)}"${truncated ? ' data-tool-preview="true"' : ''}
-        ${editRemote ? 'data-edit-details="true"' : ''}
+        ${remoteDetails ? 'data-edit-details="true"' : ''}
         onclick="toggleToolDetails(this)"
         onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleToolDetails(this)}"`
       : info.expandDesc
@@ -1044,11 +1113,12 @@ import { observeToolDetails, loadToolDetails, toolDetailsSource } from '../tool-
 
     return `<div class="${baseHeaderClass}"${headerAttrs}>
         ${chevronHtml}
+        ${info.badge ? `<span class="tool-source">${PLUG_SVG}${esc(info.badge)}</span>` : ''}
         <span class="tool-name">${esc(info.name)}</span>
         ${descHtml}
         ${elevatedHtml}
         ${statusHtml}
       </div>
-      ${bodyHtml}`;
+      ${bodyHtml}${imagesHtml}`;
   };
 })();

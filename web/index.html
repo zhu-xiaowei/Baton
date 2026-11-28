@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<meta name="baton-api" content="">
 <script src="/theme-init.js"></script>
 <link rel="stylesheet" href="css/themes/dark.css">
 <link rel="stylesheet" href="css/themes/light.css">
@@ -49,8 +50,9 @@
   #top-right.syncing .new-session-btn::after{content:"";position:absolute;left:3px;top:3px;box-sizing:border-box;width:22px;height:22px;border:1.5px solid currentColor;border-top-color:transparent;border-radius:50%;animation:apk-spin .7s linear infinite;pointer-events:none}
   .runtime-mark{display:inline-flex;width:16px;height:16px;flex:0 0 16px;align-items:center;justify-content:center;vertical-align:middle}
   .runtime-icon{display:block;width:16px;height:16px;object-fit:contain}
-  .runtime-mark-codex{position:relative}.runtime-mark-codex .runtime-icon{visibility:hidden}.runtime-mark-codex::before{content:"";position:absolute;left:50%;top:50%;width:16px;height:16px;background:var(--text-muted);transform:translate(-50%,-50%);-webkit-mask:var(--runtime-codex-image,url("assets/codex.svg")) center/contain no-repeat;mask:var(--runtime-codex-image,url("assets/codex.svg")) center/contain no-repeat;transition:background .15s}
-  @media(hover:hover) and (pointer:fine){#top-right>.runtime-mark-codex:hover::before,.runtime-switch:hover .runtime-mark-codex::before{background:var(--text-primary)}}
+  .runtime-mark-mono{position:relative}.runtime-mark-mono .runtime-icon{visibility:hidden}.runtime-mark-mono::before{content:"";position:absolute;left:50%;top:50%;width:16px;height:16px;background:var(--text-primary);transform:translate(-50%,-50%);-webkit-mask:var(--runtime-mask) center/contain no-repeat;mask:var(--runtime-mask) center/contain no-repeat;transition:background .15s}
+  .runtime-mark-svg{color:var(--text-primary)}
+  @media(hover:hover) and (pointer:fine){#top-right>.runtime-mark-mono:hover::before,.runtime-switch:hover .runtime-mark-mono::before{background:var(--text-primary)}}
   html.native-mobile .top-bar{min-height:calc(var(--sat,env(safe-area-inset-top,0px)) + 44px);padding:var(--sat,env(safe-area-inset-top,0px)) 8px 0 12px;border-bottom:0;box-shadow:inset 0 -1px var(--border)}
   html.native-mobile .top-left{min-height:44px;gap:6px;font-size:17px;line-height:21px}
   html.native-mobile .top-logo{width:20px;height:21px;line-height:21px;flex:0 0 20px;margin-right:0}
@@ -62,8 +64,8 @@
   html.native-mobile .new-session-btn svg{width:26px;height:26px;padding:4px;border-width:1.5px}
   html.native-mobile #top-right .runtime-mark,html.native-mobile #top-right .runtime-icon{width:24px;height:24px}
   html.native-mobile #top-right .runtime-mark{flex-basis:24px}
-  #top-right .runtime-mark-codex::before{width:22px;height:22px}
-  html.native-mobile #top-right .runtime-mark-codex::before{width:24px;height:24px;transform:translate(-50%,-50%)}
+  #top-right .runtime-mark-mono::before{width:22px;height:22px}
+  html.native-mobile #top-right .runtime-mark-mono::before{width:24px;height:24px;transform:translate(-50%,-50%)}
   html.native-mobile #top-right>.runtime-mark{width:44px;height:44px;flex-basis:44px}
   html.native-mobile #top-right.syncing .new-session-btn::after{left:9px;top:9px;width:26px;height:26px;border-width:1.5px}
   .breadcrumb{display:none;flex-shrink:0}
@@ -76,24 +78,23 @@
      entry-index.js loads in parallel (browser default for type=module) and takes over interactivity. -->
 <script>
 (function () {
-  // Start URL shortcut: any ?t=<token> or ?key=<key> belongs on landing.html
-  // (where the exchange + login flow lives). Forward the query immediately,
+  // Start URL shortcut: any ?t=<token> or ?key=<key>, and pairing links (#j= / #c=), belong on
+  // landing.html (where the exchange + login flow lives). Forward them immediately,
   // before reading credentials, so links work whether or not user is signed in.
-  if (/[?&](t|key)=/.test(location.search)) {
-    location.replace('landing.html' + location.search);
+  if (/[?&](t|key)=/.test(location.search) || /^#[jc]=/.test(location.hash)) {
+    location.replace('landing.html' + location.search + location.hash);
     return;
   }
   var key = '';
   try { key = atob(localStorage.getItem('_ak') || ''); } catch (e) {}
   if (!key) { location.replace('landing.html'); return; }
-  var server = (localStorage.getItem('_as') || (location.origin + location.pathname.replace(/\/[^/]*$/, ''))).replace(/\/$/, '');
-  var hdr = { 'x-api-key': key };
 
-  // Fire both requests immediately (network flies out before any other JS loads).
-  window.__preload = {
-    active: fetch(server + '/api/bridge/active-sessions', { headers: hdr }).then(function (r) { return r.ok ? r.json() : null; }).catch(function () { return null; }),
-    devices: fetch(server + '/api/bridge/devices', { headers: hdr }).then(function (r) { return r.ok ? r.json() : null; }).catch(function () { return null; })
+  // The home is answered through each Bridge by api.js, which resolves __apiReady when loaded.
+  window.__apiReady = window.__apiReady || new Promise(function (resolve) { window.__resolveApiReady = resolve; });
+  var viaApi = function (name) {
+    return window.__apiReady.then(function () { return window[name](); }).catch(function () { return null; });
   };
+  window.__preload = { active: viaApi('bridgeHome'), devices: viaApi('bridgeDevices') };
 
   // SWR home cache (fixed key, cleared by api.js on logout/key change). Stores raw responses with ISO timestamps so timeAgo() recomputes correctly next open; also drives the compare-skip.
   var CACHE_KEY = 'apeek_home_cache';
@@ -102,13 +103,10 @@
   var collapsedRecentProjects = new Set();
   var recentTimeObserver = null;
   var allRecentProjects = false;
-  var loadingRecentProjects = false;
+  var homeLoading = false;
   var homeActiveData = null;
   var homeDeviceData = null;
   var homeLoadVersion = 0;
-  window.__homeActiveParams = function () {
-    return allRecentProjects ? { allProjects: true } : undefined;
-  };
   function readCache() {
     try { return JSON.parse(localStorage.getItem(CACHE_KEY) || 'null'); } catch (e) { return null; }
   }
@@ -120,8 +118,9 @@
     var topRight = document.getElementById('top-right');
     if (!topRight) return;
     topRight.classList.toggle('syncing', syncing);
-    var legacyGear = topRight.querySelector('.top-gear.syncing');
-    if (legacyGear) legacyGear.classList.remove('syncing');
+    // The gear spins from the static HTML until the first sync settles.
+    var gear = topRight.querySelector('.top-gear.syncing');
+    if (gear) gear.classList.remove('syncing');
   }
   function stopSync() {
     setSync(false);
@@ -191,7 +190,10 @@
         try { return decodeURIComponent(label); } catch (error) { return reference; }
       });
   }
-  var runtimeIconCacheKey = 'baton-runtime-icons-v1';
+  var runtimeIconCacheKey = 'baton-runtime-icons-v4';
+  // Mirrors js/runtimes.js (id: [label, icon file, mono]); this script runs before modules load.
+  var runtimeIconTable = { claude: ['Claude Code', 'claude-code.svg'], codex: ['Codex', 'codex.svg', 1], opencode: ['OpenCode', 'runtime-opencode.svg', 1],
+    dsh: ['DeepSeek Harness', 'runtime-dsh.svg'], hermes: ['Hermes', 'runtime-hermes.svg', 1], pi: ['Pi', 'runtime-pi.svg'], kiro: ['Kiro', 'runtime-kiro.svg'] };
   var runtimeIconCache = {};
   var runtimeIconPending = {};
   function validRuntimeSvg(svg) {
@@ -199,23 +201,31 @@
   }
   try {
     var savedIcons = JSON.parse(sessionStorage.getItem(runtimeIconCacheKey) || '{}');
-    ['claude', 'codex'].forEach(function (runtime) {
+    Object.keys(runtimeIconTable).forEach(function (runtime) {
       if (savedIcons && validRuntimeSvg(savedIcons[runtime])) runtimeIconCache[runtime] = savedIcons[runtime];
     });
   } catch (e) {}
   function runtimeIconSource(runtime) {
     var svg = runtimeIconCache[runtime];
     return svg ? 'data:image/svg+xml,' + encodeURIComponent(svg)
-      : './assets/' + (runtime === 'codex' ? 'codex.svg' : 'claude-code.svg');
+      : './assets/' + (runtimeIconTable[runtime] || runtimeIconTable.claude)[1];
   }
   window.__runtimeIconSource = runtimeIconSource;
-  if (runtimeIconCache.codex) {
-    document.documentElement.style.setProperty('--runtime-codex-image', 'url("' + runtimeIconSource('codex') + '")');
+  // Mono marks are inlined once their SVG is cached: a CSS mask on a fresh node paints a frame late.
+  function runtimeIconSvg(runtime) {
+    var svg = runtimeIconTable[runtime] && runtimeIconTable[runtime][2] && runtimeIconCache[runtime];
+    return svg ? svg.replace(/(fill|stroke)="#[0-9a-f]{3,8}"/gi, '$1="currentColor"')
+      .replace(/^<svg\s/, '<svg class="runtime-icon" fill="currentColor" aria-hidden="true" focusable="false" ') : '';
+  }
+  window.__runtimeIconSvg = runtimeIconSvg;
+  function markRuntime(image) {
+    var mark = image.closest('.runtime-mark');
+    return mark && runtimeIconTable[mark.dataset.runtime] ? mark.dataset.runtime : 'claude';
   }
   document.addEventListener('load', function (event) {
     var image = event.target;
     if (image.tagName !== 'IMG' || !image.classList.contains('runtime-icon')) return;
-    var runtime = image.closest('.runtime-mark-codex') ? 'codex' : 'claude';
+    var runtime = markRuntime(image);
     if (runtimeIconCache[runtime] || runtimeIconPending[runtime]) return;
     runtimeIconPending[runtime] = true;
     fetch(image.currentSrc || image.src, { cache: 'force-cache' }).then(function (response) {
@@ -229,10 +239,14 @@
     });
   }, true);
   function runtimeIcon(s) {
-    var runtime = String(s.sessionId || '').indexOf('codex:') === 0 ? 'codex' : 'claude';
-    var label = runtime === 'codex' ? 'Codex' : 'Claude Code';
-    return '<span class="runtime-mark' + (runtime === 'codex' ? ' runtime-mark-codex' : '') + '" role="img" aria-label="' + label + '" title="' + label + '">'
-      + '<img class="runtime-icon" width="16" height="16" decoding="sync" src="' + esc(runtimeIconSource(runtime)) + '" alt="" aria-hidden="true"></span>';
+    var prefix = String(s.sessionId || '').split(':')[0];
+    var runtime = runtimeIconTable[prefix] ? prefix : 'claude';
+    var label = runtimeIconTable[runtime][0];
+    var svg = runtimeIconSvg(runtime);
+    if (svg) return '<span class="runtime-mark runtime-mark-svg" data-runtime="' + runtime + '" role="img" aria-label="' + label + '" title="' + label + '">' + svg + '</span>';
+    var src = esc(new URL(runtimeIconSource(runtime), document.baseURI).href);
+    return '<span class="runtime-mark' + (runtimeIconTable[runtime][2] ? ' runtime-mark-mono" style="--runtime-mask:url(&quot;' + src + '&quot;)' : '') + '" data-runtime="' + runtime + '" role="img" aria-label="' + label + '" title="' + label + '">'
+      + '<img class="runtime-icon" width="16" height="16" decoding="sync" src="' + src + '" alt="" aria-hidden="true"></span>';
   }
 
   function fitRecentTimeColumn() {
@@ -265,65 +279,31 @@
     }
   }
 
-  function moreProjectsControl() {
-    return '<button class="recent-projects-show-more' + (loadingRecentProjects ? ' recent-projects-loading' : '')
-      + '" type="button" data-show-more-projects' + (loadingRecentProjects ? ' disabled aria-busy="true"' : '') + '>'
-      + (loadingRecentProjects ? 'Loading…' : 'Show more') + '</button>';
+  function moreProjectsControl(less) {
+    return '<button class="recent-projects-show-more" type="button" data-show-more-projects' + (homeLoading ? ' disabled' : '') + '>'
+      + (less ? 'Show less' : 'Show more') + '</button>';
   }
 
-  function showMoreProjects() {
-    if (loadingRecentProjects) return;
-    var footer = document.getElementById('recent-projects-footer');
-    if (!footer) return;
-    var button = footer.querySelector('[data-show-more-projects]');
-    if (!button) return;
-    var previousMode = allRecentProjects;
-    var account = localStorage.getItem('_ak');
-    var accountServer = localStorage.getItem('_as');
-    var devices = homeDeviceData || (readCache() || {}).devices || { devices: [] };
-    allRecentProjects = true;
-    loadingRecentProjects = true;
-    button.textContent = 'Loading…';
-    button.disabled = true;
-    button.classList.add('recent-projects-loading');
-    button.setAttribute('aria-busy', 'true');
-    var activePromise = Promise.resolve().then(function () {
-      return window.api('/api/bridge/active-sessions', { allProjects: true });
-    }).then(function (data) {
-      if (!Array.isArray(data.recentProjects) || data.hasMoreProjects !== false) {
-        throw new Error('Incomplete project snapshot');
-      }
-      return data;
-    });
-    var run = loadHome(activePromise, Promise.resolve(devices), {
-      keepContent: true,
-      appendProjects: true,
-      isCurrent: function () {
-        return !!document.getElementById('recent-projects-section')
-          && localStorage.getItem('_ak') === account
-          && localStorage.getItem('_as') === accountServer;
-      }
-    });
-    var version = homeLoadVersion;
-    run.then(function (fresh) {
-      if (version !== homeLoadVersion) return;
-      loadingRecentProjects = false;
-      if (!fresh) {
-        allRecentProjects = previousMode;
-        var currentFooter = document.getElementById('recent-projects-footer');
-        if (currentFooter) currentFooter.innerHTML =
-          '<span class="recent-projects-error" role="alert">Unable to load more projects.</span>' + moreProjectsControl();
-      }
-    });
+  // Show more/less only re-renders the loaded answer (it already holds 15 projects); it is
+  // disabled until the current home load settles.
+  function setHomeLoading(loading) {
+    homeLoading = loading;
+    var more = document.querySelector('[data-show-more-projects]');
+    if (more) more.disabled = loading;
   }
 
   function bindHomeNavigation(content) {
     if (content.__homeNavBound) return;
     content.__homeNavBound = true;
     content.addEventListener('click', function (e) {
-      if (e.target.closest('[data-show-more-projects]')) {
-        if (typeof window.api === 'function') showMoreProjects();
-        else (window.__navQueue = window.__navQueue || []).push(showMoreProjects);
+      var moreButton = e.target.closest('[data-show-more-projects]');
+      if (moreButton) {
+        if (homeLoading) return;
+        var cached = readCache() || {};
+        var keepScroll = content.scrollTop;
+        allRecentProjects = moreButton.textContent !== 'Show less';
+        renderInline(homeActiveData || cached.active, homeDeviceData || cached.devices);
+        content.scrollTop = keepScroll;
         return;
       }
       var toggle = e.target.closest('[data-home-toggle]');
@@ -376,7 +356,18 @@
     var preview = document.createElement('template');
     preview.innerHTML = snapshot.contentHtml;
     preview.content.querySelectorAll('img.runtime-icon').forEach(function (image) {
-      image.src = runtimeIconSource(image.closest('.runtime-mark-codex') ? 'codex' : 'claude');
+      var runtime = markRuntime(image);
+      var svg = runtimeIconSvg(runtime);
+      if (svg) {
+        image.parentNode.classList.replace('runtime-mark-mono', 'runtime-mark-svg') || image.parentNode.classList.add('runtime-mark-svg');
+        image.parentNode.style.removeProperty('--runtime-mask');
+        image.outerHTML = svg;
+        return;
+      }
+      image.src = runtimeIconSource(runtime);
+      if (!runtimeIconTable[runtime][2]) return;
+      image.parentNode.classList.add('runtime-mark-mono');
+      image.parentNode.style.setProperty('--runtime-mask', 'url("' + new URL(image.getAttribute('src'), document.baseURI).href + '")');
     });
     content.replaceChildren(preview.content);
     fitRecentTimeColumn();
@@ -426,35 +417,6 @@
           + '<span class="recent-session-time-full">' + elapsed + '</span>'
           + '<span class="recent-session-time-short" aria-hidden="true">' + compactElapsed + '</span></time></a>';
       }).join('') + '</div></section>';
-  }
-
-  function appendRecentProjects(fresh) {
-    var content = document.getElementById('content');
-    var footer = document.getElementById('recent-projects-footer');
-    var current = homeActiveData || (readCache() || {}).active;
-    if (!footer || !current) throw new Error('Home is no longer available');
-    var existing = current.recentProjects || [];
-    var seen = new Set(existing.map(function (p) { return JSON.stringify([p.deviceName, p.projectHash]); }));
-    var added = [];
-    fresh.recentProjects.forEach(function (p) {
-      var key = JSON.stringify([p.deviceName, p.projectHash]);
-      if (seen.has(key) || added.length >= 10 || existing.length + added.length >= 15) return;
-      seen.add(key);
-      added.push(p);
-    });
-    var keepScroll = content.scrollTop;
-    footer.insertAdjacentHTML('beforebegin', added.map(function (p, i) {
-      return recentProjectHtml(p, existing.length + i);
-    }).join(''));
-    footer.remove();
-    fitRecentTimeColumn();
-    content.scrollTop = keepScroll;
-    // Cache exactly what remains displayed; a normal home refresh replaces it
-    // with current activity and the latest project ordering.
-    homeActiveData = Object.assign({}, current, {
-      recentProjects: existing.concat(added), hasMoreProjects: false,
-    });
-    return homeActiveData;
   }
 
   function renderInline(activeData, devData) {
@@ -507,15 +469,14 @@
     if (Array.isArray(recentProjects)) {
       var hasMoreProjects = activeData.hasMoreProjects || (!allRecentProjects && recentProjects.length > 5);
       recentProjects = recentProjects.slice(0, allRecentProjects ? 15 : 5);
-      homeActiveData = Object.assign({}, activeData, { recentProjects: recentProjects, hasMoreProjects: hasMoreProjects });
       html += '<section id="recent-projects-section" aria-labelledby="recent-projects-heading">'
         + '<h2 class="section-title home-section-heading" id="recent-projects-heading">'
         + '<button class="home-section-toggle recent-projects-toggle" type="button" data-home-toggle="recent-projects" aria-expanded="' + !recentProjectsCollapsed + '" aria-controls="recent-project-list">'
         + 'Recent Projects' + collapseIcon + '</button></h2>'
         + '<div class="recent-project-list" id="recent-project-list"' + (recentProjectsCollapsed ? ' hidden' : '') + '>';
       html += recentProjects.map(recentProjectHtml).join('');
-      if (!recentProjects.length) html += '<p class="recent-projects-empty">No recent sessions yet</p>';
-      if (hasMoreProjects) html += '<div class="recent-projects-footer" id="recent-projects-footer">' + moreProjectsControl() + '</div>';
+      if (!recentProjects.length) html += '<p class="recent-projects-empty">' + (window.__connecting ? 'Connecting ' + esc(window.__connecting) + '…' : 'No recent sessions yet') + '</p>';
+      if (hasMoreProjects || recentProjects.length > 5) html += '<div class="recent-projects-footer" id="recent-projects-footer">' + moreProjectsControl(!hasMoreProjects) + '</div>';
       html += '</div></section>';
     }
     if (devs.length) {
@@ -527,9 +488,13 @@
       html += devs.map(function (d) {
         var rc = d.runningCount || 0, ic = d.needsInputCount || 0;
         var dotClass = d.online ? 'online' : 'offline';
+        // A Bridge update waiting a day for idle (bridge.mjs checkUpdate): Update asks first (entry-index.js).
+        var pending = d.online && d.updatePending && Date.now() - d.updatePending.since > 864e5 ? d.updatePending : null;
+        var update = pending ? '<span class="update-pill" role="button" tabindex="0" data-update="' + esc(d.deviceName) + '" data-label="' + esc(d.deviceDisplayName || d.deviceName)
+          + '"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 13V3M4 7l4-4 4 4"/></svg>Update</span>' : '';
         return '<a class="item device-item device-card" href="#/' + esc(encodeURIComponent(d.deviceName)) + '" data-nav="device" data-name="' + esc(d.deviceName) + '">'
-          + '<div class="item-top"><span class="device-dot ' + dotClass + '"></span><span class="title">' + esc(d.deviceDisplayName || d.deviceName) + '</span><span class="item-time">' + timeAgo(d.lastActive) + '</span></div>'
-          + '<div class="item-bottom"><span class="subtitle">' + osName(d.os) + ' &middot; ' + d.projectCount + ' projects</span><span class="item-status">' + rc + ' running &middot; ' + ic + ' needs input</span></div>'
+          + '<div class="item-top"><span class="device-dot ' + dotClass + '"></span><span class="title">' + esc(d.deviceDisplayName || d.deviceName) + '</span>' + update + '<span class="item-time">' + (d.lastActive ? timeAgo(d.lastActive) : '') + '</span></div>'
+          + '<div class="item-bottom"><span class="subtitle">' + [d.os && osName(d.os), d.projectCount != null && d.projectCount + ' projects'].filter(Boolean).join(' &middot; ') + '</span><span class="item-status">' + rc + ' running &middot; ' + ic + ' needs input</span></div>'
           + '</a>';
       }).join('');
       html += '</div></section>';
@@ -589,7 +554,6 @@
   function loadHome(activePromise, devicesPromise, options) {
     options = options || {};
     var version = ++homeLoadVersion;
-    if (!options.appendProjects) loadingRecentProjects = false;
     var cached = readCache();
     var hasCached = !!(cached && cached.active && cached.devices);
     var usePagePreview = !options.resetScroll && !!window.__returningHome;
@@ -599,11 +563,11 @@
     var isCurrent = function () { return version === homeLoadVersion && isVisible(); };
 
     setSync(true);
+    homeLoading = true;
     whenContentReady(function () {
       if (!isCurrent()) return;
       document.body.classList.add('browse-view');
       setSync(true);
-      if (options.keepContent) return;
       var restoredPreview = options.restoreSnapshot
         ? restoreReturningHomePreview(options.restoreSnapshot)
         : usePagePreview && (window.__homePreviewRestored || restoreReturningHomePreview());
@@ -613,6 +577,7 @@
         else renderSkeleton(!!options.resetScroll);
       }
       if (options.resetScroll) document.getElementById('content').scrollTop = 0;
+      setHomeLoading(true);
     });
 
     var run = Promise.all([Promise.resolve(activePromise), Promise.resolve(devicesPromise)]).then(function (fresh) {
@@ -620,17 +585,13 @@
         whenContentReady(function () {
           if (!isCurrent()) { resolve(fresh); return; }
           if (!fresh[0] || !fresh[1]) { reject(new Error('Home refresh failed')); return; }
-          if (options.appendProjects) {
-            fresh[0] = appendRecentProjects(fresh[0]);
-          } else {
-            var freshRaw = JSON.stringify({ active: fresh[0], devices: fresh[1] });
-            var cachedRaw = hasCached ? JSON.stringify({ active: cached.active, devices: cached.devices }) : null;
-            if (!window.__inlineRendered || freshRaw !== cachedRaw) {
-              var content = document.getElementById('content');
-              var keepScroll = content ? content.scrollTop : 0;
-              renderInline(fresh[0], fresh[1]);
-              if (content) content.scrollTop = keepScroll;
-            }
+          var freshRaw = JSON.stringify({ active: fresh[0], devices: fresh[1] });
+          var cachedRaw = hasCached ? JSON.stringify({ active: cached.active, devices: cached.devices }) : null;
+          if (!window.__inlineRendered || freshRaw !== cachedRaw) {
+            var content = document.getElementById('content');
+            var keepScroll = content ? content.scrollTop : 0;
+            renderInline(fresh[0], fresh[1]);
+            if (content) content.scrollTop = keepScroll;
           }
           writeCache(fresh[0], fresh[1]);
           if (options.onFresh) options.onFresh(fresh[0], fresh[1]);
@@ -641,7 +602,7 @@
       // Cache remains usable when revalidation fails.
       return null;
     }).then(function (fresh) {
-      if (isCurrent()) stopSync();
+      if (isCurrent()) { stopSync(); setHomeLoading(false); }
       if (usePagePreview) {
         window.__returningHome = false;
         document.documentElement.classList.remove('returning-home');
@@ -657,6 +618,17 @@
   }
   window.__loadHome = loadHome;
   window.__setTopSync = setSync;
+  // A later /devices answer changed the home after it was shown (device online state, new address).
+  window.__applyHome = function (active, devices) {
+    writeCache(active, devices);
+    whenContentReady(function () {
+      if (!document.querySelector('.top-gear') || !document.body.classList.contains('browse-view')) return;
+      var content = document.getElementById('content');
+      var keepScroll = content ? content.scrollTop : 0;
+      renderInline(active, devices);
+      if (content) content.scrollTop = keepScroll;
+    });
+  };
 
   if (willRenderInline) {
     loadHome(window.__preload.active, window.__preload.devices);
@@ -751,8 +723,6 @@
   <div class="modal-box">
     <div class="modal-title" id="deleteModalTitle">Delete?</div>
     <div class="modal-desc" id="deleteModalDesc"></div>
-    <label class="delete-toggle"><input type="checkbox" id="deleteFilesCb" onchange="onDeleteFilesToggle()"><span>Also delete the original data on the device</span></label>
-    <div class="delete-hint" id="deleteHint">Removes the local jsonl files too, not just the list records — cannot be undone.</div>
     <div class="modal-error" id="deleteError"></div>
     <div class="modal-actions">
       <button class="modal-btn cancel" onclick="closeDeleteModal()">Cancel</button>
@@ -772,6 +742,10 @@
       <button class="modal-btn confirm danger" id="codexTakeoverConfirm" onclick="confirmCodexTakeover()">Take over and send</button>
     </div>
   </div>
+</div>
+
+<div id="runtimePickerMenu" class="runtime-menu-layer" hidden onclick="if(event.target===this)closeRuntimePicker()">
+  <div id="runtimePickerList" class="runtime-menu" role="menu" aria-label="New session with"></div>
 </div>
 
 <div id="agentThreadsModal" class="modal-overlay agent-threads-overlay" style="display:none" onclick="if(event.target===this)closeAgentThreadsModal()">

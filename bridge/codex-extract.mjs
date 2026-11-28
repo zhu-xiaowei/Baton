@@ -1,8 +1,11 @@
 import crypto from 'crypto';
 import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { markEditResult } from './tool-preview.mjs';
 import {
   codexCompletedLiveMessages,
+  codexToolBlocks,
   codexItemNativeId,
   codexItemLiveKey,
   codexMessageUuid,
@@ -172,7 +175,14 @@ function mcpToolMeta(item) {
 function mcpToolResult(item) {
   const result = item?.result;
   if (!result) return String(item?.status || '');
-  return outputText(result.content ?? result);
+  return result.content?.some?.((c) => c?.type === 'image') ? codexToolBlocks(result.content) : outputText(result.content ?? result);
+}
+
+function absoluteFile(value) {
+  try {
+    const file = String(value || '').startsWith('file:') ? fileURLToPath(value) : String(value || '');
+    return path.isAbsolute(file) ? file : undefined;
+  } catch { return undefined; }
 }
 
 function runningProcessId(content) {
@@ -252,7 +262,7 @@ function hiddenPatchAttemptLines(patchCalls, patchFailures, patchLifecycles) {
   return hidden;
 }
 
-function analyzeLines(lines) {
+function analyzeLines(lines, order) {
   const pendingPatchEnds = new Map();
   const skipped = new Set();
   const eventUserCounts = new Map();
@@ -269,7 +279,8 @@ function analyzeLines(lines) {
     entries.push(line);
     map.set(callId, entries);
   };
-  for (let index = lines.length - 1; index >= 0; index--) {
+  for (let k = (order ? order.length : lines.length) - 1; k >= 0; k--) {
+    const index = order ? order[k] : k;
     const hasUser = lines[index].includes('"user_message"')
       || lines[index].includes('"UserMessage"');
     const hasPatch = lines[index].includes('patch_apply_end')
@@ -385,8 +396,9 @@ function analyzeLines(lines) {
 
 export function extractCodexMessages(filePath, sessionId, options = {}) {
   if (!fs.existsSync(filePath)) return { messages: [], nextLine: options.startLine || 0 };
-  const lines = fs.readFileSync(filePath, 'utf-8').split('\n');
-  if (lines.at(-1) === '') lines.pop();
+  // `lines` + `order`: a caller that already read the file passes its lines and the line numbers to visit.
+  const lines = options.lines || fs.readFileSync(filePath, 'utf-8').split('\n');
+  if (!options.lines && lines.at(-1) === '') lines.pop();
   const startLine = Math.min(options.startLine || 0, lines.length);
   const {
     commandExecutions,
@@ -397,7 +409,7 @@ export function extractCodexMessages(filePath, sessionId, options = {}) {
     mcpToolCalls,
     skippedCustomOutputs,
     userClientIdsByTurn,
-  } = analyzeLines(lines);
+  } = analyzeLines(lines, options.order);
   const messages = [];
   let sourceLine = 0;
   let fragment = 0;
@@ -408,6 +420,7 @@ export function extractCodexMessages(filePath, sessionId, options = {}) {
   const mcpPairs = new Map();
   const mcpCompletionCounts = new Map();
   const backgroundByProcessId = new Map();
+  const viewedImages = new Map(); // view_image call id → the file Codex opened (a call's own path may be relative)
   let nextLine = 0;
   let needsSessionScan = startLine === 0;
   let reviewPrompt = '';
@@ -462,7 +475,8 @@ export function extractCodexMessages(filePath, sessionId, options = {}) {
   };
   const peek = (callId) => (pending.get(callId) || [])[0];
 
-  for (let line = 0; line < lines.length; line++) {
+  for (let k = 0, end = options.order ? options.order.length : lines.length; k < end; k++) {
+    const line = options.order ? options.order[k] : k;
     if (!lines[line].trim()) {
       nextLine = line + 1;
       continue;
@@ -483,6 +497,7 @@ export function extractCodexMessages(filePath, sessionId, options = {}) {
     sourceLine = line;
     fragment = 0;
     const timestamp = timestampFor(entry);
+    if (payload.type === 'item_completed' && payload.item?.type === 'ImageView') viewedImages.set(payload.item.id, payload.item.path);
     const shouldEmit = line >= startLine;
     if (hiddenPatchLines.has(line)) {
       if (payload.type === 'custom_tool_call' && payload.name === 'apply_patch') {
@@ -807,7 +822,7 @@ export function extractCodexMessages(filePath, sessionId, options = {}) {
         const mcpInfo = mcpToolCalls.get(callId)?.[occurrence - 1];
         const input = payload.type === 'tool_search_call'
           ? (payload.arguments || { execution: payload.execution || '' })
-          : mapToolInput(payload.name, payload.arguments);
+          : mapToolInput(payload.name, payload.arguments ?? payload.input); // custom tools (exec: JS source) carry `input`
         const namespace = String(payload.namespace || '');
         if (namespace.startsWith('mcp__') && namespace.length > 5) {
           input.codexMcpServer = namespace.slice(5);
@@ -870,8 +885,10 @@ export function extractCodexMessages(filePath, sessionId, options = {}) {
       }
       const pair = dequeue(String(payload.call_id || ''));
       if (!pair) continue;
+      // The file view_image opened, as the live item names it (Codex resizes large ones in the rollout).
       const content = pair.name === 'view_image'
-        ? ''
+        ? (payload.output || []).filter?.((c) => c?.type === 'input_image').map((c) => ({ type: 'image',
+          path: absoluteFile(viewedImages.get(payload.call_id) || pair.uses[0]?.input?.path), image_url: c.image_url })) || ''
         : payload.type === 'tool_search_output'
         ? outputText({ status: payload.status, execution: payload.execution, tools: payload.tools })
         : outputText(payload.output);
@@ -996,20 +1013,4 @@ export function extractCodexMessages(filePath, sessionId, options = {}) {
     needsSessionScan,
     releaseOwnershipKeys: Array.from(releaseOwnershipKeys),
   };
-}
-
-export async function syncCodexMessages(filePath, nativeSessionId, storageSessionId, options) {
-  const watermarks = options.watermarks;
-  const startLine = options.startLine ?? watermarks.get(storageSessionId) ?? 0;
-  const extracted = extractCodexMessages(filePath, nativeSessionId, { startLine });
-  if (extracted.messages.length > 0 || startLine === 0) {
-    await options.uploader(storageSessionId, extracted.messages, {
-      runtime: 'codex',
-      nativeSessionId,
-      historyComplete: startLine === 0,
-    });
-  }
-  // Commit only after upload so deterministic rows can be retried.
-  watermarks.set(storageSessionId, extracted.nextLine);
-  return extracted;
 }

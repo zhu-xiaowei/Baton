@@ -1,9 +1,8 @@
 // App state, routing, page loading
 import { state } from './state.js';
-import { layoutPixels } from './page-zoom.js';
+import { layoutPixels, layoutRect } from './page-zoom.js';
 import {
   invalidateListCache,
-  migrateLegacyListCache,
   readListCache,
   writeListCache,
 } from './list-cache.js';
@@ -15,6 +14,7 @@ import {
   savePagePreview,
   takePreviousNavigation,
 } from './edge-back.js';
+import { runtimeInfo, runtimeOf, RUNTIMES } from './runtimes.js';
 import {
   creatableRuntimes,
   newSessionRuntimePreferenceKey,
@@ -29,13 +29,17 @@ import { setNativeTabTitle } from './macos-tabs.js';
 import { openProjectTerminal } from './terminal.js';
 import { openSessionRename } from './components/session-rename.js';
 import { showCenteredModal, hideCenteredModal } from './components/modal-viewport.js';
-import { saveHomeTerminalView, savedHomeTerminal, saveTerminalView, shouldRestoreTerminal } from './terminal-view-state.js';
+import { savedTerminalFolder, saveTerminalView } from './terminal-view-state.js';
 import { homeProject } from './project/home.js';
 import { showToast } from './components/toast.js';
+import { removeDevice } from './v2/pairing.js';
+import { knownDeviceNames } from './v2/direct-transport.js';
 import { parsePreviewTarget } from './preview-link.js';
 import { openExternalLink, previewNativeAvailable } from './native-shell.js';
-import { FOLDER_ICON_SVG, GIT_BRANCH_ICON_SVG, TERMINAL_ICON_SVG } from './components/icons.js';
-import { shouldRestoreGitStatus } from './git/view-state.js';
+import { CHECK_ICON_SVG, FOLDER_ICON_SVG, GIT_BRANCH_ICON_SVG, TERMINAL_ICON_SVG } from './components/icons.js';
+import {
+  GIT_DIFF_VIEW_KEY, saveGitDiffView, saveGitStatusView, shouldRestoreGitStatus,
+} from './git/view-state.js';
 import { deleteProjectDataCache } from './cache/project-data-cache.js';
 import {
   browseNewProjectPath,
@@ -300,7 +304,7 @@ function attachLongPress(container, type, onLongPress) {
   container.__longPressCleanup = cleanup;
 }
 
-// Unified 3-state (running / needs_input / completed); legacy idle/stopped/unknown → Done.
+// Three states (running / needs_input / completed); anything else reads as Done.
 function statusLabel(status) {
   if (status === 'running') return 'Running';
   if (status === 'needs_input') return 'Needs input';
@@ -315,27 +319,30 @@ function statusClass(status) {
 }
 
 function sessionRuntime(sessionId, runtime) {
-  return runtime === 'codex' || String(sessionId || '').indexOf('codex:') === 0 ? 'codex' : 'claude';
+  return runtimeOf(sessionId, runtime);
 }
 
 function nativeSessionId(sessionId, nativeId, runtime) {
   var value = String(nativeId || sessionId || '');
-  return sessionRuntime(sessionId, runtime) === 'codex' && value.indexOf('codex:') === 0
-    ? value.slice('codex:'.length)
-    : value;
+  var prefix = sessionRuntime(sessionId, runtime) + ':';
+  return prefix !== 'claude:' && value.indexOf(prefix) === 0 ? value.slice(prefix.length) : value;
 }
 
 function shortSessionId(sessionId, nativeId, runtime) {
   var value = nativeSessionId(sessionId, nativeId, runtime);
-  return sessionRuntime(sessionId, runtime) === 'codex' ? value.slice(-8) : value.slice(0, 8);
+  // Codex and OpenCode ids start with a time-ordered prefix.
+  return /^(codex|opencode)$/.test(sessionRuntime(sessionId, runtime)) ? value.slice(-8) : value.slice(0, 8);
 }
 
 function runtimeIcon(sessionId, runtime) {
-  var value = sessionRuntime(sessionId, runtime);
-  var label = value === 'codex' ? 'Codex' : 'Claude Code';
-  return '<span class="runtime-mark' + (value === 'codex' ? ' runtime-mark-codex' : '')
-    + '" role="img" aria-label="' + label + '" title="' + label + '">'
-    + '<img class="runtime-icon" width="16" height="16" decoding="sync" src="' + esc(window.__runtimeIconSource?.(value) || './assets/' + (value === 'codex' ? 'codex.svg' : 'claude-code.svg')) + '" alt="" aria-hidden="true"></span>';
+  var info = runtimeInfo(sessionRuntime(sessionId, runtime));
+  var svg = info.mono && window.__runtimeIconSvg?.(info.id);
+  if (svg) return '<span class="runtime-mark runtime-mark-svg" data-runtime="' + info.id + '" role="img" aria-label="' + info.label + '" title="' + info.label + '">' + svg + '</span>';
+  // Absolute, since a url() in a custom property resolves against the stylesheet that uses it.
+  var src = esc(new URL(window.__runtimeIconSource?.(info.id) || info.icon, document.baseURI).href);
+  return '<span class="runtime-mark' + (info.mono ? ' runtime-mark-mono" style="--runtime-mask:url(&quot;' + src + '&quot;)' : '')
+    + '" data-runtime="' + info.id + '" role="img" aria-label="' + info.label + '" title="' + info.label + '">'
+    + '<img class="runtime-icon" width="16" height="16" decoding="sync" src="' + src + '" alt="" aria-hidden="true"></span>';
 }
 
 function activeSessionThread() {
@@ -393,7 +400,7 @@ function sessionRuntimeControl() {
     state.appState.runtime,
   );
   var label = runtimeLabel(runtime);
-  var text = runtime === 'codex' ? 'Codex' : 'Claude';
+  var text = runtimeIcon('', runtime) + esc(runtimeInfo(runtime).short);
   if (state.sessionThreads.length <= 1) {
     return '<span class="badge session-runtime-label" title="' + label + '">' + text + '</span>';
   }
@@ -406,7 +413,7 @@ function sessionRuntimeControl() {
 }
 
 function runtimeLabel(runtime) {
-  return runtime === 'codex' ? 'Codex' : 'Claude Code';
+  return runtimeInfo(runtime).label;
 }
 
 function newSessionRuntimeControl() {
@@ -415,10 +422,58 @@ function newSessionRuntimeControl() {
   if (!runtimes.length || !current) return '';
   var mark = runtimeIcon('__new__', current);
   if (runtimes.length === 1) return mark;
-  var next = nextNewSessionRuntime(runtimes, current);
-  return '<button class="runtime-switch" type="button" onclick="toggleNewSessionRuntime()"'
-    + ' aria-label="Switch coding runtime. Current: ' + runtimeLabel(current) + '"'
-    + ' title="Switch to ' + runtimeLabel(next) + '">' + mark + '</button>';
+  return '<button class="runtime-switch" type="button" onclick="openRuntimePicker()"'
+    + ' aria-haspopup="menu" aria-controls="runtimePickerMenu"'
+    + ' aria-label="Choose coding runtime. Current: ' + runtimeLabel(current) + '"'
+    + ' title="' + runtimeLabel(current) + '">' + mark + '</button>';
+}
+
+function openRuntimePicker() {
+  var layer = document.getElementById('runtimePickerMenu');
+  var button = document.querySelector('.runtime-switch');
+  if (!layer || !button || state.appState.session !== '__new__') return;
+  var menu = document.getElementById('runtimePickerList');
+  menu.innerHTML = state.newSessionRuntimes.map(function (runtime) {
+    var current = runtime === state.appState.runtime;
+    var missing = state.newSessionUnavailable[runtime] ? '<span class="runtime-picker-hint">Not found</span>' : '';
+    return '<button class="runtime-picker-row' + (missing ? ' unavailable' : '') + '" type="button" role="menuitemradio" aria-checked="' + current + '"'
+      + ' onclick="pickNewSessionRuntime(\'' + runtime + '\')">' + runtimeIcon('', runtime)
+      + '<span class="runtime-picker-label">' + runtimeLabel(runtime) + missing + '</span>' + (current ? '<span class="runtime-picker-check">' + CHECK_ICON_SVG + '</span>' : '')
+      + '</button>';
+  }).join('');
+  // Drop down from the button, right-aligned, with the arrow under its centre.
+  var rect = layoutRect(button);
+  var width = layoutPixels(innerWidth);
+  var right = Math.max(8, width - rect.right - 4);
+  menu.style.top = (rect.bottom + 10) + 'px';
+  menu.style.right = right + 'px';
+  menu.style.setProperty('--arrow-right', Math.max(10, width - right - rect.left - rect.width / 2 - 6) + 'px');
+  layer.hidden = false;
+  addEventListener('keydown', runtimePickerKey);
+  addEventListener('resize', closeRuntimePicker);
+  menu.querySelector('[aria-checked="true"]')?.focus({ preventScroll: true });
+}
+
+function runtimePickerKey(event) {
+  if (event.key === 'Escape') closeRuntimePicker();
+}
+
+function closeRuntimePicker() {
+  var layer = document.getElementById('runtimePickerMenu');
+  if (layer) layer.hidden = true;
+  removeEventListener('keydown', runtimePickerKey);
+  removeEventListener('resize', closeRuntimePicker);
+}
+
+async function pickNewSessionRuntime(runtime) {
+  closeRuntimePicker();
+  if (state.newSessionUnavailable[runtime]) {
+    var nav = _navVersion;
+    await refreshNewSessionRuntimes(nav, true); // installed since the last check?
+    if (_navVersion !== nav || state.appState.session !== '__new__') return;
+    if (state.newSessionUnavailable[runtime]) return showToast(state.newSessionUnavailable[runtime]);
+  }
+  applyNewSessionRuntime(runtime, true);
 }
 
 function showStats() {}  // no-op, stats bar removed
@@ -458,7 +513,12 @@ function updateBreadcrumb() {
   var el = document.getElementById('breadcrumb');
   var parts = [];
   if (state.appState.device) {
-    parts.push('<a href="' + navHref('projects', {device: state.appState.device}) + '" onclick="loadProjects(\'' + esc(state.appState.device) + '\');return false;">' + esc(displayDeviceName(state.appState.device)) + '</a>');
+    // On a Session, a grey dot marks its computer as offline (the page then shows only cached history).
+    var offline = state.appState.session && (state.wsHistoryPhase === 'offline' || state.deviceOnlineMap[state.appState.device] === false);
+    var deviceLabel = esc(displayDeviceName(state.appState.device));
+    parts.push('<a href="' + navHref('projects', {device: state.appState.device}) + '" onclick="loadProjects(\'' + esc(state.appState.device) + '\');return false;"'
+      + (offline ? ' title="' + deviceLabel + ' is offline"' : '') + '>' + deviceLabel
+      + (offline ? '<i class="crumb-offline-dot" aria-label="offline"></i>' : '') + '</a>');
   }
   if (state.appState.project) {
     parts.push('<a href="' + navHref('sessions', {device: state.appState.device, projectHash: state.appState.project.hash}) + '" onclick="loadSessions(\'' + esc(state.appState.device) + '\',\'' + esc(state.appState.project.hash) + '\',\'' + esc(state.appState.project.name) + '\');return false;">' + esc(state.appState.project.name) + '</a>');
@@ -481,15 +541,16 @@ function updateBreadcrumb() {
     var runtimeMark = state.appState.session === '__new__'
       ? newSessionRuntimeControl()
       : '';
-    var filesButton = state.appState.session !== '__new__'
+    var hasFolder = state.appState.session !== '__new__' && !virtualProjectRuntimes(state.appState.project.hash);
+    var filesButton = hasFolder
       ? '<button class="project-files-entry" type="button" onclick="openProjectFiles()"'
         + ' aria-label="Project files" title="Project files">' + FOLDER_ICON_SVG + '</button>'
       : '';
-    var terminalButton = state.appState.session !== '__new__'
+    var terminalButton = hasFolder
       ? '<button class="project-files-entry project-terminal-entry" type="button" onclick="openProjectTerminalPage()"'
         + ' aria-label="Project terminal" title="Terminal">' + TERMINAL_ICON_SVG + '</button>'
       : '';
-    var gitButton = state.appState.session !== '__new__'
+    var gitButton = hasFolder
       ? '<button class="project-files-entry git-status-entry" type="button" onclick="openGitStatusPage()"'
         + ' aria-label="Git changes" title="Git changes">' + GIT_BRANCH_ICON_SVG + '</button>'
       : '';
@@ -590,7 +651,7 @@ function openHomeFilesPage(button) {
 function openHomeTerminal(device, projectHash) {
   const opening = openProjectTerminal({ device, projectHash, projectName: '~' });
   saveNav();
-  saveHomeTerminalView(device, projectHash);
+  saveTerminalView(state.appState, undefined, { hash: projectHash, name: '~' });
   return opening;
 }
 
@@ -660,11 +721,7 @@ async function refreshSessionThreads() {
   }
   var rootSessionId = state.rootSessionId;
   var requestVersion = state.threadRequestVersion;
-  var data = await api('/api/bridge/session-threads', {
-    device: state.appState.device,
-    project: state.appState.project.hash,
-    session: rootSessionId,
-  });
+  var data = await bridgeList('threads', { device: state.appState.device, sessionId: rootSessionId });
   if (requestVersion !== state.threadRequestVersion
     || rootSessionId !== state.rootSessionId) {
     return state.sessionThreads;
@@ -894,8 +951,10 @@ function switchAgentThread(sessionId) {
 }
 
 function showInputBar(visible) {
+  document.querySelector('.star-card')?.remove(); // it belongs to the Session it was shown in
   var bar = document.getElementById('input-bar');
   var scrollButton = document.getElementById('scroll-bottom-btn');
+  if (!bar) return;
   bar.style.display = visible ? 'flex' : 'none';
   scrollButton.style.display = visible ? '' : 'none';
   if (visible) {
@@ -923,7 +982,7 @@ function applyThreadInputState() {
   bar.toggleAttribute('inert', blocked);
   bar.setAttribute('aria-disabled', String(blocked));
   input.readOnly = blocked;
-  input.placeholder = blocked ? 'Subagent is read-only' : 'Send a message...';
+  input.placeholder = blocked ? 'This Session is read-only' : 'Send a message...';
   if (blocked) {
     input.value = '';
     input.style.height = 'auto';
@@ -998,7 +1057,7 @@ function projectListOptions(device) {
     fetchPage: function (cursor) {
       var params = { device: device, limit: LIST_PAGE_SIZE };
       if (cursor) params.cursor = cursor;
-      return api('/api/bridge/projects', params);
+      return bridgeList('projects', params);
     }
   };
 }
@@ -1014,7 +1073,7 @@ function sessionListOptions(device, projectHash) {
     fetchPage: function (cursor) {
       var params = { device: device, project: projectHash, limit: LIST_PAGE_SIZE };
       if (cursor) params.cursor = cursor;
-      return api('/api/bridge/sessions', params);
+      return bridgeList('sessions', params);
     }
   };
 }
@@ -1100,7 +1159,6 @@ document.addEventListener('click', function (e) {
   if (e.target.closest('a[href="setup.html"]')) savePagePreview();
 }, true);
 
-migrateLegacyListCache();
 
 function captureListAnchor(content) {
   var top = content.getBoundingClientRect().top;
@@ -1341,7 +1399,6 @@ function shortModel(m) {
 function rememberDevices(data) {
   (data?.devices || []).forEach(function (device) {
     state.deviceOnlineMap[device.deviceName] = device.online;
-    state.deviceDisplayNameMap[device.deviceName] = device.deviceDisplayName || device.deviceName;
   });
   window.__deviceDisplayNames = state.deviceDisplayNameMap;
 }
@@ -1354,7 +1411,8 @@ async function loadDevices() {
   deactivateList();
   var wasHome = !state.appState.device && !state.appState.project && !state.appState.session;
   var homePreview = prepareNavigation({ device: null, project: null, session: null });
-  var myNav = ++_navVersion;
+  // Reusing the in-flight home run keeps its generation, so that run still renders and stops the spinner.
+  var myNav = wasHome && window.__homeLoadPromise ? _navVersion : ++_navVersion;
   if (state.selectMode) { state.selectMode = false; state.selectType = null; state.selected = new Set(); }
   state.appState = { device: null, project: null, session: null, sessionPreview: '' };
   markCurrentRoute(state.appState);
@@ -1377,8 +1435,8 @@ async function loadDevices() {
 
   var preload = wasHome ? window.__preload : null;
   window.__preload = null;
-  var activePromise = (preload && preload.active) || api('/api/bridge/active-sessions', window.__homeActiveParams?.());
-  var devicesPromise = (preload && preload.devices) || api('/api/bridge/devices');
+  var activePromise = (preload && preload.active) || bridgeHome();
+  var devicesPromise = (preload && preload.devices) || bridgeDevices();
   return window.__loadHome(activePromise, devicesPromise, {
     resetScroll: !homePreview,
     restoreSnapshot: homePreview,
@@ -1460,9 +1518,7 @@ function renderProjects(device, data) {
 }
 
 async function loadProjects(device) {
-  window.deactivateProjectTerminal?.();
-  window.deactivateProjectFiles?.();
-  window.deactivateGitStatus?.();
+  var keptTools = closeProjectTools(device, null);
   resetSessionThreads();
   rememberActiveListScroll();
   document.body.classList.add('browse-view');
@@ -1478,6 +1534,7 @@ async function loadProjects(device) {
   showInputBar(false);
   updateBreadcrumb();
   saveNav();
+  if (keptTools) saveKeptToolViews();
   return loadPagedList(options, myNav);
 }
 
@@ -1503,7 +1560,7 @@ function sessionsHtml(device, projectHash, data, sel) {
     var nativeId = nativeSessionId(s.sessionId, '', runtime);
     var shortId = shortSessionId(s.sessionId, '', runtime);
     var title = attachmentPreviewText(s.preview || (s.isAgent && s.agentName) || 'No preview');
-    var resumeCommand = (runtime === 'codex' ? 'codex resume ' : 'claude --resume ') + nativeId;
+    var resumeCommand = runtimeInfo(runtime).resume?.(nativeId, s.projectPath) || nativeId;
     var sidLabel = '<span class="meta-sid-copy" title="Copy ' + esc(resumeCommand) + '"'
       + ' data-copy="' + esc(resumeCommand) + '">' + esc(shortId) + '</span>';
     var metadata = '<span>' + esc(s.model || 'unknown model') + '</span>'
@@ -1535,7 +1592,7 @@ function attachSessionIdCopy(container) {
       event.stopPropagation();
       if (target.classList.contains('copied') || !navigator.clipboard?.writeText) return;
       navigator.clipboard.writeText(target.dataset.copy).then(function () {
-        target.textContent = '✓';
+        target.innerHTML = CHECK_ICON_SVG;
         target.classList.add('copied');
         setTimeout(function () {
           target.textContent = label;
@@ -1578,10 +1635,35 @@ function renderSessions(device, projectHash, data) {
   showStats(data.sessions.length + ' session(s)');
 }
 
-async function loadSessions(device, projectHash, projectName) {
+// A docked tool stays open on another page of its device until closed by hand;
+// Git shows the page's project, so it closes when the project changes.
+function closeProjectTools(device, projectHash) {
+  if (window.sideDockKeeps?.(device)) {
+    if ((projectHash || null) !== (state.appState.project?.hash || null)) window.deactivateGitStatus?.();
+    return true;
+  }
   window.deactivateProjectTerminal?.();
   window.deactivateProjectFiles?.();
   window.deactivateGitStatus?.();
+  return false;
+}
+
+// Saved tool views name the Session they were opened on; a kept tool moves with the page.
+function saveKeptToolViews() {
+  if (state.gitStatusOpen) {
+    saveGitStatusView(state.appState);
+    try {
+      var diff = JSON.parse(sessionStorage.getItem(GIT_DIFF_VIEW_KEY) || 'null');
+      if (diff) saveGitDiffView(state.appState, diff);
+    } catch (error) {}
+  }
+  window.keepProjectFiles?.();
+  var terminal = window.projectTerminalFolder?.();
+  if (terminal) saveTerminalView(state.appState, undefined, terminal);
+}
+
+async function loadSessions(device, projectHash, projectName) {
+  var keptTools = closeProjectTools(device, projectHash);
   resetSessionThreads();
   rememberActiveListScroll();
   document.body.classList.add('browse-view');
@@ -1604,6 +1686,7 @@ async function loadSessions(device, projectHash, projectName) {
   showInputBar(false);
   updateBreadcrumb();
   saveNav();
+  if (keptTools) saveKeptToolViews();
   return loadPagedList(options, myNav);
 }
 
@@ -1648,40 +1731,44 @@ async function submitNewProject() {
   // Loading state: disable inputs, show spinner on button
   input.disabled = true;
   setButtonLoading(btn, 'Creating');
+  var result;
   try {
     await window.loadViewerLibs();
     if (state._pendingCreatePath !== projectPath) return;
-    ensureWsAndSend({ action: 'create_project', projectPath: projectPath, device: state.appState.device || '' });
+    result = await window.bridgeRequest('create_project', { projectPath: projectPath });
   } catch (error) {
-    if (state._pendingCreatePath !== projectPath) return;
-    state._pendingCreatePath = null;
-    input.disabled = false;
-    setButtonLoading(btn);
-    err.textContent = error.message || 'Could not create project.';
+    result = { ok: false, error: error.message === 'offline' ? 'The device is offline.' : error.message || 'Could not create project.' };
   }
+  if (state._pendingCreatePath !== projectPath) return;
+  state._pendingCreatePath = null;
+  if (result.ok) {
+    closeNewProjectModal();
+    // An empty project is in no list yet: go straight to its new-session input, named by the
+    // reply (else the hash's last segment, …-test3 → test3).
+    var name = result.projectName || (result.projectHash || '').split('-').filter(Boolean).pop() || result.projectHash;
+    state.appState.project = { hash: result.projectHash, name: name };
+    startNewSession(result.projectHash);
+    return;
+  }
+  input.disabled = false;
+  setButtonLoading(btn);
+  err.textContent = result.error || 'Could not create project.';
 }
 
 var _deleteCountdownTimer = null;
 var _deviceToDelete = null;
 
-function showDeleteFilesOption(show) {
-  document.querySelector('#deleteModal .delete-toggle').style.display = show ? '' : 'none';
-  document.getElementById('deleteHint').style.display = show ? '' : 'none';
-}
-
 function openDeleteModal() {
   if (!state.selected.size) return;
   _deviceToDelete = null;
-  showDeleteFilesOption(true);
   var modal = document.getElementById('deleteModal');
   var n = state.selected.size;
   var isProject = state.selectType === 'project';
   var noun = (isProject ? 'project' : 'session') + (n > 1 ? 's' : '');
   document.getElementById('deleteModalTitle').textContent = 'Delete ' + n + ' ' + noun + '?';
   document.getElementById('deleteModalDesc').textContent = isProject
-    ? 'This removes ' + (n > 1 ? 'these projects' : 'this project') + ' and all their session records from the list. Data on the device is kept unless you check below.'
-    : 'This removes ' + (n > 1 ? 'these sessions' : 'this session') + ' from the list. Data on the device is kept unless you check below.';
-  document.getElementById('deleteFilesCb').checked = false;
+    ? 'All ' + (n > 1 ? 'their' : 'its') + ' sessions will be permanently deleted from the device. Project folders are kept.'
+    : (n > 1 ? 'They' : 'It') + ' will be permanently deleted from the device.';
   var err = document.getElementById('deleteError'); if (err) err.textContent = '';
   resetDeleteBtn();
   showCenteredModal(modal);
@@ -1694,7 +1781,7 @@ function resetDeleteBtn() {
   btn.textContent = 'Delete';
 }
 
-// A 5s countdown before the confirm button is clickable (guards misfires).
+// Removing a device uninstalls its Bridge: a 5s countdown before the button is clickable (guards misfires).
 function armDeleteCountdown(label) {
   var btn = document.getElementById('deleteConfirmBtn');
   var left = 5;
@@ -1704,15 +1791,6 @@ function armDeleteCountdown(label) {
     if (left <= 0) { clearInterval(_deleteCountdownTimer); _deleteCountdownTimer = null; btn.disabled = false; btn.textContent = label; }
     else btn.textContent = label + ' (' + left + ')';
   }, 1000);
-}
-
-// Checking "delete original data" arms the countdown.
-function onDeleteFilesToggle() {
-  var btn = document.getElementById('deleteConfirmBtn');
-  if (btn.getAttribute('aria-busy') === 'true') return;
-  if (_deleteCountdownTimer) { clearInterval(_deleteCountdownTimer); _deleteCountdownTimer = null; }
-  if (!document.getElementById('deleteFilesCb').checked) { btn.disabled = false; btn.textContent = 'Delete'; return; }
-  armDeleteCountdown('Delete');
 }
 
 function closeDeleteModal() {
@@ -1728,8 +1806,6 @@ function openDeviceDeleteModal(device) {
   document.getElementById('deleteModalTitle').textContent = 'Remove ' + name + '?';
   document.getElementById('deleteModalDesc').textContent = 'This removes the device with all its project and session records. '
     + 'Its Bridge stops and no longer starts automatically; files on the device are kept. To add it again, run a new install command from Setup.';
-  document.getElementById('deleteFilesCb').checked = false;
-  showDeleteFilesOption(false);
   var err = document.getElementById('deleteError'); if (err) err.textContent = '';
   resetDeleteBtn();
   armDeleteCountdown('Remove');
@@ -1740,7 +1816,7 @@ async function submitDeviceDelete(btn) {
   var device = _deviceToDelete;
   setButtonLoading(btn, 'Removing');
   try {
-    await apiPost('/api/bridge/delete-device', { deviceName: device });
+    await removeDevice('/api/bridge/delete-device', { deviceName: device });
   } catch (e) {
     var err = document.getElementById('deleteError'); if (err) err.textContent = 'Remove failed: ' + e.message;
     setButtonLoading(btn);
@@ -1756,45 +1832,23 @@ async function submitDeviceDelete(btn) {
   loadDevices();
 }
 
-// Confirm original-file deletion before removing list records, so an active
-// session or failed device deletion remains visible and can be retried.
-async function performDelete(device, isProject, ids, deleteFiles) {
-  var body = { deviceName: device };
-  if (isProject) body.projectHashes = ids; else body.sessionIds = ids;
-  var filesResult = null;
-  if (deleteFiles) {
-    await window.loadViewerLibs(); // ensure WS is connected before relying on it
-    filesResult = await new Promise(function (resolve) {
-      var reqId = 'del-' + Date.now() + '-' + Math.random().toString(36).slice(2);
-      window._deleteFilesResolvers = window._deleteFilesResolvers || {};
-      var done = false;
-      var timer;
-      var armTimeout = function () {
-        clearTimeout(timer);
-        timer = setTimeout(function () { finish({ ok: false, timeout: true }); }, 8000);
-      };
-      var finish = function (r) {
-        if (done) return;
-        if (r.pending) { armTimeout(); return; }
-        done = true;
-        clearTimeout(timer);
-        delete window._deleteFilesResolvers[reqId];
-        resolve(r);
-      };
-      window._deleteFilesResolvers[reqId] = finish;
-      armTimeout();
-      try {
-        ensureWsAndSend(Object.assign({ action: 'delete_files', device: device, requestId: reqId, progress: true }, isProject ? { projectHashes: ids } : { sessionIds: ids }));
-      } catch (error) { finish({ ok: false, error: error.message }); }
-    });
-    if (!filesResult.ok) {
-      throw new Error(filesResult.timeout
-        ? 'The device stopped confirming file deletion. Check the connection and retry.'
-        : filesResult.error || 'Some original files could not be deleted.');
-    }
+// The Bridge deletes the original files; lists follow from them. A failure stays visible for a retry.
+async function performDelete(device, isProject, ids) {
+  await window.loadViewerLibs();
+  // The Bridge reports progress while it deletes; the last frame is the outcome.
+  var filesResult;
+  try {
+    var reply = await window.bridgeRequest('delete_files', isProject ? { projectHashes: ids } : { sessionIds: ids }, device);
+    filesResult = (reply.frames || []).at(-1) || { ok: false };
+  } catch (error) {
+    filesResult = { ok: false, timeout: error.message === 'timeout', error: error.message === 'offline' ? 'The device is offline.' : error.message };
   }
-  await apiPost('/api/bridge/delete', body);
-  return { ddb: true, files: filesResult };
+  if (!filesResult.ok) {
+    throw new Error(filesResult.timeout
+      ? 'The device stopped confirming file deletion. Check the connection and retry.'
+      : filesResult.error || 'Some original files could not be deleted.');
+  }
+  return { files: filesResult };
 }
 
 async function submitDelete() {
@@ -1804,12 +1858,10 @@ async function submitDelete() {
   var ids = Array.from(state.selected);
   if (!ids.length) return;
   var device = state.appState.device || '';
-  var deleteFiles = !!document.getElementById('deleteFilesCb').checked;
   var isProject = state.selectType === 'project';
-  if (_deleteCountdownTimer) { clearInterval(_deleteCountdownTimer); _deleteCountdownTimer = null; }
   setButtonLoading(btn, 'Deleting');
   try {
-    await performDelete(device, isProject, ids, deleteFiles);
+    await performDelete(device, isProject, ids);
   } catch (e) {
     var err = document.getElementById('deleteError'); if (err) err.textContent = 'Delete failed: ' + e.message;
     setButtonLoading(btn);
@@ -1855,11 +1907,12 @@ function applyNewSessionRuntime(runtime, remember) {
   }
   var agent = document.getElementById('newAsAgent');
   var agentToggle = document.getElementById('newAgentToggle');
-  if (runtime !== 'claude') {
+  var canAgent = runtimeInfo(runtime).features.agentToggle;
+  if (!canAgent) {
     state.appState.isAgent = false;
     if (agent) agent.checked = false;
   }
-  if (agentToggle) agentToggle.hidden = runtime !== 'claude';
+  if (agentToggle) agentToggle.hidden = !canAgent;
   var messages = document.querySelector('.messages');
   if (messages) messages.className = 'messages runtime-' + runtime;
   updateBreadcrumb();
@@ -1869,7 +1922,7 @@ function applyNewSessionRuntime(runtime, remember) {
 function toggleNewSessionRuntime() {
   if (state.appState.session !== '__new__') return;
   applyNewSessionRuntime(
-    nextNewSessionRuntime(state.newSessionRuntimes, state.appState.runtime),
+    nextNewSessionRuntime(usableNewSessionRuntimes(), state.appState.runtime),
     true,
   );
 }
@@ -1896,15 +1949,10 @@ async function startNewSession(projectHash) {
   });
   await window.loadViewerLibs();
   if (_navVersion !== myNav) return;
-  var runtimes = creatableRuntimes();
+  var runtimes = virtualProjectRuntimes(projectHash) || knownNewSessionRuntimes() || creatableRuntimes();
   state.newSessionRuntimes = runtimes;
-  var savedRuntime = '';
-  try {
-    savedRuntime = localStorage.getItem(
-      newSessionRuntimePreferenceKey(state.appState.device),
-    ) || '';
-  } catch (e) {}
-  var runtime = preferredNewSessionRuntime(runtimes, savedRuntime);
+  state.newSessionUnavailable = {};
+  var runtime = preferredNewSessionRuntime(runtimes, savedNewSessionRuntime());
   // Clear a prior session's permission prompt so its disabled input doesn't carry over.
   if (typeof dismissPermissionPrompt === 'function') dismissPermissionPrompt();
   state.appState.sessionPreview = 'New Session';
@@ -1917,6 +1965,7 @@ async function startNewSession(projectHash) {
   saveNav();
   // Reset WS message state for new session
   state.wsAllMessages = [];
+  state.wsTitleRows = [];
   state.wsMessageUuids = new Set();
   state.wsMessageCount = 0;
   state.wsRenderedCount = 0;
@@ -1939,24 +1988,79 @@ async function startNewSession(projectHash) {
     '<div class="new-session-hero">'
       + '<img class="hero-logo" src="assets/baton-logo.svg" alt="">'
       + '<div class="hero-title">Baton</div>'
-      + '<label class="agent-toggle" id="newAgentToggle"' + (runtime === 'claude' ? '' : ' hidden') + '><input type="checkbox" id="newAsAgent" onchange="onNewAsAgentToggle(this.checked)">Claude Agents Run in background</label>'
+      + '<label class="agent-toggle" id="newAgentToggle"' + (runtimeInfo(runtime).features.agentToggle ? '' : ' hidden') + '><input type="checkbox" id="newAsAgent" onchange="onNewAsAgentToggle(this.checked)">Claude Agents Run in background</label>'
     + '</div>'
     + '<div class="messages runtime-' + runtime + '" hidden></div>';
   document.body.classList.add('new-session');
   showInputBar(true);
   // Move input-bar into #content so it sits with the hero in centered flex group.
   // Restored to body on first send (see ws.js doSend) or on showInputBar(false).
-  if (bar && bar.parentElement !== content) content.appendChild(bar);
+  // Moving it drops focus without a blur event; blur first so main.mm hears it.
+  if (bar && bar.parentElement !== content) { document.getElementById('msg-input')?.blur(); content.appendChild(bar); }
   // Sync the static #send-btn placeholder to the current composer state
   if (typeof updateSendBtn === 'function') updateSendBtn();
-  connectWs(null, projectHash);
+  newSessionRequest(projectHash);
+  refreshNewSessionRuntimes(myNav);
+}
+
+// A virtual project (`<runtime>:<name>`) has no folder; only its own runtime creates Sessions there.
+function virtualProjectRuntimes(projectHash) {
+  var prefix = String(projectHash || '').split(':');
+  return prefix.length > 1 && RUNTIMES[prefix[0]] ? [prefix[0]] : null;
+}
+
+// The Bridge's ping lists the runtimes it can create; older Bridges keep the fallback list.
+async function refreshNewSessionRuntimes(nav, recheck) {
+  var reply;
+  try { reply = await window.bridgeRequest('ping', recheck ? { recheck: true } : {}, state.appState.device); } catch (e) { return; }
+  if (_navVersion !== nav || !Array.isArray(reply?.runtimes)) return;
+  var runtimes = inMenuOrder(reply.runtimes);
+  if (!runtimes.length) return;
+  try { localStorage.setItem(newSessionRuntimesKey(), JSON.stringify(runtimes)); } catch (e) {}
+  var only = virtualProjectRuntimes(state.appState.project?.hash);
+  if (only) runtimes = runtimes.filter(function (runtime) { return only.includes(runtime); });
+  var unavailable = reply.unavailable || {};
+  if (!runtimes.length || (runtimes.join() === state.newSessionRuntimes.join() && !unavailable[state.appState.runtime])) {
+    state.newSessionUnavailable = unavailable;
+    return;
+  }
+  state.newSessionRuntimes = runtimes;
+  state.newSessionUnavailable = unavailable;
+  // The saved choice may only now be offered (the Bridge reports runtimes after the view opens).
+  var saved = savedNewSessionRuntime(), usable = usableNewSessionRuntimes();
+  applyNewSessionRuntime(preferredNewSessionRuntime(usable, usable.includes(saved) ? saved : state.appState.runtime), false);
+}
+
+// Runtimes whose CLI the Bridge found (all of them when none was found).
+function usableNewSessionRuntimes() {
+  var usable = state.newSessionRuntimes.filter(function (runtime) { return !state.newSessionUnavailable[runtime]; });
+  return usable.length ? usable : state.newSessionRuntimes;
+}
+
+function inMenuOrder(runtimes) {
+  return Object.keys(RUNTIMES).filter(function (runtime) { return runtimes.includes(runtime); });
+}
+
+// The last ping's list, so the view opens on the saved runtime instead of flashing the fallback.
+function newSessionRuntimesKey() {
+  return 'apeek_new_session_runtimes:' + String(state.appState.device || '');
+}
+
+function knownNewSessionRuntimes() {
+  try {
+    var runtimes = JSON.parse(localStorage.getItem(newSessionRuntimesKey()) || 'null');
+    return Array.isArray(runtimes) && runtimes.length && runtimes.every(function (runtime) { return RUNTIMES[runtime]; })
+      ? inMenuOrder(runtimes) : null;
+  } catch (e) { return null; }
+}
+
+function savedNewSessionRuntime() {
+  try { return localStorage.getItem(newSessionRuntimePreferenceKey(state.appState.device)) || ''; } catch (e) { return ''; }
 }
 
 // ---- Messages ----
 async function loadMessages(sessionId, preview, options) {
-  window.deactivateProjectTerminal?.();
-  window.deactivateProjectFiles?.();
-  window.deactivateGitStatus?.();
+  var keptTools = closeProjectTools(state.appState.device, state.appState.project?.hash);
   options = options || {};
   var rootSessionId = options.rootSessionId || sessionId;
   var rootSessionPreview = options.rootSessionPreview
@@ -1999,9 +2103,13 @@ async function loadMessages(sessionId, preview, options) {
   if (options.restoreGitStatus) openGitStatusPage({ restoring: true });
   // Skeleton before any await — loadViewerLibs can take a while and the old page would linger.
   var content = document.getElementById('content');
+  // New Session keeps the bar inside #content: replacing it would delete the bar (a push opened from there).
+  var bar = document.getElementById('input-bar');
+  if (bar && bar.parentElement !== document.body) document.body.appendChild(bar);
   content.innerHTML = skeletonMessages();
   showInputBar(true);
   saveNav(); // before the await: a stale-chunk reload must come back to this Session
+  if (keptTools) saveKeptToolViews();
   try {
     await window.loadViewerLibs();
   } catch (e) {
@@ -2017,19 +2125,20 @@ async function loadMessages(sessionId, preview, options) {
   state.wsHasMore = false;
   state.wsOldestTimestamp = '';
   state.wsLoadingOlder = false;
+  state.wsTitleRows = [];
+  state.wsHistoryPhase = '';
   // Switching sessions: drop the prior session's optimistic bubbles + orphan
   // state so they cannot match messages from the newly opened session.
   state.pendingSentMessages = [];
+  // The first history reply says whether the root has subagents; `threads` is asked only then.
+  if (!options.preserveThreads) state.threadsPendingRoot = rootSessionId;
   startWs(sessionId);
-  if (!options.preserveThreads) {
-    refreshSessionThreads().catch(function () {});
-  }
 
   try {
     var t0 = performance.now();
     var result = await loadLatestMessages(sessionId);
     if (_navVersion !== myNav) return;
-    if (result.ok === false && state.wsAllMessages.length === 0
+    if (result.ok === false && !result.handled && state.wsAllMessages.length === 0
       && !content.querySelector('.messages .assistant-turn, .messages .msg-user')) {
       throw result.error || new Error('Unable to load messages');
     }
@@ -2223,7 +2332,7 @@ async function maybeLoadOlderAndPrepend() {
 async function loadOlderAndPrepend() {
   if (!state.appState.session || state.appState.session === '__new__') return;
   var content = document.getElementById('content');
-  var container = content.querySelector('.messages');
+  var container = content.querySelector('.messages:not(.skeleton-messages)');
   if (!container) return;
 
   if (state.wsLoadingOlder) return;
@@ -2283,6 +2392,9 @@ attachLongPress(document.getElementById('content'), 'device', openDeviceDeleteMo
 // Auto-connect + restore last session
 (function () {
   if (!state.KEY) return; // auth guard in index.html handles redirect
+  // Names come from /devices (direct-transport.js devices()); until it answers, the ones last known here.
+  Object.assign(state.deviceDisplayNameMap, knownDeviceNames());
+  window.__deviceDisplayNames = state.deviceDisplayNameMap;
   // Inline shell already painted + replayed navigation — skip to avoid clearing its state.
   if (window.__inlineRendered) return;
 
@@ -2339,9 +2451,8 @@ attachLongPress(document.getElementById('content'), 'device', openDeviceDeleteMo
   if (!state.appState.session && shouldRestoreGitStatus(state.appState)) {
     openGitStatusPage({ restoring: true });
   }
-  var homeTerminalHash = savedHomeTerminal(state.appState);
-  if (homeTerminalHash) openHomeTerminal(state.appState.device, homeTerminalHash);
-  else if (shouldRestoreTerminal(state.appState)) openProjectTerminalPage();
+  var terminalFolder = savedTerminalFolder(state.appState);
+  if (terminalFolder) openProjectTerminal({ device: state.appState.device, projectHash: terminalFolder.hash, projectName: terminalFolder.name });
 })();
 
 // In a native shell (WKWebView/WebView2/ArkWeb) target=_blank can't open a tab,
@@ -2365,6 +2476,7 @@ document.addEventListener('click', function (e) {
 // Function bridges for inline HTML handlers + legacy IIFE consumers.
 // All shared state lives in state.js, not on window.
 Object.assign(window, {
+  displayDeviceName,
   osName, timeAgo, formatSize, esc,
   showStats, navHref, updateBreadcrumb, toggleBreadcrumbExpand,
   openSessionRename, applySessionTitle,
@@ -2374,9 +2486,9 @@ Object.assign(window, {
   refreshForegroundView,
   createNewProject, closeNewProjectModal, submitNewProject,
   browseNewProjectPath, newProjectParentDirectory, onNewProjectPathInput,
-  exitSelectMode, toggleSelected, openDeleteModal, closeDeleteModal, submitDelete, onDeleteFilesToggle,
-  startNewSession, onNewAsAgentToggle, toggleNewSessionRuntime, loadMessages, toggleActiveSessions,
-  refreshSessionThreads, openAgentThreadsModal, closeAgentThreadsModal, switchAgentThread,
+  exitSelectMode, toggleSelected, openDeleteModal, closeDeleteModal, submitDelete,
+  startNewSession, onNewAsAgentToggle, toggleNewSessionRuntime, openRuntimePicker, closeRuntimePicker, pickNewSessionRuntime, loadMessages, toggleActiveSessions,
+  refreshSessionThreads, applyThreadInputState, openAgentThreadsModal, closeAgentThreadsModal, switchAgentThread,
   openGitStatusPage,
   openProjectTerminalPage,
   openHomeFilesPage,

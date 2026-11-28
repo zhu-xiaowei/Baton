@@ -9,6 +9,22 @@ import { hashFile } from '../../bridge/content-hash.mjs';
 
 const REQUEST_ID = '550e8400-e29b-41d4-a716-446655440000';
 
+// The cases mock the former upload requests; the transfer store answers through them.
+function storeFromPost(postFn) {
+  if (!postFn) return undefined;
+  return {
+    async prepareUpload(body) {
+      const response = await postFn('/api/bridge/file-prepare', body);
+      if (!response?.ok) throw new Error('Could not prepare file download');
+      return response.json();
+    },
+    async put(key, buffer) {
+      const response = await postFn('/api/bridge/upload-file', { key, data: buffer.toString('base64') });
+      if (!response?.ok) throw new Error('upload failed');
+    },
+  };
+}
+
 function fixture() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'baton-project-files-'));
   const chunkedContent = 'const path = "C:\\\\workspace\\\\file"; // chunked\n'.repeat(3000);
@@ -45,7 +61,7 @@ async function request(root, message, options = {}) {
   }, {
     resolveProjectRoot: () => root,
     send: (payload) => sent.push(payload),
-    postFn: options.postFn,
+    store: storeFromPost(options.postFn),
     fetchFn: options.fetchFn,
     home: options.home,
   });
@@ -197,13 +213,13 @@ test('downloads reject traversal and oversized files before requesting S3 access
   const { root } = fixture();
   const large = path.join(root, 'large.pptx');
   fs.writeFileSync(large, '');
-  fs.truncateSync(large, 512 * 1024 * 1024 + 1);
+  fs.truncateSync(large, 5e9 + 1);
   const options = { postFn: async () => { assert.fail('must not request upload access'); } };
   try {
     for (const filePath of ['../secret.txt', 'large.pptx']) {
       const [result] = await request(root, { operation: 'download', path: filePath }, options);
       assert.equal(result.ok, false);
-      assert.match(result.error, /outside the project|512 MB/);
+      assert.match(result.error, /outside the project|5 GB/);
     }
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
@@ -248,15 +264,17 @@ test('project file listing returns folders before files', async () => {
   }
 });
 
-test('project file listing rejects paths outside the project', async () => {
+test('project file listing can leave the project folder', async () => {
   const { root } = fixture();
   try {
     const [response] = await request(root, {
       operation: 'list',
       path: '..',
     });
-    assert.equal(response.ok, false);
-    assert.match(response.error, /outside the project/);
+    assert.equal(response.ok, true);
+    assert.equal(response.root, fs.realpathSync(root));
+    assert.equal(response.path, path.dirname(fs.realpathSync(root)));
+    assert.ok(response.entries.some(entry => entry.name === path.basename(root)));
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -406,5 +424,14 @@ test('large text uploads cannot reuse a stale file when content changes without 
     assert.notEqual(after.key, before.key);
     await request(root, { operation: 'read', path: 'oversized.txt' }, options);
     assert.equal(uploads.length, 2);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('Apps without sealed media support are told to update instead of getting a video', async () => {
+  const { root } = fixture();
+  fs.writeFileSync(path.join(root, 'clip.mp4'), 'video');
+  try {
+    const result = await request(root, { operation: 'read', path: 'clip.mp4' });
+    assert.match(result.at(-1).error, /Update Baton/);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });

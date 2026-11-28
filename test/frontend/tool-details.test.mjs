@@ -8,14 +8,13 @@ const dom = new JSDOM('<!doctype html><body><div class="messages"></div></body>'
 globalThis.window = dom.window;
 globalThis.document = dom.window.document;
 const { state } = await import('../../web/js/state.js');
-const { handleWsRpcMessage } = await import('../../web/js/ws-rpc.js');
-const { observeToolDetails, toolDetailsSource } = await import('../../web/js/tool-details.js');
+const { configureToolDetails, observeToolDetails, toolDetailsSource } = await import('../../web/js/tool-details.js');
 await import('../../web/js/components/tool.js');
 await import('../../web/js/components/message.js');
 await import('../../web/js/render.js');
 
 let sent = [];
-window.wsSendReliable = (payload) => sent.push(payload);
+configureToolDetails((device, method, params) => new Promise((resolve, reject) => sent.push({ device, method, ...params, resolve, reject })));
 
 function setup(session) {
   state.wsSessionId = session;
@@ -25,13 +24,15 @@ function setup(session) {
   window.resetToolDetails();
 }
 
-function addTool(id, { truncated = true, edit = false } = {}) {
+function addTool(id, { truncated = true, edit = false, bodyless = false } = {}) {
   const toolUse = {
     type: 'tool_use', id, name: edit ? 'Edit' : 'Bash',
     input: edit ? { file_path: '/file.js', old_string: 'same', new_string: 'same' } : { command: 'echo preview' },
     ...(truncated ? { truncated: true } : {}),
   };
-  const toolResult = { type: 'tool_result', tool_use_id: id, content: edit ? 'Modified successfully.' : 'preview' };
+  const toolResult = bodyless // a history page leaves a truncated body out
+    ? { type: 'tool_result', tool_use_id: id, truncated: true }
+    : { type: 'tool_result', tool_use_id: id, content: edit ? 'Modified successfully.' : 'preview' };
   const row = document.createElement('div');
   row.className = 'assistant-turn';
   row.innerHTML = `<div class="tool-node tool-details-collapsed ${edit ? '' : 'claude-bash'}" data-tool-id="${id}">`
@@ -41,11 +42,9 @@ function addTool(id, { truncated = true, edit = false } = {}) {
 }
 
 function complete(request, tools) {
-  handleWsRpcMessage({
-    action: 'tool_details', requestId: request.requestId, ok: true,
-    sequence: 0, complete: true, content: JSON.stringify({ details: tools }),
-  });
+  request.resolve({ details: tools });
 }
+const fail = (request, error) => request.reject(new Error(error));
 
 test('untruncated tools expand without requesting details', async () => {
   setup('plain');
@@ -95,6 +94,38 @@ test('header stays local; body and Show more share one request and cache', async
   assert.equal(tool.node.querySelector('[data-tool-preview]'), null);
 });
 
+test('a group without bodies loads its previews in one request, then Show more loads one tool', async () => {
+  setup('previews');
+  const tools = ['p1', 'p2', 'p3'].map((id) => addTool(id, { bodyless: true }));
+  window.markToolRunGroups(document.querySelector('.messages'));
+  const opening = window.toggleToolDetails(tools[0].node.querySelector('.tool-header'));
+  assert.equal(sent.length, 1);
+  assert.deepEqual([sent[0].toolUseIds, sent[0].preview], [['p1', 'p2', 'p3'], true]);
+  assert.equal(document.querySelectorAll('.tool-detail-loading').length, 1, 'one spinner, on the clicked row');
+  assert.equal(tools[1].node.classList.contains('tool-run-group-hidden'), true, 'the group opens once the previews are here');
+  complete(sent[0], tools.map((tool) => ({ toolUse: tool.toolUse,
+    toolResult: { ...tool.toolResult, content: `${tool.toolUse.id} preview` } })));
+  await opening;
+  for (const tool of tools) {
+    assert.equal(tool.node.classList.contains('tool-run-group-hidden'), false);
+    assert.equal(tool.node.classList.contains('tool-details-collapsed'), false);
+    assert.match(tool.node.textContent, new RegExp(`${tool.toolUse.id} preview`));
+  }
+  const loading = window.loadToolDetailsMore(tools[1].node.querySelector('.tool-preview-more'));
+  assert.equal(sent.length, 2);
+  assert.deepEqual([sent[1].toolUseIds, sent[1].preview], [['p2'], undefined]);
+  complete(sent[1], [{ toolUse: { ...tools[1].toolUse, truncated: false }, toolResult: { ...tools[1].toolResult, truncated: false, content: 'p2 full' } }]);
+  await loading;
+  assert.match(tools[1].node.textContent, /p2 full/);
+  // A timeline re-render passes the history page's own objects again: both caches must survive it.
+  const again = (tool) => window.renderToolNode(tool.toolUse, tool.toolResult, 'claude', { collapsed: true });
+  assert.match(again(tools[0]), /p1 preview/);
+  assert.match(again(tools[1]), /p2 full/);
+  window.toggleToolDetails(tools[0].node.querySelector('.tool-header'));
+  await window.toggleToolDetails(tools[0].node.querySelector('.tool-header'));
+  assert.equal(sent.length, 2, 'previews stay cached');
+});
+
 test('group expansion stays local and Show more requests only its own tool', async () => {
   setup('group');
   const one = addTool('one');
@@ -119,13 +150,9 @@ for (const failure of ['offline', 'timeout', 'missing output']) {
     const tool = addTool(failure);
     window.toggleToolDetails(tool.node.querySelector('.tool-header'));
     const button = tool.node.querySelector('.tool-preview-more');
-    const original = globalThis.setTimeout;
-    let loading;
-    try {
-      if (failure === 'timeout') globalThis.setTimeout = callback => original(callback, 0);
-      loading = window.loadToolDetailsMore(button);
-    } finally { globalThis.setTimeout = original; }
-    if (failure === 'offline') handleWsRpcMessage({ requestId: sent[0].requestId, ok: false, error: 'Device is offline.' });
+    const loading = window.loadToolDetailsMore(button);
+    if (failure === 'offline') fail(sent[0], 'offline');
+    if (failure === 'timeout') fail(sent[0], 'timeout');
     if (failure === 'missing output') complete(sent[0], [{ toolUse: tool.toolUse, toolResult: null }]);
     await loading;
     assert.equal(toolDetailsSource(failure).full, null);
@@ -185,7 +212,7 @@ test('Edit retries failures, caches its loaded diff and invalidates changed prev
   try {
     assert.equal(tool.node.querySelector('.diff-container'), null);
     const failed = window.toggleToolDetails(tool.node.querySelector('.tool-header'));
-    handleWsRpcMessage({ requestId: sent[0].requestId, ok: false, error: 'Device is offline.' });
+    fail(sent[0], 'Device is offline.');
     await failed;
     assert.equal(tool.node.classList.contains('tool-details-collapsed'), true);
     assert.ok(tool.node.querySelector('.tool-detail-error'));
