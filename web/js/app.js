@@ -336,6 +336,8 @@ function shortSessionId(sessionId, nativeId, runtime) {
 
 function runtimeIcon(sessionId, runtime) {
   var info = runtimeInfo(sessionRuntime(sessionId, runtime));
+  var svg = info.mono && window.__runtimeIconSvg?.(info.id);
+  if (svg) return '<span class="runtime-mark runtime-mark-svg" data-runtime="' + info.id + '" role="img" aria-label="' + info.label + '" title="' + info.label + '">' + svg + '</span>';
   // Absolute, since a url() in a custom property resolves against the stylesheet that uses it.
   var src = esc(new URL(window.__runtimeIconSource?.(info.id) || info.icon, document.baseURI).href);
   return '<span class="runtime-mark' + (info.mono ? ' runtime-mark-mono" style="--runtime-mask:url(&quot;' + src + '&quot;)' : '')
