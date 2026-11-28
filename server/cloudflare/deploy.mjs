@@ -170,10 +170,10 @@ async function bucket() {
   await cf('PUT', `/r2/buckets/${flags.bucket}/cors`, { rules: [{ allowed: { origins: ['*'], methods: ['GET', 'PUT', 'HEAD', 'POST'], headers: ['*'] },
     exposeHeaders: ['ETag', 'Content-Length', 'Content-Type', 'x-amz-checksum-sha256', 'x-amz-meta-filename', 'x-amz-meta-content-type',
       'x-amz-meta-sealed'], maxAgeSeconds: 3600 }] });
-  // Transfer objects: t/ (up to 8 MB) for a day, b/ (larger) for an hour (bridge/transfer-store.mjs).
-  const rule = (id, prefix, maxAge) => ({ id, enabled: true, conditions: { prefix },
-    deleteObjectsTransition: { condition: { type: 'Age', maxAge } }, abortMultipartUploadsTransition: { condition: { type: 'Age', maxAge: 86400 } } });
-  await cf('PUT', `/r2/buckets/${flags.bucket}/lifecycle`, { rules: [rule('transfers-1-day', 't/', 86400), rule('big-transfers-1-hour', 'b/', 3600)] });
+  // Transfer objects live an hour (bridge/transfer-store.mjs REUSE_MS); unfinished multipart uploads a day.
+  await cf('PUT', `/r2/buckets/${flags.bucket}/lifecycle`, { rules: [{ id: 'transfers-1-hour', enabled: true, conditions: { prefix: 't/' },
+    deleteObjectsTransition: { condition: { type: 'Age', maxAge: 3600 } },
+    abortMultipartUploadsTransition: { condition: { type: 'Age', maxAge: 86400 } } }] });
 }
 
 // As server/install.sh builds it. Its version is the last commit that changed bridge/, not this deploy's: a deploy that

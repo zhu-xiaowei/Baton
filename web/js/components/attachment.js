@@ -15,11 +15,11 @@ export function attachmentRef(file) {
 
 export function extractAttachments(text, inlineNames = false) {
   const files = [];
-  const cleaned = text.replace(/\[([^\]\r\n]*)\]\((?:baton-file:((?:b\/)?[0-9a-f]{32}(?:\.[a-z0-9]{1,16})?)|<([^<>\r\n]*[\\/]\.baton-bridge[\\/]attachments[\\/]((?:b[\\/])?[0-9a-f]{32}(?:\.[a-z0-9]{1,16})?))>)\)/g,
+  const cleaned = text.replace(/\[([^\]\r\n]*)\]\((?:baton-file:([0-9a-f]{32}(?:\.[a-z0-9]{1,16})?)|<([^<>\r\n]*[\\/]\.baton-bridge[\\/]attachments[\\/]([0-9a-f]{32}(?:\.[a-z0-9]{1,16})?))>)\)/g,
     (reference, label, remoteKey, localPath, localKey) => {
       let name;
       try { name = decodeURIComponent(label); } catch { return reference; }
-      files.push({ kind: 'file', name, key: remoteKey || localKey.replace('\\', '/'), uploaded: true, ...(localPath ? { local: localPath } : {}) });
+      files.push({ kind: 'file', name, key: remoteKey || localKey, uploaded: true, ...(localPath ? { local: localPath } : {}) });
       return inlineNames ? name : '';
     });
   return { text: cleaned, files };
@@ -30,7 +30,7 @@ export function attachmentPreviewText(text) {
 }
 
 export function fileAttachmentHtml(file) {
-  if (!/^(?:b\/)?[0-9a-f]{32}(?:\.[a-z0-9]{1,16})?$/.test(file.key || '')) return '';
+  if (!/^[0-9a-f]{32}(?:\.[a-z0-9]{1,16})?$/.test(file.key || '')) return '';
   return '<button class="file-badge attachment-file" type="button" data-attachment-key="'
     + file.key + '" title="' + escapeAttachment(file.name) + '"'
     + (file.local ? ' data-local="' + escapeAttachment(file.local) + '"' : '') + ' onclick="openFile(\'baton-file:'

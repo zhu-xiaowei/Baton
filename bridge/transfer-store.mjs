@@ -4,19 +4,14 @@
 // only, so no file or URL goes through Lambda. Used by the Bridge (Node) and the App (browser).
 
 const encoder = new TextEncoder();
-const KEY = /^(?:b\/)?[0-9a-f]{8,64}(?:\.[a-z0-9]{1,16})?$/;
+const KEY = /^[0-9a-f]{8,64}(?:\.[a-z0-9]{1,16})?$/;
 const MAX_EXPIRES = 3600;
-// On Cloudflare t/ objects expire after 1 day and b/ (files over 8 MB) after 1 hour, checked about hourly.
-// One older than its reuse window is written again, and a key is remembered for REMEMBER_MS
-// (`transferKeys`), so a key handed out still has ≥ 15 min for the App to read it (ranges while open).
-const REUSE_MS = 21.5 * 3600_000;
-const BIG_REUSE_MS = 30 * 60_000;
+// Objects expire 1 hour after they were written on Cloudflare (7 days on S3); R2 checks about hourly.
+// One older than REUSE_MS is written again, and a key is remembered for REMEMBER_MS (`transferKeys`),
+// so a key handed out still has ≥ 15 min for the App to read it (ranges while open).
+const REUSE_MS = 30 * 60_000;
 const REMEMBER_MS = 15 * 60_000;
-export const reusable = (object, key = '') => !!object
-  && Date.now() - object.modified < (key.startsWith('b/') ? BIG_REUSE_MS : REUSE_MS);
-// A key `b/<name>` is stored at b/<accountId>/<name>, which has its own lifecycle rule.
-const BIG_BYTES = 8 * 1024 * 1024;
-export const objectKey = (key, size) => (size > BIG_BYTES ? 'b/' + key : key);
+export const reusable = (object) => !!object && Date.now() - object.modified < REUSE_MS;
 // A single PUT holds at most 5 GiB; the sealing overhead stays below it.
 export const PUT_MAX = 5e9;
 export const transferKeys = (limit) => recentKeys(limit, REMEMBER_MS);
@@ -211,7 +206,7 @@ export async function signHeaders({ method, url, region, service, credentials, h
   return { ...added, authorization: `AWS4-HMAC-SHA256 Credential=${credentials.accessKeyId}/${scope}, SignedHeaders=${names.join(';')}, Signature=${signature}` };
 }
 
-// A URL for `t/<accountId>/<key>` (or `b/<accountId>/<name>`). `access` is { bucket, region, accountId, accelerate, endpoint?,
+// A URL for `t/<accountId>/<key>`. `access` is { bucket, region, accountId, accelerate, endpoint?,
 // credentials: { accessKeyId, secretAccessKey, sessionToken, expiresAt } }. With `endpoint` (R2) the
 // bucket goes in the path.
 export async function presign(access, method, key, { headers = {}, query = {}, accelerate = false, now = new Date() } = {}) {
@@ -219,8 +214,7 @@ export async function presign(access, method, key, { headers = {}, query = {}, a
   const { bucket, region, accountId, credentials, endpoint } = access;
   const expires = Math.min(MAX_EXPIRES, Math.floor(credentials.expiresAt - now.getTime() / 1000) - 5);
   if (expires < 1) throw new Error('Storage credentials expired');
-  const [top, name] = key.startsWith('b/') ? ['b', key.slice(2)] : ['t', key];
-  const path = `/${top}/${rfc3986(accountId)}/${rfc3986(name)}`;
+  const path = `/t/${rfc3986(accountId)}/${rfc3986(key)}`;
   return signUrl({
     method, region, credentials, expires, headers, query, now,
     ...(endpoint ? { host: new URL(endpoint).host, path: `/${rfc3986(bucket)}${path}` }
@@ -322,10 +316,10 @@ export function createTransferStore(access, fetchFn = (...args) => fetch(...args
       const ext = (name.toLowerCase().match(/\.[a-z0-9]{1,16}$/) || [''])[0];
       const keys = await fileKeys();
       if (keys) {
-        const key = objectKey(await this.keyFor(/^[0-9a-f]{64}$/.test(contentHash) ? contentHash : crypto.randomUUID(), ext), size);
+        const key = await this.keyFor(/^[0-9a-f]{64}$/.test(contentHash) ? contentHash : crypto.randomUUID(), ext);
         const stored = sealedSize(size);
         const existing = contentHash ? await head(key) : null;
-        if (existing?.sealed && existing.size === stored && reusable(existing, key)) return { key, exists: true, sealed: true, stored };
+        if (existing?.sealed && existing.size === stored && reusable(existing)) return { key, exists: true, sealed: true, stored };
         const headers = { 'Content-Type': 'application/octet-stream', 'x-amz-meta-content-type': rfc3986(contentType), 'x-amz-meta-sealed': '1' };
         const storage = await access();
         const url = await presign(storage, 'PUT', key, { headers });
@@ -335,13 +329,13 @@ export function createTransferStore(access, fetchFn = (...args) => fetch(...args
           sealStream: (source) => sealStream(keys, key, size, source),
           ...(size > 2 * PART ? { parts: { size: PART, records: PART / RECORD, ...multipart(key, headers) } } : {}) };
       }
-      let key = objectKey(randomKey(ext), size);
+      let key = randomKey(ext);
       const checksum = /^[0-9a-f]{64}$/.test(contentHash) ? base64FromHex(contentHash) : '';
       if (checksum) {
-        const hashed = objectKey(contentHash.slice(0, 32) + ext, size);
+        const hashed = contentHash.slice(0, 32) + ext;
         const existing = await head(hashed);
         const same = existing?.checksum === checksum && existing.size === size;
-        if (same && reusable(existing, hashed)) return { key: hashed, exists: true, sealed: false, stored: size };
+        if (same && reusable(existing)) return { key: hashed, exists: true, sealed: false, stored: size };
         if (!existing || same) key = hashed;
       }
       const headers = {

@@ -747,7 +747,7 @@ async function showAttachment(key, again) {
   let pdfFallbackUrl = '';
   let cachedPdf = false;
   try {
-    if (!/^(?:b\/)?[0-9a-f]{32}(?:\.[a-z0-9]{1,16})?$/.test(key)) throw new Error('Invalid file key');
+    if (!/^[0-9a-f]{32}(?:\.[a-z0-9]{1,16})?$/.test(key)) throw new Error('Invalid file key');
     const office = officeKind(key);
     if (office) return await showOfficeAttachment(key, office, token);
     const cachedType = CACHED_PREVIEW_TYPES[key.split('.').pop()];

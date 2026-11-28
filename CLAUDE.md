@@ -467,14 +467,13 @@ template. S3 bucket / ECR repo / AWS account id are derived automatically by
 - `install.sh`: ECR → S3 → CodeBuild (arm64) → CloudFormation
 - Bridge install script (`/api/install`): exports `XDG_RUNTIME_DIR` for Ubuntu SSH compatibility (tmux auto-install removed in Phase 2E)
 - File transfer area: files between App and Bridges travel through `t/<accountId>/<key>` in the
-  attachment bucket (files over 8 MB, keys `b/<name>`, at `b/<accountId>/<name>`), emptied by a 7-day
-  lifecycle rule (Cloudflare: `t/` 1 day, `b/` 1 hour, reused for 30 min; both also abort unfinished
-  multipart uploads after 1 day) (`install.sh`; the pre-v2 prefixes
+  attachment bucket, emptied by a 7-day lifecycle rule (Cloudflare: 1 hour, reused for 30 min; both also
+  abort unfinished multipart uploads after 1 day) (`install.sh`; the pre-v2 prefixes
   `images/`, `files/`, `videos/`, `attachments/` expire after 1 day). It is a transfer channel, not
   storage: the Bridge can upload any object again from its own disk. App and Bridge sign their own
   S3 requests (SigV4 presigned URLs, `bridge/transfer-store.mjs`, imported by the App too) with the
   direct-channel STS credentials (1 h, reused while > 10 min left), whose session policy adds
-  `s3:GetObject`/`s3:PutObject` on `t/<accountId>/*` and `b/<accountId>/*` only. `storage {bucket, region, accountId,
+  `s3:GetObject`/`s3:PutObject` on `t/<accountId>/*` only. `storage {bucket, region, accountId,
   accelerate}` comes with them: the App from `/devices` (always, with `wsUrl`), the Bridge from its
   control-socket `direct_rpc` `credentials` message; both renew on demand, and no URL outlives its
   credentials. The API Lambda only reads `install/*`. Attachment uploads use S3 transfer

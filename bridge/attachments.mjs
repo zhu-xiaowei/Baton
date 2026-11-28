@@ -9,14 +9,14 @@ import { plainSize, transfer } from './transfer-store.mjs';
 const MAX_BYTES = 512 * 1024 * 1024;
 
 export function attachmentPreviewText(text) {
-  return text.replace(/\[([^\]\r\n]*)\]\((?:baton-file:((?:b\/)?[0-9a-f]{32}(?:\.[a-z0-9]{1,16})?)|<[^<>\r\n]*[\\/]\.baton-bridge[\\/]attachments[\\/]((?:b[\\/])?[0-9a-f]{32}(?:\.[a-z0-9]{1,16})?)>)\)/g,
+  return text.replace(/\[([^\]\r\n]*)\]\((?:baton-file:([0-9a-f]{32}(?:\.[a-z0-9]{1,16})?)|<[^<>\r\n]*[\\/]\.baton-bridge[\\/]attachments[\\/]([0-9a-f]{32}(?:\.[a-z0-9]{1,16})?)>)\)/g,
     (reference, label) => {
       try { return decodeURIComponent(label); } catch { return reference; }
     });
 }
 
 export async function downloadAttachment(key, options = {}) {
-  if (!/^(?:b\/)?[0-9a-f]{32}(?:\.[a-z0-9]{1,16})?$/.test(key)) throw new Error('Invalid attachment key');
+  if (!/^[0-9a-f]{32}(?:\.[a-z0-9]{1,16})?$/.test(key)) throw new Error('Invalid attachment key');
   const store = options.store || transfer;
   const fetchFn = options.fetchFn || fetch;
   // The GET's own headers give the size and sealed mark, so no HEAD comes first.
@@ -54,7 +54,7 @@ export async function downloadAttachment(key, options = {}) {
 }
 
 export async function resolveBridgeAttachments(text, options) {
-  const pattern = /\[([^\]\r\n]*)\]\(baton-file:((?:b\/)?[0-9a-f]{32}(?:\.[a-z0-9]{1,16})?)\)/g;
+  const pattern = /\[([^\]\r\n]*)\]\(baton-file:([0-9a-f]{32}(?:\.[a-z0-9]{1,16})?)\)/g;
   let resolved = text;
   const paths = new Map();
   for (const match of text.matchAll(pattern)) {

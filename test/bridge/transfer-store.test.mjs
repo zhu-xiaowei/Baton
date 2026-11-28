@@ -22,8 +22,7 @@ test('requests stay inside the account prefix and the credential lifetime', asyn
   await assert.rejects(presign(access, 'GET', 'a'.repeat(32), { now: new Date(now.getTime() + 600_000) }), /expired/);
 });
 
-test('stored content is reused only while it outlives the hours its writer remembers it', async () => {
-  const hour = 3600_000;
+test('stored content is reused only while it outlives the minutes its writer remembers it', async () => {
   const contentHash = 'c'.repeat(64);
   const checksum = Buffer.from(contentHash, 'hex').toString('base64');
   const access = async () => ({ bucket: 'b', region: 'ap-northeast-1', accountId: '0123456789abcdef', accelerate: false,
@@ -31,8 +30,8 @@ test('stored content is reused only while it outlives the hours its writer remem
   const prepare = (ageMs) => createTransferStore(access, async () => new Response(null, { status: 200, headers: {
     'content-length': '5', 'x-amz-checksum-sha256': checksum, 'last-modified': new Date(Date.now() - ageMs).toUTCString() } }))
     .prepareUpload({ name: 'a.txt', size: 5, contentHash });
-  assert.deepEqual(await prepare(21 * hour), { key: 'c'.repeat(32) + '.txt', exists: true, sealed: false, stored: 5 });
-  const old = await prepare(22 * hour);
+  assert.deepEqual(await prepare(29 * 60_000), { key: 'c'.repeat(32) + '.txt', exists: true, sealed: false, stored: 5 });
+  const old = await prepare(31 * 60_000);
   assert.equal(old.key, 'c'.repeat(32) + '.txt');
   assert.ok(old.url && !old.exists, 'an object near its expiry is written again under the same key');
 });
@@ -40,7 +39,7 @@ test('stored content is reused only while it outlives the hours its writer remem
 test('a sealed stream reads back by record and stores nothing when its source fails at the end', async () => {
   const keys = { key: await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']), since: Date.now() };
   setTransferKeys(() => keys);
-  const key = 'b/' + 'e'.repeat(32) + '.mp4';
+  const key = 'e'.repeat(32) + '.mp4';
   const plain = new Uint8Array(3 * RECORD + 5).map((_, i) => i * 7);
   const parts = []; for await (const record of sealStream(keys, key, plain.length, [plain.subarray(0, 100), plain.subarray(100)])) parts.push(record);
   const sealed = Buffer.concat(parts);
