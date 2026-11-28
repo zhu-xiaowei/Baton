@@ -792,12 +792,18 @@ async function showAttachment(key, again) {
       }
       const controller = new AbortController();
       _pdfLoadController = controller;
+      // The newest stored copy; ranges that miss together share one upload of the next.
+      let current = file;
       let fresh = null;
-      const source = file.sealed ? (begin, end) => transfer.range(key, begin, end, file.stored).catch(async error => {
-        if (!error.missing) throw error;
-        const next = await (fresh ??= attachmentAgain(key)());
-        return transfer.range(next.key, begin, end, next.stored);
-      }) : file.previewUrl;
+      const source = file.sealed ? async function range(begin, end, retry = true) {
+        try {
+          return await transfer.range(current.key, begin, end, current.stored);
+        } catch (error) {
+          if (!error.missing || !retry) throw error;
+          current = await (fresh ??= attachmentAgain(key)().finally(() => { fresh = null; }));
+          return range(begin, end, false);
+        }
+      } : file.previewUrl;
       const pdfPreview = await mountPdfPreview(body, source, file.size, controller.signal, cacheKey, {
         data: file.data, onFile: !file.data && (bytes => cacheAttachment(key, file.name, bytes)),
       });

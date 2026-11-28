@@ -217,6 +217,7 @@ async function* read(entry, start, end, signal) {
   const owner = { at: Math.floor(start / RECORD), from: Math.floor(start / RECORD), runs: new Set() };
   let refreshed = false; // since the last record served
   entry.active++;
+  clearTimeout(entry.release);
   try {
     for (let index = owner.at; index < limit && !signal?.aborted && !entry.closed;) {
       let bytes;
@@ -236,7 +237,7 @@ async function* read(entry, start, end, signal) {
   } finally {
     owner.done = true;
     // A download's state goes a minute after its last request ends (a save may resume by range).
-    if (!--entry.active && entry.download) setTimeout(() => { if (!entry.active) close(entry.token); }, 60_000);
+    if (!--entry.active && entry.download) entry.release = setTimeout(() => close(entry.token), 60_000);
     // A seek closes the request just before the next one asks: give that one a second to claim them.
     setTimeout(() => {
       for (const run of owner.runs) if (!waitIn(entry, run.at, run.b)) run.abort.abort();
